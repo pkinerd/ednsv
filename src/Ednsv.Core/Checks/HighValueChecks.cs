@@ -183,10 +183,12 @@ public class MxCoveredBySpfCheck : ICheck
 
         if (uncovered.Any())
         {
-            result.Severity = CheckSeverity.Warning;
-            result.Summary = $"{uncovered.Count} MX IP(s) not covered by SPF";
+            // MX hosts receive inbound mail; SPF authorizes outbound senders.
+            // They are often different infrastructure, so non-overlap is normal.
+            result.Severity = CheckSeverity.Info;
+            result.Summary = $"{uncovered.Count} MX IP(s) not in SPF (normal - SPF covers outbound, MX covers inbound)";
             foreach (var u in uncovered)
-                result.Warnings.Add($"{u}: Not found in SPF authorized IPs/ranges");
+                result.Details.Add($"{u}: Not in SPF authorized ranges (expected if MX and outbound servers differ)");
         }
         else
         {

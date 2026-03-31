@@ -164,10 +164,11 @@ public class SmtpBannerCheck : ICheck
                         result.Warnings.Add($"{mxHost}: Banner does not start with 220");
                     }
 
-                    // Check if hostname in banner matches MX
+                    // Check if hostname in banner matches MX — mismatch is common
+                    // for large providers using shared/load-balanced banners
                     if (!probe.Banner.Contains(mxHost, StringComparison.OrdinalIgnoreCase))
                     {
-                        result.Warnings.Add($"{mxHost}: Banner hostname doesn't match MX FQDN");
+                        result.Details.Add($"  Banner hostname differs from MX FQDN (common for load-balanced MX)");
                     }
                 }
                 else

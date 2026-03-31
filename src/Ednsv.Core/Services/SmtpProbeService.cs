@@ -193,13 +193,15 @@ public class SmtpProbeService
             if (ext.Oid?.Value == "2.5.29.17") // SAN
             {
                 var sanStr = ext.Format(true);
-                foreach (var line in sanStr.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                // Split by both newlines and commas — Linux/OpenSSL uses comma-separated
+                // format (DNS:a.com, DNS:b.com) while Windows uses newlines (DNS Name=a.com\n)
+                foreach (var part in sanStr.Split(new[] { '\n', ',' }, StringSplitOptions.RemoveEmptyEntries))
                 {
-                    var trimmed = line.Trim();
+                    var trimmed = part.Trim();
                     if (trimmed.StartsWith("DNS Name=", StringComparison.OrdinalIgnoreCase))
-                        sans.Add(trimmed.Substring(9));
+                        sans.Add(trimmed.Substring(9).Trim());
                     else if (trimmed.StartsWith("DNS:", StringComparison.OrdinalIgnoreCase))
-                        sans.Add(trimmed.Substring(4));
+                        sans.Add(trimmed.Substring(4).Trim());
                 }
             }
         }
