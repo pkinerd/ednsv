@@ -558,3 +558,342 @@ public class CertificateTransparencyCheck : ICheck
         return new List<CheckResult> { result };
     }
 }
+
+public class MxReverseDnsCheck : ICheck
+{
+    public string Name => "MX Reverse DNS (PTR)";
+    public CheckCategory Category => CheckCategory.PTR;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to check PTR records";
+                return new List<CheckResult> { result };
+            }
+
+            int missingPtr = 0;
+            int mismatchPtr = 0;
+            int checkedIps = 0;
+
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var v4 = await ctx.Dns.ResolveAAsync(mxHost);
+                var v6 = await ctx.Dns.ResolveAAAAAsync(mxHost);
+                var allIps = v4.Concat(v6).ToList();
+
+                foreach (var ip in allIps)
+                {
+                    checkedIps++;
+                    var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
+                    if (!ptrs.Any())
+                    {
+                        missingPtr++;
+                        result.Errors.Add($"{mxHost} [{ip}]: No PTR record — many receivers reject mail from IPs without reverse DNS");
+                    }
+                    else
+                    {
+                        var ptrNames = ptrs.Select(p => p.TrimEnd('.')).ToList();
+                        result.Details.Add($"{mxHost} [{ip}]: PTR → {string.Join(", ", ptrNames)}");
+
+                        // Check FCrDNS for MX IPs
+                        bool forwardConfirmed = false;
+                        foreach (var ptr in ptrNames)
+                        {
+                            var fwd = await ctx.Dns.ResolveAAsync(ptr);
+                            var fwd6 = await ctx.Dns.ResolveAAAAAsync(ptr);
+                            if (fwd.Concat(fwd6).Any(f => f == ip))
+                            {
+                                forwardConfirmed = true;
+                                break;
+                            }
+                        }
+
+                        if (!forwardConfirmed)
+                        {
+                            mismatchPtr++;
+                            result.Warnings.Add($"{mxHost} [{ip}]: PTR exists but forward lookup doesn't confirm (FCrDNS fails)");
+                        }
+                    }
+                }
+            }
+
+            if (missingPtr > 0)
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = $"{missingPtr} MX IP(s) missing PTR — Gmail/Outlook will reject mail";
+            }
+            else if (mismatchPtr > 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{mismatchPtr} MX IP(s) have PTR but FCrDNS fails";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"All {checkedIps} MX IP(s) have valid reverse DNS";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class NsecZoneWalkCheck : ICheck
+{
+    public string Name => "NSEC/NSEC3 Zone Walk";
+    public CheckCategory Category => CheckCategory.DNSSEC;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            // Check if DNSSEC is enabled
+            var dsResp = await ctx.Dns.QueryRawAsync(domain, QueryType.DS);
+            var hasDs = dsResp.Answers.Any();
+
+            if (!hasDs)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "DNSSEC not enabled — NSEC/NSEC3 not applicable";
+                return new List<CheckResult> { result };
+            }
+
+            // Check for NSEC3PARAM (indicates NSEC3 is used)
+            var nsec3Resp = await ctx.Dns.QueryRawAsync(domain, QueryType.NSEC3PARAM);
+            var nsec3Params = nsec3Resp.Answers.OfType<NSec3ParamRecord>().ToList();
+
+            if (nsec3Params.Any())
+            {
+                var param = nsec3Params.First();
+                result.Details.Add($"NSEC3 in use (algorithm={param.HashAlgorithm}, iterations={param.Iterations})");
+
+                if (param.Iterations > 100)
+                    result.Warnings.Add($"NSEC3 iterations={param.Iterations} — RFC 9276 recommends 0 for performance");
+                else
+                    result.Details.Add($"Iterations={param.Iterations} (RFC 9276 recommends 0)");
+
+                if (param.Flags == 1)
+                    result.Details.Add("Opt-out flag set (unsigned delegations not covered)");
+
+                result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+                result.Summary = "NSEC3 protects against zone enumeration";
+            }
+            else
+            {
+                // Probe for NSEC by querying a non-existent name
+                var nxResp = await ctx.Dns.QueryRawAsync($"ednsv-nsec-probe-{Guid.NewGuid():N}.{domain}", QueryType.A);
+                var nsecRecords = nxResp.Authorities.OfType<NSecRecord>().ToList();
+
+                if (nsecRecords.Any())
+                {
+                    result.Severity = CheckSeverity.Warning;
+                    result.Summary = "NSEC (not NSEC3) — zone contents can be enumerated";
+                    result.Warnings.Add("Zone uses NSEC instead of NSEC3 — attackers can walk the zone to discover all hostnames");
+                    result.Warnings.Add("Consider migrating to NSEC3 to prevent zone enumeration (RFC 5155)");
+                    foreach (var nsec in nsecRecords)
+                        result.Details.Add($"NSEC: {nsec.DomainName} → {nsec.NextDomainName}");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Info;
+                    result.Summary = "DNSSEC enabled but NSEC/NSEC3 status undetermined";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class DuplicateTxtRecordCheck : ICheck
+{
+    public string Name => "Duplicate/Conflicting TXT Records";
+    public CheckCategory Category => CheckCategory.TXT;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            var txts = await ctx.Dns.GetTxtRecordsAsync(domain);
+            var allTexts = txts.Select(t => string.Join("", t.Text)).ToList();
+
+            // Multiple SPF records (RFC 7208 §3.2: exactly one)
+            var spfRecords = allTexts.Where(t => t.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (spfRecords.Count > 1)
+            {
+                result.Errors.Add($"Multiple SPF records found ({spfRecords.Count}) — RFC 7208 §3.2 requires exactly one. All are invalidated.");
+                foreach (var spf in spfRecords)
+                    result.Details.Add($"  SPF: {spf}");
+            }
+
+            // Multiple DMARC records
+            var dmarcTxts = await ctx.Dns.GetTxtRecordsAsync($"_dmarc.{domain}");
+            var dmarcRecords = dmarcTxts.Where(t => string.Join("", t.Text).TrimStart()
+                .StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (dmarcRecords.Count > 1)
+            {
+                result.Errors.Add($"Multiple DMARC records found ({dmarcRecords.Count}) — RFC 7489 requires exactly one");
+                foreach (var d in dmarcRecords)
+                    result.Details.Add($"  DMARC: {string.Join("", d.Text)}");
+            }
+
+            // DMARC at apex instead of _dmarc subdomain
+            var dmarcAtApex = allTexts.Where(t => t.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (dmarcAtApex.Any())
+                result.Warnings.Add("DMARC record found at domain apex instead of _dmarc subdomain — will be ignored by receivers");
+
+            // Multiple BIMI records
+            var bimiTxts = await ctx.Dns.GetTxtRecordsAsync($"default._bimi.{domain}");
+            var bimiRecords = bimiTxts.Where(t => string.Join("", t.Text).TrimStart()
+                .StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (bimiRecords.Count > 1)
+                result.Warnings.Add($"Multiple BIMI records found ({bimiRecords.Count}) — behavior is undefined");
+
+            // Multiple MTA-STS records
+            var stsTxts = await ctx.Dns.GetTxtRecordsAsync($"_mta-sts.{domain}");
+            var stsRecords = stsTxts.Where(t => string.Join("", t.Text).TrimStart()
+                .StartsWith("v=STSv1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (stsRecords.Count > 1)
+                result.Warnings.Add($"Multiple MTA-STS records found ({stsRecords.Count}) — RFC 8461 requires exactly one");
+
+            // Multiple TLS-RPT records
+            var tlsRptTxts = await ctx.Dns.GetTxtRecordsAsync($"_smtp._tls.{domain}");
+            var tlsRptRecords = tlsRptTxts.Where(t => string.Join("", t.Text).TrimStart()
+                .StartsWith("v=TLSRPTv1", StringComparison.OrdinalIgnoreCase)).ToList();
+            if (tlsRptRecords.Count > 1)
+                result.Warnings.Add($"Multiple TLS-RPT records found ({tlsRptRecords.Count}) — RFC 8460 requires exactly one");
+
+            if (result.Errors.Any())
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = "Duplicate DNS records found — RFC violations";
+            }
+            else if (result.Warnings.Any())
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Potential TXT record issues found";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "No duplicate or conflicting TXT records";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class SubdomainSpfGapCheck : ICheck
+{
+    public string Name => "Subdomain SPF Coverage";
+    public CheckCategory Category => CheckCategory.SPF;
+
+    private static readonly string[] MailSendingSubdomains =
+    {
+        "mail", "smtp", "email", "newsletter", "marketing",
+        "bounce", "send", "outbound", "notifications", "transactional"
+    };
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (ctx.SpfRecord == null && ctx.DmarcRecord == null)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No parent SPF/DMARC — subdomain gap check not applicable";
+                return new List<CheckResult> { result };
+            }
+
+            var missingSpf = new List<string>();
+            var hasSpf = new List<string>();
+
+            using var semaphore = new SemaphoreSlim(5);
+            var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
+            {
+                await semaphore.WaitAsync();
+                try
+                {
+                    var subDomain = $"{sub}.{domain}";
+                    var aRecs = await ctx.Dns.ResolveAAsync(subDomain);
+                    var mxRecs = await ctx.Dns.GetMxRecordsAsync(subDomain);
+                    if (!aRecs.Any() && !mxRecs.Any()) return (sub, exists: false, hasSpf: false);
+
+                    var txts = await ctx.Dns.GetTxtRecordsAsync(subDomain);
+                    var spf = txts.Any(t => string.Join("", t.Text).TrimStart()
+                        .StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase));
+                    return (sub, exists: true, hasSpf: spf);
+                }
+                finally { semaphore.Release(); }
+            })).ToList();
+
+            var results = await Task.WhenAll(tasks);
+
+            foreach (var (sub, exists, spf) in results)
+            {
+                if (!exists) continue;
+                if (spf)
+                {
+                    hasSpf.Add(sub);
+                    result.Details.Add($"{sub}.{domain}: Has SPF record");
+                }
+                else
+                {
+                    missingSpf.Add(sub);
+                    result.Warnings.Add($"{sub}.{domain}: Exists but no SPF — spoofable if DMARC sp≠reject");
+                }
+            }
+
+            if (missingSpf.Any())
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{missingSpf.Count} active mail subdomain(s) missing SPF records";
+            }
+            else if (hasSpf.Any())
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "All active mail subdomains have SPF records";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No common mail-sending subdomains found";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}

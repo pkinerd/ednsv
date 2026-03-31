@@ -458,3 +458,243 @@ public class SubdomainDmarcOverrideCheck : ICheck
         return subStr < parentStr;
     }
 }
+
+public class DmarcSubdomainPolicyCheck : ICheck
+{
+    public string Name => "DMARC Subdomain Policy Analysis";
+    public CheckCategory Category => CheckCategory.DMARC;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+        await Task.CompletedTask;
+
+        try
+        {
+            if (ctx.DmarcRecord == null)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No DMARC record to analyze subdomain policy";
+                return new List<CheckResult> { result };
+            }
+
+            var tags = DmarcRecordCheck.ParseDmarcTags(ctx.DmarcRecord);
+            tags.TryGetValue("p", out var policy);
+            tags.TryGetValue("sp", out var subdomainPolicy);
+            tags.TryGetValue("adkim", out var adkim);
+            tags.TryGetValue("aspf", out var aspf);
+            tags.TryGetValue("pct", out var pct);
+
+            // Effective subdomain policy: sp if set, otherwise p
+            var effectiveSp = subdomainPolicy ?? policy;
+
+            result.Details.Add($"Parent policy (p): {policy ?? "not set"}");
+            var spDisplay = subdomainPolicy ?? $"not set (inherits p={policy})";
+            result.Details.Add($"Subdomain policy (sp): {spDisplay}");
+            result.Details.Add($"Effective subdomain policy: {effectiveSp}");
+
+            // 1. sp weaker than p
+            if (subdomainPolicy != null && policy != null)
+            {
+                var strength = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["reject"] = 3, ["quarantine"] = 2, ["none"] = 1
+                };
+                var spStrength = strength.GetValueOrDefault(subdomainPolicy, 0);
+                var pStrength = strength.GetValueOrDefault(policy, 0);
+
+                if (spStrength < pStrength)
+                {
+                    result.Warnings.Add($"sp={subdomainPolicy} is weaker than p={policy} — subdomains are less protected than the parent domain");
+                }
+            }
+
+            // 2. sp=none or effective sp=none: non-existent subdomain spoofing risk
+            if (string.Equals(effectiveSp, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Warnings.Add("Effective subdomain policy is 'none' — attackers can spoof any subdomain (including non-existent ones like fake.{domain})");
+                result.Warnings.Add("Consider setting sp=reject to protect all subdomains from spoofing");
+            }
+
+            // 3. Alignment mode inheritance
+            if (adkim != null)
+            {
+                result.Details.Add($"DKIM alignment (adkim): {adkim}");
+                if (string.Equals(adkim, "s", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Details.Add("  Strict DKIM alignment: subdomain mail must be signed with exact domain match");
+                    result.Warnings.Add("adkim=s (strict) inherited by subdomains — subdomain mail must use exact-match DKIM signing (d=sub.domain, not d=domain)");
+                }
+            }
+            else
+            {
+                result.Details.Add("DKIM alignment (adkim): relaxed (default)");
+            }
+
+            if (aspf != null)
+            {
+                result.Details.Add($"SPF alignment (aspf): {aspf}");
+                if (string.Equals(aspf, "s", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Details.Add("  Strict SPF alignment: RFC5321.MailFrom must exactly match RFC5322.From domain");
+                    result.Warnings.Add("aspf=s (strict) inherited by subdomains — subdomain mail must have exact SPF domain match in envelope");
+                }
+            }
+            else
+            {
+                result.Details.Add("SPF alignment (aspf): relaxed (default)");
+            }
+
+            // 4. pct < 100 on subdomain policy
+            if (pct != null && int.TryParse(pct, out var pctVal) && pctVal < 100)
+            {
+                result.Warnings.Add($"pct={pctVal} — only {pctVal}% of failing messages get the DMARC policy applied (applies to subdomains too)");
+            }
+
+            // 5. Strong parent but weak subdomain pattern
+            if (string.Equals(policy, "reject", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(effectiveSp, "none", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Errors.Add("p=reject but sp=none — parent domain is protected but ALL subdomains are wide open to spoofing");
+            }
+
+            if (result.Errors.Any())
+                result.Severity = CheckSeverity.Error;
+            else if (result.Warnings.Any())
+                result.Severity = CheckSeverity.Warning;
+            else
+                result.Severity = CheckSeverity.Pass;
+
+            result.Summary = $"Subdomain policy: {effectiveSp}" +
+                (result.Warnings.Any() ? $" ({result.Warnings.Count} issue(s))" : " — well configured");
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class DmarcReportUriValidationCheck : ICheck
+{
+    public string Name => "DMARC Report URI Validation";
+    public CheckCategory Category => CheckCategory.DMARC;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (ctx.DmarcRecord == null)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No DMARC record to validate report URIs";
+                return new List<CheckResult> { result };
+            }
+
+            var tags = DmarcRecordCheck.ParseDmarcTags(ctx.DmarcRecord);
+            var allUris = new List<(string tag, string uri)>();
+
+            if (tags.TryGetValue("rua", out var rua))
+                foreach (var u in rua.Split(','))
+                    allUris.Add(("rua", u.Trim()));
+            if (tags.TryGetValue("ruf", out var ruf))
+                foreach (var u in ruf.Split(','))
+                    allUris.Add(("ruf", u.Trim()));
+
+            if (!allUris.Any())
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "No DMARC report URIs configured — no visibility into authentication failures";
+                result.Warnings.Add("Without rua/ruf, you won't receive DMARC aggregate or forensic reports");
+                return new List<CheckResult> { result };
+            }
+
+            bool hasRua = tags.ContainsKey("rua");
+            bool hasRuf = tags.ContainsKey("ruf");
+            if (!hasRua)
+                result.Warnings.Add("No rua= (aggregate reports) configured — you won't see authentication statistics");
+            if (!hasRuf)
+                result.Details.Add("No ruf= (forensic reports) — optional, many providers don't send them");
+
+            foreach (var (tag, uri) in allUris)
+            {
+                if (uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var email = uri.Substring(7).Split('!')[0]; // remove optional size limit
+                    var atIdx = email.IndexOf('@');
+                    if (atIdx < 0)
+                    {
+                        result.Errors.Add($"{tag}: Invalid mailto URI: {uri}");
+                        continue;
+                    }
+
+                    var reportDomain = email.Substring(atIdx + 1).ToLowerInvariant();
+                    result.Details.Add($"{tag}: {uri}");
+
+                    // Check MX for report domain
+                    var mx = await ctx.Dns.GetMxRecordsAsync(reportDomain);
+                    if (!mx.Any())
+                    {
+                        // Check for A record fallback (implicit MX)
+                        var aRecs = await ctx.Dns.ResolveAAsync(reportDomain);
+                        if (aRecs.Any())
+                        {
+                            result.Details.Add($"  {reportDomain}: No MX but has A record (implicit MX)");
+                        }
+                        else
+                        {
+                            result.Errors.Add($"  {reportDomain}: No MX and no A record — reports undeliverable");
+                        }
+                    }
+                    else
+                    {
+                        result.Details.Add($"  {reportDomain}: {mx.Count} MX record(s)");
+                    }
+
+                    // External report authorization check
+                    if (!string.Equals(reportDomain, domain, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var authDomain = $"{domain}._report._dmarc.{reportDomain}";
+                        var authTxts = await ctx.Dns.GetTxtRecordsAsync(authDomain);
+                        var hasAuth = authTxts.Any(t => t.Text.Any(s =>
+                            s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)));
+
+                        if (hasAuth)
+                            result.Details.Add($"  External authorization: verified at {authDomain}");
+                        else
+                            result.Warnings.Add($"  {reportDomain}: External domain — no authorization record at {authDomain}");
+                    }
+                }
+                else if (uri.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Details.Add($"{tag}: {uri} (HTTPS endpoint)");
+                }
+                else
+                {
+                    result.Warnings.Add($"{tag}: Unrecognized URI scheme: {uri}");
+                }
+            }
+
+            if (result.Errors.Any())
+                result.Severity = CheckSeverity.Error;
+            else if (result.Warnings.Any())
+                result.Severity = CheckSeverity.Warning;
+            else
+                result.Severity = CheckSeverity.Pass;
+
+            result.Summary = $"Validated {allUris.Count} DMARC report URI(s)";
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}

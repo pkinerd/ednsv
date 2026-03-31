@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Ednsv.Core.Models;
@@ -644,6 +645,152 @@ public class CatchAllDetectionCheck : ICheck
             result.Severity = CheckSeverity.Info;
             result.Summary = "Could not test catch-all";
             result.Details.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class SmtpStarttlsEnforcementCheck : ICheck
+{
+    public string Name => "STARTTLS Enforcement";
+    public CheckCategory Category => CheckCategory.SMTP;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to check STARTTLS";
+                return new List<CheckResult> { result };
+            }
+
+            var missingTls = new List<string>();
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+
+                if (!probe.Connected)
+                {
+                    result.Details.Add($"{mxHost}: Could not connect");
+                    continue;
+                }
+
+                if (probe.SupportsStartTls)
+                {
+                    result.Details.Add($"{mxHost}: STARTTLS supported (TLS {probe.TlsProtocol})");
+                }
+                else
+                {
+                    missingTls.Add(mxHost);
+                    result.Errors.Add($"{mxHost}: STARTTLS NOT offered — mail transmitted in plaintext");
+                }
+            }
+
+            if (missingTls.Any())
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = $"{missingTls.Count} MX host(s) missing STARTTLS — major deliverability risk";
+                result.Errors.Add("Gmail, Outlook, and other major providers may refuse or flag mail from servers without TLS");
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "All MX hosts support STARTTLS";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class SmtpIpv6ConnectivityCheck : ICheck
+{
+    public string Name => "SMTP IPv6 Connectivity";
+    public CheckCategory Category => CheckCategory.IPv6;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to check IPv6 connectivity";
+                return new List<CheckResult> { result };
+            }
+
+            int hasAaaa = 0;
+            int reachable = 0;
+            int unreachable = 0;
+
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var v6Addrs = await ctx.Dns.ResolveAAAAAsync(mxHost);
+                if (!v6Addrs.Any())
+                {
+                    result.Details.Add($"{mxHost}: No AAAA records");
+                    continue;
+                }
+
+                hasAaaa++;
+                foreach (var addr in v6Addrs)
+                {
+                    try
+                    {
+                        using var client = new TcpClient(AddressFamily.InterNetworkV6);
+                        var connectTask = client.ConnectAsync(IPAddress.Parse(addr), 25);
+                        if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(5))) == connectTask)
+                        {
+                            await connectTask;
+                            reachable++;
+                            result.Details.Add($"{mxHost} [{addr}]: Port 25 reachable over IPv6");
+                        }
+                        else
+                        {
+                            unreachable++;
+                            result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
+                        }
+                    }
+                    catch
+                    {
+                        unreachable++;
+                        result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but IPv6 connection failed");
+                    }
+                }
+            }
+
+            if (hasAaaa == 0)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts have AAAA records — IPv6 not applicable";
+            }
+            else if (unreachable > 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{unreachable} MX IPv6 address(es) unreachable — stale AAAA records cause delivery delays";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"{reachable} MX IPv6 address(es) reachable";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
         }
 
         return new List<CheckResult> { result };

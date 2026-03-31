@@ -65,6 +65,7 @@ public class DomainValidator
             new SpfIncludesAllCheck(),
             new SpfOverlapCheck(),
             new MxCoveredBySpfCheck(),
+            new SubdomainSpfGapCheck(),
 
             // DMARC (22-27)
             new DmarcRecordCheck(),
@@ -74,6 +75,8 @@ public class DomainValidator
             new DmarcReportTargetMxCheck(),
             new SpfDmarcCombinedCheck(),
             new SubdomainDmarcOverrideCheck(),
+            new DmarcSubdomainPolicyCheck(),
+            new DmarcReportUriValidationCheck(),
 
             // DKIM (28) + ARC
             new DkimSelectorsCheck(),
@@ -81,6 +84,7 @@ public class DomainValidator
 
             // PTR (29)
             new ReverseDnsCheck(),
+            new MxReverseDnsCheck(),
 
             // FCrDNS (30)
             new ForwardConfirmedRdnsCheck(),
@@ -92,6 +96,7 @@ public class DomainValidator
 
             // DNSSEC (33)
             new DnssecCheck(),
+            new NsecZoneWalkCheck(),
 
             // MTA-STS (34)
             new MtaStsCheck(),
@@ -113,6 +118,7 @@ public class DomainValidator
             new EhloCapabilitiesCheck(),
             new SmtpSizeCheck(),
             new SmtpRequireTlsCheck(),
+            new SmtpStarttlsEnforcementCheck(),
             new SubmissionPortsCheck(),
 
             // SRV (44)
@@ -126,6 +132,7 @@ public class DomainValidator
 
             // IPv6 (47)
             new Ipv6ReadinessCheck(),
+            new SmtpIpv6ConnectivityCheck(),
 
             // Postmaster (48)
             new PostmasterAddressCheck(),
@@ -159,6 +166,9 @@ public class DomainValidator
 
             // Certificate Transparency
             new CertificateTransparencyCheck(),
+
+            // Duplicate/conflicting records
+            new DuplicateTxtRecordCheck(),
 
             // TXT dump
             new AllTxtRecordsCheck(),
