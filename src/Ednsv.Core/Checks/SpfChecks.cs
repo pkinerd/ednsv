@@ -189,22 +189,34 @@ public class SpfExpansionCheck : ICheck
                 _lookupCount++;
                 var target = mech.Substring(8);
                 result.Details.Add($"{indent}{qualLabel}include:{target}");
-                var txt = await GetSpfForDomainAsync(ctx, target);
+                var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
                 else
+                {
                     _voidLookupCount++;
+                    if (lookupError != null)
+                        result.Warnings.Add($"include:{target} — could not expand: {lookupError}");
+                    else
+                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                }
             }
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
                 var target = mech.Substring(9);
                 result.Details.Add($"{indent}{qualLabel}redirect={target}");
-                var txt = await GetSpfForDomainAsync(ctx, target);
+                var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
                 else
+                {
                     _voidLookupCount++;
+                    if (lookupError != null)
+                        result.Warnings.Add($"redirect={target} — could not expand: {lookupError}");
+                    else
+                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                }
             }
             else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a"
                      || (mech.StartsWith("a/", StringComparison.OrdinalIgnoreCase)))
@@ -250,7 +262,11 @@ public class SpfExpansionCheck : ICheck
             else if (mech.StartsWith("exists:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                result.Details.Add($"{indent}{qualLabel}{mech}");
+                var existsDomain = mech.Substring(7);
+                if (existsDomain.Contains("%{"))
+                    result.Details.Add($"{indent}{qualLabel}{mech} (macro — expands at evaluation time)");
+                else
+                    result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("ptr", StringComparison.OrdinalIgnoreCase))
             {
@@ -272,11 +288,20 @@ public class SpfExpansionCheck : ICheck
         }
     }
 
-    private async Task<string?> GetSpfForDomainAsync(CheckContext ctx, string domain)
+    private async Task<(string? spf, string? error)> GetSpfForDomainAsync(CheckContext ctx, string domain)
     {
+        var errorsBefore = ctx.Dns.QueryErrors.Count;
         var txts = await ctx.Dns.GetTxtRecordsAsync(domain);
+        var errorsAfter = ctx.Dns.QueryErrors.Count;
+
+        if (errorsAfter > errorsBefore)
+        {
+            var error = ctx.Dns.QueryErrors[errorsAfter - 1];
+            return (null, error);
+        }
+
         var spf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
-        return spf != null ? string.Join("", spf.Text) : null;
+        return spf != null ? (string.Join("", spf.Text), null) : (null, null);
     }
 }
 
