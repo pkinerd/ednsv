@@ -77,6 +77,28 @@ public static class CheckDescriptions
     };
 
     /// <summary>
+    /// Lazily-built lookup from CheckCategory to its CategoryDescription.
+    /// </summary>
+    private static readonly Lazy<Dictionary<CheckCategory, CategoryDescription>> _lookup = new(() =>
+    {
+        var dict = new Dictionary<CheckCategory, CategoryDescription>();
+        foreach (var cat in Categories)
+        {
+            foreach (var c in cat.Categories)
+                dict[c] = cat;
+        }
+        return dict;
+    });
+
+    /// <summary>
+    /// Returns the category description for a given CheckCategory, or null if not mapped.
+    /// </summary>
+    public static CategoryDescription? GetForCategory(CheckCategory category)
+    {
+        return _lookup.Value.TryGetValue(category, out var desc) ? desc : null;
+    }
+
+    /// <summary>
     /// Returns a compact multi-line summary suitable for --help output.
     /// </summary>
     public static string GetHelpSummary()
