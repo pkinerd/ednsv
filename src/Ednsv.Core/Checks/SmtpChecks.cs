@@ -290,11 +290,11 @@ public class EhloCapabilitiesCheck : ICheck
                             result.Details.Add($"  Missing: {ext}");
                     }
 
-                    // Highlight SMTPUTF8/EAI readiness
+                    // Highlight SMTPUTF8/EAI readiness (RFC 6531 — optional extension)
                     if (capText.Contains("SMTPUTF8", StringComparison.OrdinalIgnoreCase))
                         result.Details.Add($"  {mxHost} supports SMTPUTF8 (internationalized email addresses/EAI ready)");
                     else
-                        result.Warnings.Add($"{mxHost}: No SMTPUTF8 — cannot handle internationalized email addresses (RFC 6531)");
+                        result.Details.Add($"  {mxHost}: No SMTPUTF8 (internationalized email not supported — optional per RFC 6531)");
                 }
                 else
                 {
