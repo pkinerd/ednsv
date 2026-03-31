@@ -142,22 +142,53 @@ public class DnsResolverService
     {
         try
         {
-            var opts = new LookupClientOptions(new IPEndPoint(nsIp, 53))
-            {
-                UseCache = false,
-                Timeout = TimeSpan.FromSeconds(5),
-                Retries = 0,
-                UseTcpOnly = true,
-                ThrowDnsErrors = false
-            };
-            var client = new LookupClient(opts);
-            var result = await client.QueryAsync(domain, QueryType.AXFR);
+            var result = await PerformZoneTransferAsync(nsIp, domain);
             return result.Answers.Count > 0;
         }
         catch
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Performs AXFR and returns discovered DKIM selectors from _domainkey TXT records.
+    /// </summary>
+    public async Task<List<string>> ExtractDkimSelectorsFromAxfrAsync(IPAddress nsIp, string domain)
+    {
+        var selectors = new List<string>();
+        try
+        {
+            var result = await PerformZoneTransferAsync(nsIp, domain);
+            var domainkeySuffix = $"._domainkey.{domain}".ToLowerInvariant();
+            foreach (var record in result.Answers)
+            {
+                var name = record.DomainName.Value.TrimEnd('.').ToLowerInvariant();
+                if (name.EndsWith(domainkeySuffix))
+                {
+                    // Extract selector: everything before ._domainkey.domain
+                    var selector = name.Substring(0, name.Length - domainkeySuffix.Length);
+                    if (!string.IsNullOrWhiteSpace(selector) && !selector.Contains('.'))
+                        selectors.Add(selector);
+                }
+            }
+        }
+        catch { }
+        return selectors.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private async Task<IDnsQueryResponse> PerformZoneTransferAsync(IPAddress nsIp, string domain)
+    {
+        var opts = new LookupClientOptions(new IPEndPoint(nsIp, 53))
+        {
+            UseCache = false,
+            Timeout = TimeSpan.FromSeconds(5),
+            Retries = 0,
+            UseTcpOnly = true,
+            ThrowDnsErrors = false
+        };
+        var client = new LookupClient(opts);
+        return await client.QueryAsync(domain, QueryType.AXFR);
     }
 
     /// <summary>

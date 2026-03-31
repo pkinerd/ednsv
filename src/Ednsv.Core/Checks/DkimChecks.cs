@@ -29,8 +29,31 @@ public class DkimSelectorsCheck : ICheck
 
         try
         {
-            // Merge common selectors with user-provided ones (user selectors first, deduped)
-            var allSelectors = ctx.Options.AdditionalDkimSelectors
+            // Try AXFR to discover selectors from zone data (if enabled and NS IPs available)
+            var axfrSelectors = new List<string>();
+            if (ctx.Options.EnableAxfr)
+            {
+                foreach (var nsHost in ctx.NsHosts)
+                {
+                    if (!ctx.NsHostIps.TryGetValue(nsHost, out var ips)) continue;
+                    foreach (var ip in ips)
+                    {
+                        if (!System.Net.IPAddress.TryParse(ip, out var addr)) continue;
+                        var discovered = await ctx.Dns.ExtractDkimSelectorsFromAxfrAsync(addr, domain);
+                        if (discovered.Any())
+                        {
+                            axfrSelectors.AddRange(discovered);
+                            result.Details.Add($"AXFR from {nsHost}: discovered {discovered.Count} selector(s): {string.Join(", ", discovered)}");
+                            break; // One successful AXFR is enough
+                        }
+                    }
+                    if (axfrSelectors.Any()) break;
+                }
+            }
+
+            // Merge AXFR-discovered + user-provided + common selectors (deduped)
+            var allSelectors = axfrSelectors
+                .Concat(ctx.Options.AdditionalDkimSelectors)
                 .Concat(CommonSelectors)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
