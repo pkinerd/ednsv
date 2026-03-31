@@ -55,12 +55,43 @@ public class DkimSelectorsCheck : ICheck
                     result.Details.Add("AXFR selector discovery: zone transfer denied (probing common selectors only)");
             }
 
-            // Merge AXFR-discovered + user-provided + common selectors (deduped)
-            var allSelectors = axfrSelectors
-                .Concat(ctx.Options.AdditionalDkimSelectors)
-                .Concat(CommonSelectors)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            // Build selector list based on what sources are available:
+            // - If user provided selectors: use user + any AXFR-discovered (skip defaults)
+            // - If AXFR discovered selectors: use only those (skip defaults)
+            // - Otherwise: fall back to common/default selectors
+            var userProvided = ctx.Options.AdditionalDkimSelectors;
+            List<string> allSelectors;
+            string selectorSource;
+
+            if (userProvided.Any() && axfrSelectors.Any())
+            {
+                allSelectors = userProvided
+                    .Concat(axfrSelectors)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                selectorSource = "user-provided + AXFR-discovered";
+            }
+            else if (userProvided.Any())
+            {
+                allSelectors = userProvided
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                selectorSource = "user-provided";
+            }
+            else if (axfrSelectors.Any())
+            {
+                allSelectors = axfrSelectors
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                selectorSource = "AXFR-discovered";
+            }
+            else
+            {
+                allSelectors = CommonSelectors.ToList();
+                selectorSource = "default list";
+            }
+
+            result.Details.Add($"DKIM selectors checked ({selectorSource}): {string.Join(", ", allSelectors)}");
 
             // Probe selectors in parallel (10 concurrent DNS lookups)
             using var semaphore = new SemaphoreSlim(10);
