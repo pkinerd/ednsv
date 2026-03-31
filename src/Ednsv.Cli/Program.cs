@@ -96,22 +96,69 @@ static async Task RunInteractiveAsync(string domain, ValidationOptions options, 
     AnsiConsole.WriteLine();
 
     var validator = new DomainValidator();
-    ValidationReport? report = null;
+    CheckCategory? currentCategory = null;
+    var shownDescriptions = new HashSet<string>();
+    var showingRunningLine = false;
 
-    await AnsiConsole.Status()
-        .Spinner(Spinner.Known.Dots)
-        .SpinnerStyle(Style.Parse("blue"))
-        .StartAsync("Running checks...", async statusCtx =>
+    // Display results progressively as each check completes
+    validator.OnCheckStarted += name =>
+    {
+        AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
+        showingRunningLine = true;
+    };
+
+    validator.OnCheckCompleted += (name, check) =>
+    {
+        // Erase the "Running:" status line (only if it's still showing)
+        if (showingRunningLine)
         {
-            validator.OnCheckStarted += name =>
+            AnsiConsole.Write("\x1b[1A\x1b[2K");
+            showingRunningLine = false;
+        }
+
+        // Print category header when category changes
+        if (check.Category != currentCategory)
+        {
+            if (currentCategory != null)
+                AnsiConsole.WriteLine();
+
+            currentCategory = check.Category;
+            AnsiConsole.Write(new Rule($"[bold]{check.Category}[/]").RuleStyle("grey"));
+
+            if (verbose)
             {
-                statusCtx.Status($"[blue]Running:[/] {Markup.Escape(name)}");
-            };
+                var catDesc = CheckDescriptions.GetForCategory(check.Category);
+                if (catDesc != null && shownDescriptions.Add(catDesc.Name))
+                {
+                    AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(catDesc.Description)}[/]");
+                    AnsiConsole.WriteLine();
+                }
+            }
+        }
 
-            report = await validator.ValidateAsync(domain, options);
-        });
+        var icon = check.Severity switch
+        {
+            CheckSeverity.Pass => "[green]PASS[/]",
+            CheckSeverity.Info => "[blue]INFO[/]",
+            CheckSeverity.Warning => "[yellow]WARN[/]",
+            CheckSeverity.Error => "[red]FAIL[/]",
+            CheckSeverity.Critical => "[red bold]CRIT[/]",
+            _ => "[grey]????[/]"
+        };
 
-    if (report == null) return;
+        AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+
+        foreach (var detail in check.Details)
+            AnsiConsole.MarkupLine($"       [grey]{Markup.Escape(detail)}[/]");
+
+        foreach (var warning in check.Warnings)
+            AnsiConsole.MarkupLine($"       [yellow]⚠ {Markup.Escape(warning)}[/]");
+
+        foreach (var error in check.Errors)
+            AnsiConsole.MarkupLine($"       [red]✗ {Markup.Escape(error)}[/]");
+    };
+
+    var report = await validator.ValidateAsync(domain, options);
 
     // Summary
     AnsiConsole.WriteLine();
@@ -131,55 +178,6 @@ static async Task RunInteractiveAsync(string domain, ValidationOptions options, 
 
     AnsiConsole.Write(summaryTable);
     AnsiConsole.WriteLine();
-
-    // Group results by category
-    var grouped = report.Results.GroupBy(r => r.Category).OrderBy(g => g.Key);
-    var shownDescriptions = new HashSet<string>();
-
-    foreach (var group in grouped)
-    {
-        var categoryColor = group.Any(r => r.Severity == CheckSeverity.Critical) ? "red bold" :
-                           group.Any(r => r.Severity == CheckSeverity.Error) ? "red" :
-                           group.Any(r => r.Severity == CheckSeverity.Warning) ? "yellow" : "green";
-
-        AnsiConsole.Write(new Rule($"[{categoryColor}]{group.Key}[/]").RuleStyle("grey"));
-
-        if (verbose)
-        {
-            var catDesc = CheckDescriptions.GetForCategory(group.Key);
-            if (catDesc != null && shownDescriptions.Add(catDesc.Name))
-            {
-                AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(catDesc.Description)}[/]");
-                AnsiConsole.WriteLine();
-            }
-        }
-
-        foreach (var check in group)
-        {
-            var icon = check.Severity switch
-            {
-                CheckSeverity.Pass => "[green]PASS[/]",
-                CheckSeverity.Info => "[blue]INFO[/]",
-                CheckSeverity.Warning => "[yellow]WARN[/]",
-                CheckSeverity.Error => "[red]FAIL[/]",
-                CheckSeverity.Critical => "[red bold]CRIT[/]",
-                _ => "[grey]????[/]"
-            };
-
-            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
-
-            foreach (var detail in check.Details)
-                AnsiConsole.MarkupLine($"       [grey]{Markup.Escape(detail)}[/]");
-
-            foreach (var warning in check.Warnings)
-                AnsiConsole.MarkupLine($"       [yellow]⚠ {Markup.Escape(warning)}[/]");
-
-            foreach (var error in check.Errors)
-                AnsiConsole.MarkupLine($"       [red]✗ {Markup.Escape(error)}[/]");
-        }
-
-        AnsiConsole.WriteLine();
-    }
 
     // Overall verdict
     AnsiConsole.Write(new Rule("[bold]Verdict[/]").RuleStyle("grey"));
