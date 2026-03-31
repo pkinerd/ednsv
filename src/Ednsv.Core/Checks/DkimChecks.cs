@@ -76,7 +76,7 @@ public class DkimSelectorsCheck : ICheck
                     if (dkimRec != null)
                     {
                         var text = string.Join("", dkimRec.Text);
-                        return (selector, record: text, cnameChain: (string?)null);
+                        return (selector, record: text, cnameChain: (string?)null, brokenCname: (string?)null);
                     }
 
                     // Check for CNAME delegation (common for ESP-managed DKIM)
@@ -92,11 +92,16 @@ public class DkimSelectorsCheck : ICheck
                         if (targetDkim != null)
                         {
                             var text = string.Join("", targetDkim.Text);
-                            return (selector, record: text, cnameChain: (string?)string.Join(" → ", chain));
+                            return (selector, record: text, cnameChain: (string?)string.Join(" → ", chain), brokenCname: (string?)null);
+                        }
+                        else
+                        {
+                            // CNAME exists but target has no DKIM TXT — broken delegation
+                            return (selector, record: (string?)null, cnameChain: (string?)string.Join(" → ", chain), brokenCname: cTarget);
                         }
                     }
 
-                    return (selector, record: (string?)null, cnameChain: (string?)null);
+                    return (selector, record: (string?)null, cnameChain: (string?)null, brokenCname: (string?)null);
                 }
                 finally { semaphore.Release(); }
             })).ToList();
@@ -109,6 +114,10 @@ public class DkimSelectorsCheck : ICheck
                     found.Add((pr.selector, pr.record));
                     if (pr.cnameChain != null)
                         cnameSelectors[pr.selector] = pr.cnameChain;
+                }
+                else if (pr.brokenCname != null)
+                {
+                    result.Errors.Add($"Selector '{pr.selector}': CNAME delegation exists ({pr.cnameChain}) but target {pr.brokenCname} has no TXT record — DKIM verification will fail for this selector");
                 }
             }
 
@@ -166,9 +175,12 @@ public class DkimSelectorsCheck : ICheck
 
                 if (activeCount > 0)
                 {
-                    result.Severity = CheckSeverity.Pass;
+                    result.Severity = result.Errors.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+                    var extra = new List<string>();
+                    if (revokedCount > 0) extra.Add($"{revokedCount} revoked");
+                    if (result.Errors.Any()) extra.Add($"{result.Errors.Count} broken CNAME(s)");
                     result.Summary = $"Found {activeCount} active DKIM selector(s)" +
-                        (revokedCount > 0 ? $" ({revokedCount} revoked)" : "");
+                        (extra.Any() ? $" ({string.Join(", ", extra)})" : "");
                 }
                 else
                 {

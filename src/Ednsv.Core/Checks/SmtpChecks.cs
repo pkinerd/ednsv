@@ -271,6 +271,12 @@ public class EhloCapabilitiesCheck : ICheck
                         if (!capText.Contains(ext, StringComparison.OrdinalIgnoreCase))
                             result.Details.Add($"  Missing: {ext}");
                     }
+
+                    // Highlight SMTPUTF8/EAI readiness
+                    if (capText.Contains("SMTPUTF8", StringComparison.OrdinalIgnoreCase))
+                        result.Details.Add($"  {mxHost} supports SMTPUTF8 (internationalized email addresses/EAI ready)");
+                    else
+                        result.Warnings.Add($"{mxHost}: No SMTPUTF8 — cannot handle internationalized email addresses (RFC 6531)");
                 }
                 else
                 {
@@ -278,7 +284,7 @@ public class EhloCapabilitiesCheck : ICheck
                 }
             }
 
-            result.Severity = CheckSeverity.Info;
+            result.Severity = result.Warnings.Any() ? CheckSeverity.Info : CheckSeverity.Pass;
             result.Summary = "EHLO capabilities retrieved";
         }
         catch (Exception ex)
@@ -365,14 +371,16 @@ public class PostmasterAddressCheck : ICheck
             }
 
             var mxHost = ctx.MxHosts.First();
-            var accepted = await ctx.Smtp.ProbeRcptAsync(mxHost, $"postmaster@{domain}");
-            result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected/Unknown")}");
+            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
+            result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+            if (!accepted)
+                result.Details.Add($"  Server response: {response}");
 
             if (!accepted)
             {
                 result.Severity = CheckSeverity.Warning;
                 result.Summary = "postmaster@ not accepted (RFC 5321 §4.5.1 requires it)";
-                result.Warnings.Add($"postmaster@{domain} was not accepted - RFC 5321 requires this address");
+                result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
             }
             else
             {
@@ -409,14 +417,16 @@ public class AbuseAddressCheck : ICheck
             }
 
             var mxHost = ctx.MxHosts.First();
-            var accepted = await ctx.Smtp.ProbeRcptAsync(mxHost, $"abuse@{domain}");
-            result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected/Unknown")}");
+            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
+            result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+            if (!accepted)
+                result.Details.Add($"  Server response: {response}");
 
             if (!accepted)
             {
                 result.Severity = CheckSeverity.Warning;
                 result.Summary = "abuse@ not accepted (RFC 2142 recommends it)";
-                result.Warnings.Add($"abuse@{domain} was not accepted - RFC 2142 recommends this address");
+                result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
             }
             else
             {

@@ -147,13 +147,19 @@ public class SmtpProbeService
 
     public async Task<bool> ProbeRcptAsync(string host, string address)
     {
+        var (accepted, _) = await ProbeRcptDetailedAsync(host, address);
+        return accepted;
+    }
+
+    public async Task<(bool accepted, string response)> ProbeRcptDetailedAsync(string host, string address)
+    {
         TcpClient? client = null;
         try
         {
             client = new TcpClient();
             var connectTask = client.ConnectAsync(host, 25);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
-                return false;
+                return (false, "Connection timed out");
             await connectTask;
 
             var stream = client.GetStream();
@@ -166,18 +172,19 @@ public class SmtpProbeService
 
             await WriteLineAsync(stream, "MAIL FROM:<>");
             var mailResp = await ReadLineAsync(stream);
-            if (!mailResp.StartsWith("250")) return false;
+            if (!mailResp.StartsWith("250")) return (false, $"MAIL FROM rejected: {mailResp}");
 
             await WriteLineAsync(stream, $"RCPT TO:<{address}>");
             var rcptResp = await ReadLineAsync(stream);
 
             await WriteLineAsync(stream, "QUIT");
 
-            return rcptResp.StartsWith("250") || rcptResp.StartsWith("251");
+            var accepted = rcptResp.StartsWith("250") || rcptResp.StartsWith("251");
+            return (accepted, rcptResp);
         }
-        catch
+        catch (Exception ex)
         {
-            return false;
+            return (false, $"Error: {ex.Message}");
         }
         finally
         {
