@@ -885,13 +885,48 @@ public class DaneCheck : ICheck
                     foreach (var tlsa in tlsaRecords)
                     {
                         result.Details.Add($"{tlsaDomain}: Usage={tlsa.CertificateUsage}, Selector={tlsa.Selector}, MatchingType={tlsa.MatchingType}");
+
+                        // #7 - Invalid TLSA field values
+                        var certUsage = (int)tlsa.CertificateUsage;
+                        var selector = (int)tlsa.Selector;
+                        var matchingType = (int)tlsa.MatchingType;
+
+                        if (certUsage < 0 || certUsage > 3)
+                            result.Errors.Add($"TLSA record has invalid CertificateUsage value {certUsage} — RFC 6698 defines only 0-3");
+                        if (selector < 0 || selector > 1)
+                            result.Errors.Add($"TLSA record has invalid Selector value {selector} — RFC 6698 defines only 0-1");
+                        if (matchingType < 0 || matchingType > 2)
+                            result.Errors.Add($"TLSA record has invalid MatchingType value {matchingType} — RFC 6698 defines only 0-2");
                     }
+
+                    // #6 - DANE requires DNSSEC
+                    try
+                    {
+                        var dsResp = await ctx.Dns.QueryAsync(mxHost, QueryType.DS);
+                        var dsRecords = dsResp.Answers.OfType<DsRecord>().ToList();
+                        if (!dsRecords.Any())
+                        {
+                            // Check parent domain
+                            var mxParts = mxHost.Split('.');
+                            var parentDomain = mxParts.Length > 2
+                                ? string.Join(".", mxParts.Skip(1))
+                                : mxHost;
+                            var parentDsResp = await ctx.Dns.QueryAsync(parentDomain, QueryType.DS);
+                            var parentDs = parentDsResp.Answers.OfType<DsRecord>().ToList();
+                            if (!parentDs.Any())
+                                result.Errors.Add($"TLSA records found for {mxHost} but DNSSEC is not enabled — DANE requires DNSSEC validation (RFC 7672 §2.1). Records will be ignored by conforming MTAs.");
+                        }
+                    }
+                    catch { }
                 }
                 else
                 {
                     result.Details.Add($"{tlsaDomain}: No TLSA records");
                 }
             }
+
+            // #69 - TLSA at submission ports
+            result.Details.Add("DANE checked for port 25 only — submission ports (587/465) not checked");
 
             result.Severity = found > 0 ? CheckSeverity.Pass : CheckSeverity.Info;
             result.Summary = found > 0 ? $"DANE: {found} TLSA record(s) found" : "No DANE/TLSA records";
