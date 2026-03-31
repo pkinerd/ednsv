@@ -8,6 +8,8 @@ using Spectre.Console;
 var domainArg = new Argument<string>("domain", "The domain name to validate (e.g., example.com)");
 var jsonOption = new Option<bool>("--json", "Output results as JSON");
 var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
+var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
+var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
 var dkimSelectorsOption = new Option<string[]>(
     "--dkim-selectors",
     "Additional DKIM selectors to probe (comma-separated or repeated)")
@@ -19,10 +21,12 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool")
     domainArg,
     jsonOption,
     noAxfrOption,
+    catchAllOption,
+    openRelayOption,
     dkimSelectorsOption
 };
 
-rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, string[] dkimSelectors) =>
+rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
 
@@ -50,6 +54,8 @@ rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, string[] dk
     var options = new ValidationOptions
     {
         EnableAxfr = !noAxfr,
+        EnableCatchAll = catchAll,
+        EnableOpenRelay = openRelay,
         AdditionalDkimSelectors = parsedSelectors
     };
 
@@ -61,7 +67,7 @@ rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, string[] dk
     {
         await RunInteractiveAsync(domain, options);
     }
-}, domainArg, jsonOption, noAxfrOption, dkimSelectorsOption);
+}, domainArg, jsonOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption);
 
 return await rootCommand.InvokeAsync(args);
 

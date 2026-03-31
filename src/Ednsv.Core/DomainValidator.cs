@@ -136,6 +136,9 @@ public class DomainValidator
             // DNS propagation
             new DnsPropagationCheck(),
 
+            // Open relay detection
+            new OpenRelayCheck(),
+
             // Catch-all detection
             new CatchAllDetectionCheck(),
 

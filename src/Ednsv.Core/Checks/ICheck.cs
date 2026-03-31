@@ -34,5 +34,7 @@ public class CheckContext
 public class ValidationOptions
 {
     public bool EnableAxfr { get; set; } = true;
+    public bool EnableCatchAll { get; set; } = false;
+    public bool EnableOpenRelay { get; set; } = false;
     public List<string> AdditionalDkimSelectors { get; set; } = new();
 }
