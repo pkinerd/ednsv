@@ -68,12 +68,16 @@ public class SpfRecordCheck : ICheck
                 }
                 else if (allMech == "~all")
                 {
-                    result.Severity = CheckSeverity.Warning;
-                    result.Warnings.Add("~all (softfail) - messages from unauthorized servers may still be delivered");
+                    // ~all (softfail) is the recommended policy when DMARC is enforced.
+                    // It allows DKIM-signed forwarded mail to pass while DMARC catches
+                    // unauthenticated mail. -all can break legitimate forwarding.
+                    result.Severity = CheckSeverity.Pass;
+                    result.Details.Add("~all (softfail) is the recommended policy when used with DMARC enforcement");
                 }
                 else if (allMech == "-all")
                 {
                     result.Severity = CheckSeverity.Pass;
+                    result.Details.Add("-all (hardfail) - note: ~all is generally preferred when DMARC is enforced, as -all can break legitimate mail forwarding");
                 }
                 else
                 {

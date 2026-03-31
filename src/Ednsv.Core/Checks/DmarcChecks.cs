@@ -333,22 +333,42 @@ public class SpfDmarcCombinedCheck : ICheck
         result.Details.Add($"SPF: {spfAll}");
         result.Details.Add($"DMARC: p={dmarcPolicy ?? "not set"}");
 
-        if (spfAll == "~all" && dmarcPolicy == "none")
-        {
-            result.Severity = CheckSeverity.Warning;
-            result.Summary = "~all with p=none provides minimal protection";
-            result.Warnings.Add("SPF softfail (~all) combined with DMARC p=none provides no enforcement");
-        }
-        else if ((spfAll == "~all" || spfAll == "-all") && (dmarcPolicy == "reject" || dmarcPolicy == "quarantine"))
-        {
-            result.Severity = CheckSeverity.Pass;
-            result.Summary = $"Good combination: {spfAll} + p={dmarcPolicy}";
-        }
-        else if (spfAll == "+all")
+        if (spfAll == "+all")
         {
             result.Severity = CheckSeverity.Error;
             result.Summary = "+all nullifies any DMARC protection";
             result.Errors.Add("SPF +all allows all senders regardless of DMARC policy");
+        }
+        else if (spfAll == "~all" && (dmarcPolicy == "reject" || dmarcPolicy == "quarantine"))
+        {
+            result.Severity = CheckSeverity.Pass;
+            result.Summary = $"Ideal combination: ~all + p={dmarcPolicy}";
+            result.Details.Add("~all (softfail) with DMARC enforcement is the recommended configuration");
+            result.Details.Add("Forwarded mail can pass via DKIM while DMARC catches unauthenticated mail");
+        }
+        else if (spfAll == "-all" && (dmarcPolicy == "reject" || dmarcPolicy == "quarantine"))
+        {
+            result.Severity = CheckSeverity.Pass;
+            result.Summary = $"Strong combination: -all + p={dmarcPolicy}";
+            result.Details.Add("Note: ~all is generally preferred over -all when DMARC is enforced, as -all can reject legitimate forwarded mail that would otherwise pass DKIM alignment");
+        }
+        else if (spfAll == "~all" && dmarcPolicy == "none")
+        {
+            result.Severity = CheckSeverity.Warning;
+            result.Summary = "~all with p=none provides minimal protection";
+            result.Warnings.Add("SPF softfail (~all) combined with DMARC p=none provides no enforcement - consider moving to p=quarantine or p=reject");
+        }
+        else if (spfAll == "-all" && dmarcPolicy == "none")
+        {
+            result.Severity = CheckSeverity.Warning;
+            result.Summary = "-all with p=none - SPF enforces but DMARC does not";
+            result.Warnings.Add("Consider enabling DMARC enforcement (p=quarantine or p=reject) and switching to ~all to avoid breaking forwarded mail");
+        }
+        else if (spfAll == "?all")
+        {
+            result.Severity = CheckSeverity.Warning;
+            result.Summary = "?all (neutral) provides no SPF protection";
+            result.Warnings.Add("SPF neutral (?all) does not reject any mail - consider ~all with DMARC enforcement");
         }
         else
         {
