@@ -25,6 +25,7 @@ public class DkimSelectorsCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         var found = new List<(string selector, string record)>();
+        var cnameSelectors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
@@ -51,11 +52,10 @@ public class DkimSelectorsCheck : ICheck
                 }
                 else
                 {
-                    // Check for CNAME
+                    // Check for CNAME delegation (common for ESP-managed DKIM)
                     var chain = await ctx.Dns.ResolveCnameChainAsync(dkimDomain);
                     if (chain.Any())
                     {
-                        // Follow CNAME and check TXT at target
                         var cTarget = chain.Last().Split(" -> ").Last();
                         var targetTxts = await ctx.Dns.GetTxtRecordsAsync(cTarget);
                         var targetDkim = targetTxts.FirstOrDefault(t => t.Text.Any(s =>
@@ -65,7 +65,8 @@ public class DkimSelectorsCheck : ICheck
                         if (targetDkim != null)
                         {
                             var text = string.Join("", targetDkim.Text);
-                            found.Add((selector, $"(via CNAME {string.Join(", ", chain)}) {text}"));
+                            found.Add((selector, text));
+                            cnameSelectors.Add(selector, string.Join(" → ", chain));
                         }
                     }
                 }
@@ -79,6 +80,8 @@ public class DkimSelectorsCheck : ICheck
                 foreach (var (selector, record) in found)
                 {
                     result.Details.Add($"Selector: {selector}");
+                    if (cnameSelectors.TryGetValue(selector, out var cnameChain))
+                        result.Details.Add($"  Delegated via CNAME: {cnameChain}");
                     result.Details.Add($"  Record: {record}");
 
                     // Analyze key

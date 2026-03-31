@@ -111,6 +111,50 @@ public class DaneTlsaCertMatchCheck : ICheck
 
                     if (probe.CertExpiry < DateTime.UtcNow)
                         result.Errors.Add($"{mxHost}: Certificate expired (DANE validation would fail)");
+
+                    // Validate TLSA digest against actual certificate
+                    foreach (var tlsa in tlsaRecords)
+                    {
+                        var usage = (int)tlsa.CertificateUsage;
+                        var usageDesc = usage switch
+                        {
+                            0 => "CA constraint (PKIX-TA)",
+                            1 => "Service cert constraint (PKIX-EE)",
+                            2 => "Trust anchor assertion (DANE-TA)",
+                            3 => "Domain-issued cert (DANE-EE)",
+                            _ => $"Unknown ({usage})"
+                        };
+                        result.Details.Add($"  TLSA Usage={usage} ({usageDesc}), Selector={(int)tlsa.Selector}, MatchingType={(int)tlsa.MatchingType}");
+
+                        // Compute digest from cert and compare
+                        byte[]? dataToHash = null;
+                        if ((int)tlsa.Selector == 0) // Full certificate
+                            dataToHash = probe.Certificate.RawData;
+                        else if ((int)tlsa.Selector == 1) // SubjectPublicKeyInfo
+                            dataToHash = probe.Certificate.PublicKey.ExportSubjectPublicKeyInfo();
+
+                        if (dataToHash != null)
+                        {
+                            byte[]? computed = null;
+                            if ((int)tlsa.MatchingType == 1) // SHA-256
+                                computed = System.Security.Cryptography.SHA256.HashData(dataToHash);
+                            else if ((int)tlsa.MatchingType == 2) // SHA-512
+                                computed = System.Security.Cryptography.SHA512.HashData(dataToHash);
+                            else if ((int)tlsa.MatchingType == 0) // Exact match
+                                computed = dataToHash;
+
+                            if (computed != null)
+                            {
+                                var computedHex = Convert.ToHexString(computed).ToLowerInvariant();
+                                var certAssocData = tlsa.CertificateAssociationData.ToArray();
+                                var tlsaHex = Convert.ToHexString(certAssocData).ToLowerInvariant();
+                                if (computedHex == tlsaHex)
+                                    result.Details.Add($"  TLSA digest MATCH (verified)");
+                                else
+                                    result.Warnings.Add($"{mxHost}: TLSA digest does NOT match certificate (DANE validation would fail)");
+                            }
+                        }
+                    }
                 }
                 else
                 {
@@ -255,10 +299,20 @@ public class SubmissionPortsCheck : ICheck
 
         try
         {
+            // Probe all ports in parallel to avoid sequential timeout accumulation
+            var probeTasks = new List<(string host, int port, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
-                var port587 = await ctx.Smtp.ProbePortAsync(mxHost, 587);
-                var port465 = await ctx.Smtp.ProbePortAsync(mxHost, 465);
+                probeTasks.Add((mxHost, 587, ctx.Smtp.ProbePortAsync(mxHost, 587)));
+                probeTasks.Add((mxHost, 465, ctx.Smtp.ProbePortAsync(mxHost, 465)));
+            }
+
+            await Task.WhenAll(probeTasks.Select(t => t.task));
+
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var port587 = probeTasks.First(t => t.host == mxHost && t.port == 587).task.Result;
+                var port465 = probeTasks.First(t => t.host == mxHost && t.port == 465).task.Result;
 
                 result.Details.Add($"{mxHost}:");
                 result.Details.Add($"  Port 587 (submission): {(port587 ? "Open" : "Closed/Filtered")}");
@@ -360,6 +414,56 @@ public class AbuseAddressCheck : ICheck
         {
             result.Severity = CheckSeverity.Error;
             result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+public class CatchAllDetectionCheck : ICheck
+{
+    public string Name => "Catch-All Detection";
+    public CheckCategory Category => CheckCategory.SMTP;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        if (!ctx.MxHosts.Any())
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "No MX hosts to test";
+            return new List<CheckResult> { result };
+        }
+
+        try
+        {
+            var mxHost = ctx.MxHosts.First();
+            // Generate a random address that should not exist
+            var randomLocal = $"ednsv-probe-{Guid.NewGuid():N}";
+            var randomAddress = $"{randomLocal}@{domain}";
+
+            var accepted = await ctx.Smtp.ProbeRcptAsync(mxHost, randomAddress);
+            result.Details.Add($"Probed {randomAddress} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+
+            if (accepted)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Catch-all detected — server accepts mail for any address";
+                result.Warnings.Add("Server accepted a random non-existent address — catch-all/accept-all is configured");
+                result.Warnings.Add("Catch-all increases spam exposure and makes it harder to detect typos in recipient addresses");
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "No catch-all — server rejects unknown recipients";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Could not test catch-all";
+            result.Details.Add(ex.Message);
         }
 
         return new List<CheckResult> { result };

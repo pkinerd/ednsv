@@ -56,6 +56,12 @@ public class SpfRecordCheck : ICheck
                 result.Details.Add($"  Mechanism: {part}");
             }
 
+            // Check for deprecated ptr mechanism (RFC 7208 §5.5)
+            if (parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("ptr", StringComparison.OrdinalIgnoreCase)))
+            {
+                result.Warnings.Add("SPF uses deprecated 'ptr' mechanism (RFC 7208 §5.5) — slow, unreliable, and should be replaced with ip4/ip6/include");
+            }
+
             // Check all mechanism
             var allMech = parts.LastOrDefault(p => p.TrimStart('+', '-', '~', '?').StartsWith("all"));
             if (allMech != null)

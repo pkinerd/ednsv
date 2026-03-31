@@ -136,6 +136,9 @@ public class DomainValidator
             // DNS propagation
             new DnsPropagationCheck(),
 
+            // Catch-all detection
+            new CatchAllDetectionCheck(),
+
             // Wildcard (50)
             new WildcardDnsCheck(),
 

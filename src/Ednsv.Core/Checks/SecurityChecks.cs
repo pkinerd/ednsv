@@ -86,20 +86,64 @@ public class MtaStsCheck : ICheck
                 if (success)
                 {
                     result.Details.Add($"Policy fetched from {policyUrl} (HTTP {statusCode})");
+
+                    var policyMxPatterns = new List<string>();
+                    string? policyMode = null;
+                    long? maxAge = null;
+
                     foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                     {
                         var trimmed = line.Trim();
+                        if (string.IsNullOrEmpty(trimmed)) continue;
                         result.Details.Add($"  {trimmed}");
 
                         if (trimmed.StartsWith("mode:", StringComparison.OrdinalIgnoreCase))
                         {
-                            var mode = trimmed.Substring(5).Trim();
-                            if (mode == "enforce")
+                            policyMode = trimmed.Substring(5).Trim();
+                            if (policyMode == "enforce")
                                 result.Details.Add("  Mode: enforce (strict)");
-                            else if (mode == "testing")
+                            else if (policyMode == "testing")
                                 result.Warnings.Add("MTA-STS mode is 'testing' - not enforcing");
-                            else if (mode == "none")
+                            else if (policyMode == "none")
                                 result.Warnings.Add("MTA-STS mode is 'none' - disabled");
+                        }
+                        else if (trimmed.StartsWith("mx:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            policyMxPatterns.Add(trimmed.Substring(3).Trim());
+                        }
+                        else if (trimmed.StartsWith("max_age:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (long.TryParse(trimmed.Substring(8).Trim(), out var age))
+                                maxAge = age;
+                        }
+                    }
+
+                    // Validate max_age
+                    if (maxAge.HasValue)
+                    {
+                        var days = maxAge.Value / 86400;
+                        result.Details.Add($"  max_age: {maxAge.Value}s (~{days} days)");
+                        if (maxAge.Value < 86400)
+                            result.Warnings.Add($"MTA-STS max_age is very short ({maxAge.Value}s < 1 day)");
+                        else if (maxAge.Value > 31557600)
+                            result.Details.Add("  max_age > 1 year (long cache)");
+                    }
+
+                    // Cross-reference policy MX patterns with actual MX records
+                    if (policyMxPatterns.Any() && ctx.MxHosts.Any())
+                    {
+                        foreach (var mxHost in ctx.MxHosts)
+                        {
+                            bool covered = policyMxPatterns.Any(pattern =>
+                            {
+                                if (pattern.StartsWith("*."))
+                                    return mxHost.EndsWith(pattern.Substring(1), StringComparison.OrdinalIgnoreCase);
+                                return mxHost.Equals(pattern, StringComparison.OrdinalIgnoreCase);
+                            });
+                            if (covered)
+                                result.Details.Add($"  MX {mxHost}: covered by policy");
+                            else
+                                result.Warnings.Add($"MX host {mxHost} is not covered by MTA-STS policy mx: patterns");
                         }
                     }
 
@@ -149,9 +193,59 @@ public class TlsRptCheck : ICheck
             if (rptRecord != null)
             {
                 var text = string.Join("", rptRecord.Text);
-                result.Severity = CheckSeverity.Pass;
-                result.Summary = "TLS-RPT configured";
                 result.Details.Add($"TLS-RPT: {text}");
+
+                // Parse rua= URIs
+                var tags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var part in text.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var trimmed = part.Trim();
+                    var eqIdx = trimmed.IndexOf('=');
+                    if (eqIdx > 0)
+                        tags[trimmed.Substring(0, eqIdx).Trim()] = trimmed.Substring(eqIdx + 1).Trim();
+                }
+
+                if (tags.TryGetValue("rua", out var ruaValue))
+                {
+                    var uris = ruaValue.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(u => u.Trim()).ToList();
+
+                    foreach (var uri in uris)
+                    {
+                        result.Details.Add($"  Report URI: {uri}");
+
+                        if (uri.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var email = uri.Substring(7);
+                            var atIdx = email.IndexOf('@');
+                            if (atIdx > 0)
+                            {
+                                var reportDomain = email.Substring(atIdx + 1);
+                                // Check if report domain has MX records
+                                var mxRecs = await ctx.Dns.GetMxRecordsAsync(reportDomain);
+                                if (mxRecs.Any())
+                                    result.Details.Add($"    Report domain {reportDomain}: MX records exist");
+                                else
+                                    result.Warnings.Add($"Report domain {reportDomain} has no MX records — reports may not be deliverable");
+                            }
+                        }
+                        else if (uri.StartsWith("https:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            result.Details.Add($"    HTTPS report endpoint");
+                        }
+                        else
+                        {
+                            result.Warnings.Add($"TLS-RPT rua URI has unrecognized scheme: {uri}");
+                        }
+                    }
+                }
+                else
+                {
+                    result.Warnings.Add("TLS-RPT record missing rua= tag (no report destination)");
+                }
+
+                result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+                result.Summary = "TLS-RPT configured";
             }
             else
             {
