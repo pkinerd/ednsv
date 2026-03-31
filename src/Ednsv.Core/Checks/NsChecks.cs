@@ -36,11 +36,22 @@ public class SoaRecordCheck : ICheck
                 else
                     result.Warnings.Add($"Serial {soa.Serial} doesn't follow YYYYMMDDnn convention");
 
-                // Check reasonable values
+                // RFC 1035 §3.3.13 / RFC 2308 SOA timer validation
                 if (soa.Refresh < 3600)
                     result.Warnings.Add($"Refresh interval {soa.Refresh}s is low (recommended >= 3600)");
+                if (soa.Retry < 600)
+                    result.Warnings.Add($"Retry interval {soa.Retry}s is low (recommended >= 600)");
+                if (soa.Retry >= soa.Refresh)
+                    result.Warnings.Add($"Retry ({soa.Retry}s) should be less than Refresh ({soa.Refresh}s)");
                 if (soa.Expire < 604800)
                     result.Warnings.Add($"Expire interval {soa.Expire}s is low (recommended >= 604800)");
+                if (soa.Expire <= soa.Refresh)
+                    result.Warnings.Add($"Expire ({soa.Expire}s) must be greater than Refresh ({soa.Refresh}s)");
+                // RFC 2308 §5: Minimum TTL field is used as the negative caching TTL
+                if (soa.Minimum < 60)
+                    result.Warnings.Add($"Minimum TTL {soa.Minimum}s is very low — affects NXDOMAIN cache duration (RFC 2308)");
+                else if (soa.Minimum > 86400)
+                    result.Warnings.Add($"Minimum TTL {soa.Minimum}s is high — NXDOMAIN responses cached for > 1 day (RFC 2308 recommends 1-3 hours)");
             }
             else
             {

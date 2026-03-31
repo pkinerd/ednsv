@@ -36,10 +36,41 @@ public class DnssecCheck : ICheck
                     result.Details.Add($"  DNSKEY: Flags={key.Flags}, Protocol={key.Protocol}, Algorithm={key.Algorithm}");
             }
 
+            // Check for RRSIG records (RFC 4033-4035: signed zones must have RRSIGs)
+            var rrsigResp = await ctx.Dns.QueryAsync(domain, QueryType.RRSIG);
+            var rrsigs = rrsigResp.Answers.OfType<RRSigRecord>().ToList();
+            if (rrsigs.Any())
+                result.Details.Add($"RRSIG records found: {rrsigs.Count}");
+
             if (dsRecords.Any() || dnskeys.Any())
             {
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = "DNSSEC is enabled";
+
+                // Validate DS digest algorithms (RFC 8624)
+                foreach (var ds in dsRecords)
+                {
+                    // DigestType 1 = SHA-1 (deprecated per RFC 8624)
+                    if ((int)ds.DigestType == 1)
+                        result.Warnings.Add($"DS KeyTag={ds.KeyTag}: SHA-1 digest (type 1) is deprecated (RFC 8624) — use SHA-256 (type 2)");
+                }
+
+                // Validate DNSKEY algorithms (RFC 8624)
+                foreach (var key in dnskeys)
+                {
+                    var alg = (int)key.Algorithm;
+                    // Algorithm 1 (RSAMD5) and 3 (DSA) are MUST NOT per RFC 8624
+                    if (alg == 1)
+                        result.Errors.Add($"DNSKEY Algorithm 1 (RSAMD5) is prohibited (RFC 8624 §3.1)");
+                    else if (alg == 3 || alg == 6)
+                        result.Errors.Add($"DNSKEY Algorithm {alg} (DSA) is prohibited (RFC 8624 §3.1)");
+                    else if (alg == 5 || alg == 7)
+                        result.Warnings.Add($"DNSKEY Algorithm {alg} (RSA/SHA-1) should be replaced — use Algorithm 8 (RSA/SHA-256) or 13 (ECDSA P-256)");
+                }
+
+                // Warn if DS/DNSKEY present but no RRSIGs found
+                if (!rrsigs.Any())
+                    result.Warnings.Add("DNSSEC keys present but no RRSIG records found — zone may not be properly signed");
             }
             else
             {
@@ -89,6 +120,7 @@ public class MtaStsCheck : ICheck
 
                     var policyMxPatterns = new List<string>();
                     string? policyMode = null;
+                    string? policyVersion = null;
                     long? maxAge = null;
 
                     foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -97,7 +129,11 @@ public class MtaStsCheck : ICheck
                         if (string.IsNullOrEmpty(trimmed)) continue;
                         result.Details.Add($"  {trimmed}");
 
-                        if (trimmed.StartsWith("mode:", StringComparison.OrdinalIgnoreCase))
+                        if (trimmed.StartsWith("version:", StringComparison.OrdinalIgnoreCase))
+                        {
+                            policyVersion = trimmed.Substring(8).Trim();
+                        }
+                        else if (trimmed.StartsWith("mode:", StringComparison.OrdinalIgnoreCase))
                         {
                             policyMode = trimmed.Substring(5).Trim();
                             if (policyMode == "enforce")
@@ -106,6 +142,8 @@ public class MtaStsCheck : ICheck
                                 result.Warnings.Add("MTA-STS mode is 'testing' - not enforcing");
                             else if (policyMode == "none")
                                 result.Warnings.Add("MTA-STS mode is 'none' - disabled");
+                            else
+                                result.Errors.Add($"Invalid MTA-STS mode '{policyMode}' — must be enforce, testing, or none (RFC 8461 §3.2)");
                         }
                         else if (trimmed.StartsWith("mx:", StringComparison.OrdinalIgnoreCase))
                         {
@@ -117,6 +155,24 @@ public class MtaStsCheck : ICheck
                                 maxAge = age;
                         }
                     }
+
+                    // RFC 8461 §3.2: version field is mandatory and must be STSv1
+                    if (policyVersion == null)
+                        result.Errors.Add("MTA-STS policy missing required 'version:' field (RFC 8461 §3.2)");
+                    else if (!policyVersion.Equals("STSv1", StringComparison.OrdinalIgnoreCase))
+                        result.Errors.Add($"Invalid MTA-STS policy version '{policyVersion}' — must be STSv1 (RFC 8461 §3.2)");
+
+                    // RFC 8461 §3.2: mode is mandatory
+                    if (policyMode == null)
+                        result.Errors.Add("MTA-STS policy missing required 'mode:' field (RFC 8461 §3.2)");
+
+                    // RFC 8461 §3.2: mx is mandatory (at least one)
+                    if (!policyMxPatterns.Any() && policyMode != "none")
+                        result.Errors.Add("MTA-STS policy missing required 'mx:' field(s) (RFC 8461 §3.2)");
+
+                    // RFC 8461 §3.2: max_age is mandatory
+                    if (!maxAge.HasValue)
+                        result.Errors.Add("MTA-STS policy missing required 'max_age:' field (RFC 8461 §3.2)");
 
                     // Validate max_age
                     if (maxAge.HasValue)
@@ -205,10 +261,25 @@ public class TlsRptCheck : ICheck
                         tags[trimmed.Substring(0, eqIdx).Trim()] = trimmed.Substring(eqIdx + 1).Trim();
                 }
 
+                // RFC 8460 §3: v= tag is required and must be TLSRPTv1
+                if (tags.TryGetValue("v", out var version))
+                {
+                    if (!version.Equals("TLSRPTv1", StringComparison.OrdinalIgnoreCase))
+                        result.Errors.Add($"Invalid TLS-RPT version '{version}' — must be TLSRPTv1 (RFC 8460 §3)");
+                }
+                else
+                {
+                    result.Warnings.Add("TLS-RPT record missing v= tag — should be v=TLSRPTv1 (RFC 8460 §3)");
+                }
+
                 if (tags.TryGetValue("rua", out var ruaValue))
                 {
                     var uris = ruaValue.Split(',', StringSplitOptions.RemoveEmptyEntries)
                         .Select(u => u.Trim()).ToList();
+
+                    // RFC 8460 §3: rua must contain at least one URI
+                    if (!uris.Any())
+                        result.Errors.Add("TLS-RPT rua= tag is empty — must contain at least one reporting URI (RFC 8460 §3)");
 
                     foreach (var uri in uris)
                     {

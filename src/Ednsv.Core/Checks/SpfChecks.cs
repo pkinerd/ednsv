@@ -56,6 +56,19 @@ public class SpfRecordCheck : ICheck
                 result.Details.Add($"  Mechanism: {part}");
             }
 
+            // Validate mechanism syntax (RFC 7208 §12)
+            var validMechanisms = new[] { "all", "include:", "a", "a:", "a/", "mx", "mx:", "mx/", "ip4:", "ip6:", "ptr", "ptr:", "exists:", "redirect=", "exp=" };
+            foreach (var part in parts.Skip(1))
+            {
+                var stripped = part.TrimStart('+', '-', '~', '?');
+                if (!validMechanisms.Any(vm => stripped.StartsWith(vm, StringComparison.OrdinalIgnoreCase)))
+                    result.Warnings.Add($"Unrecognized SPF mechanism: '{part}' — may cause PermError during evaluation");
+            }
+
+            // Validate v=spf1 is the first token (RFC 7208 §4.5)
+            if (!parts[0].Equals("v=spf1", StringComparison.OrdinalIgnoreCase))
+                result.Warnings.Add($"First token is '{parts[0]}', expected 'v=spf1' (RFC 7208 §4.5)");
+
             // Check for deprecated ptr mechanism (RFC 7208 §5.5)
             if (parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("ptr", StringComparison.OrdinalIgnoreCase)))
             {
@@ -116,6 +129,7 @@ public class SpfExpansionCheck : ICheck
     private int _lookupCount;
     private int _voidLookupCount;
     private int _maxDepth;
+    private readonly HashSet<string> _visitedDomains = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
@@ -123,6 +137,7 @@ public class SpfExpansionCheck : ICheck
         _lookupCount = 0;
         _voidLookupCount = 0;
         _maxDepth = 0;
+        _visitedDomains.Clear();
 
         try
         {
@@ -171,6 +186,11 @@ public class SpfExpansionCheck : ICheck
         if (depth > 10)
         {
             result.Warnings.Add($"SPF expansion truncated at depth {depth} (safety limit)");
+            return;
+        }
+        if (!_visitedDomains.Add(domain))
+        {
+            result.Warnings.Add($"Circular SPF reference detected: {domain} was already visited in this chain");
             return;
         }
         if (depth > _maxDepth) _maxDepth = depth;

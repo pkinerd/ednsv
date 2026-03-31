@@ -53,6 +53,10 @@ public class SmtpTlsCertCheck : ICheck
 
                     if (!inSans)
                         result.Warnings.Add($"{mxHost}: MX hostname not found in certificate SANs");
+
+                    // Show TLS protocol version
+                    if (probe.TlsProtocol != default)
+                        result.Details.Add($"  TLS Protocol: {probe.TlsProtocol}");
                 }
                 else if (probe.Connected)
                 {
@@ -205,10 +209,24 @@ public class SmtpBannerCheck : ICheck
                 {
                     result.Details.Add($"{mxHost}: Banner: {probe.Banner}");
 
-                    // Check if banner starts with 220
+                    // RFC 5321 §4.2: Response must start with "220"
                     if (!probe.Banner.StartsWith("220"))
                     {
-                        result.Warnings.Add($"{mxHost}: Banner does not start with 220");
+                        result.Warnings.Add($"{mxHost}: Banner does not start with 220 (RFC 5321 §4.2)");
+                    }
+                    else
+                    {
+                        // RFC 5321 §4.3.1: "220 <domain> <text>" format expected
+                        var bannerBody = probe.Banner.Length > 4 ? probe.Banner.Substring(4).Trim() : "";
+                        if (string.IsNullOrEmpty(bannerBody))
+                            result.Warnings.Add($"{mxHost}: Banner has no hostname after 220 (RFC 5321 §4.3.1)");
+                        else
+                        {
+                            var bannerHost = bannerBody.Split(' ')[0];
+                            // Warn if banner hostname is not an FQDN (no dots)
+                            if (!bannerHost.Contains('.'))
+                                result.Warnings.Add($"{mxHost}: Banner hostname '{bannerHost}' is not an FQDN (RFC 5321 §4.1.2)");
+                        }
                     }
 
                     // Check if hostname in banner matches MX — mismatch is common
