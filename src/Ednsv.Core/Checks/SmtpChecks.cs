@@ -337,10 +337,25 @@ public class SubmissionPortsCheck : ICheck
                 result.Details.Add($"{mxHost}:");
                 result.Details.Add($"  Port 587 (submission): {(port587 ? "Open" : "Closed/Filtered")}");
                 result.Details.Add($"  Port 465 (SMTPS): {(port465 ? "Open" : "Closed/Filtered")}");
+
+                // Probe TLS on open submission ports
+                if (port587)
+                {
+                    var probe587 = await ctx.Smtp.ProbeSmtpAsync(mxHost, 587);
+                    if (probe587.Connected)
+                    {
+                        if (probe587.SupportsStartTls)
+                            result.Details.Add($"  Port 587 TLS: {probe587.TlsProtocol} ({probe587.TlsCipherSuite ?? "unknown cipher"})");
+                        else
+                            result.Warnings.Add($"{mxHost}: Port 587 open but STARTTLS not offered");
+                    }
+                }
             }
 
-            result.Severity = CheckSeverity.Info;
-            result.Summary = "Submission port probe completed";
+            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Info;
+            result.Summary = result.Warnings.Any()
+                ? "Submission port issues detected"
+                : "Submission port probe completed";
         }
         catch (Exception ex)
         {
@@ -370,22 +385,37 @@ public class PostmasterAddressCheck : ICheck
                 return new List<CheckResult> { result };
             }
 
-            var mxHost = ctx.MxHosts.First();
-            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
-            result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
-            if (!accepted)
-                result.Details.Add($"  Server response: {response}");
+            int acceptedCount = 0;
+            int rejectedCount = 0;
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
+                result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+                if (!accepted)
+                {
+                    result.Details.Add($"  Server response: {response}");
+                    result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                    rejectedCount++;
+                }
+                else
+                {
+                    acceptedCount++;
+                }
+            }
 
-            if (!accepted)
+            if (rejectedCount > 0)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = "postmaster@ not accepted (RFC 5321 §4.5.1 requires it)";
-                result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                result.Summary = rejectedCount == ctx.MxHosts.Count
+                    ? "postmaster@ not accepted on any MX (RFC 5321 §4.5.1 requires it)"
+                    : $"postmaster@ rejected on {rejectedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "postmaster@ accepted";
+                result.Summary = ctx.MxHosts.Count > 1
+                    ? $"postmaster@ accepted on all {ctx.MxHosts.Count} MX hosts"
+                    : "postmaster@ accepted";
             }
         }
         catch (Exception ex)
@@ -416,22 +446,37 @@ public class AbuseAddressCheck : ICheck
                 return new List<CheckResult> { result };
             }
 
-            var mxHost = ctx.MxHosts.First();
-            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
-            result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
-            if (!accepted)
-                result.Details.Add($"  Server response: {response}");
+            int acceptedCount = 0;
+            int rejectedCount = 0;
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
+                result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+                if (!accepted)
+                {
+                    result.Details.Add($"  Server response: {response}");
+                    result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                    rejectedCount++;
+                }
+                else
+                {
+                    acceptedCount++;
+                }
+            }
 
-            if (!accepted)
+            if (rejectedCount > 0)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = "abuse@ not accepted (RFC 2142 recommends it)";
-                result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                result.Summary = rejectedCount == ctx.MxHosts.Count
+                    ? "abuse@ not accepted on any MX (RFC 2142 recommends it)"
+                    : $"abuse@ rejected on {rejectedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "abuse@ accepted";
+                result.Summary = ctx.MxHosts.Count > 1
+                    ? $"abuse@ accepted on all {ctx.MxHosts.Count} MX hosts"
+                    : "abuse@ accepted";
             }
         }
         catch (Exception ex)

@@ -31,14 +31,36 @@ public class DnsResolverService
         _directClient = new LookupClient(directOptions);
     }
 
+    /// <summary>
+    /// Tracks DNS query errors that occurred during the session.
+    /// Checks can inspect this to distinguish "no record" from "query failed".
+    /// </summary>
+    public List<string> QueryErrors { get; } = new();
+
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
         try
         {
             return await _client.QueryAsync(domain, type);
         }
-        catch (Exception)
+        catch (DnsResponseException ex)
         {
+            QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
+            return EmptyResponse.Instance;
+        }
+        catch (OperationCanceledException)
+        {
+            QueryErrors.Add($"DNS timeout querying {type} for {domain}");
+            return EmptyResponse.Instance;
+        }
+        catch (SocketException ex)
+        {
+            QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
+            return EmptyResponse.Instance;
+        }
+        catch (Exception ex)
+        {
+            QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
             return EmptyResponse.Instance;
         }
     }
@@ -58,8 +80,9 @@ public class DnsResolverService
             var client = new LookupClient(opts);
             return await client.QueryAsync(domain, type);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
             return EmptyResponse.Instance;
         }
     }

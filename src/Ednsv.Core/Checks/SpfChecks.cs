@@ -153,7 +153,11 @@ public class SpfExpansionCheck : ICheck
 
     private async Task ExpandSpfAsync(CheckContext ctx, string domain, string spf, CheckResult result, int depth)
     {
-        if (depth > 10) return;
+        if (depth > 10)
+        {
+            result.Warnings.Add($"SPF expansion truncated at depth {depth} (safety limit)");
+            return;
+        }
         if (depth > _maxDepth) _maxDepth = depth;
         var indent = new string(' ', depth * 2);
 

@@ -75,10 +75,11 @@ public class ForwardConfirmedRdnsCheck : ICheck
             }
 
             int passed = 0;
+            int checked_ = 0;
             foreach (var ip in allMxIps)
             {
                 if (!IPAddress.TryParse(ip, out var addr)) continue;
-                if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6) continue; // skip IPv6 for simplicity
+                checked_++;
 
                 var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                 if (!ptrs.Any())
@@ -90,8 +91,10 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 bool confirmed = false;
                 foreach (var ptr in ptrs)
                 {
+                    // Check both A and AAAA for forward confirmation
                     var fwdIps = await ctx.Dns.ResolveAAsync(ptr);
-                    if (fwdIps.Contains(ip))
+                    var fwdIpsV6 = await ctx.Dns.ResolveAAAAAsync(ptr);
+                    if (fwdIps.Concat(fwdIpsV6).Contains(ip))
                     {
                         confirmed = true;
                         result.Details.Add($"{ip} -> {ptr} -> {ip} (FCrDNS confirmed)");
@@ -104,7 +107,7 @@ public class ForwardConfirmedRdnsCheck : ICheck
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
-            result.Summary = $"FCrDNS: {passed}/{allMxIps.Count} MX IPs confirmed";
+            result.Summary = $"FCrDNS: {passed}/{checked_} MX IPs confirmed";
         }
         catch (Exception ex)
         {

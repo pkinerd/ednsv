@@ -31,8 +31,9 @@ public class DkimSelectorsCheck : ICheck
         {
             // Try AXFR to discover selectors from zone data (if enabled and NS IPs available)
             var axfrSelectors = new List<string>();
-            if (ctx.Options.EnableAxfr)
+            if (ctx.Options.EnableAxfr && ctx.NsHosts.Any())
             {
+                bool axfrSucceeded = false;
                 foreach (var nsHost in ctx.NsHosts)
                 {
                     if (!ctx.NsHostIps.TryGetValue(nsHost, out var ips)) continue;
@@ -42,6 +43,7 @@ public class DkimSelectorsCheck : ICheck
                         var discovered = await ctx.Dns.ExtractDkimSelectorsFromAxfrAsync(addr, domain);
                         if (discovered.Any())
                         {
+                            axfrSucceeded = true;
                             axfrSelectors.AddRange(discovered);
                             result.Details.Add($"AXFR from {nsHost}: discovered {discovered.Count} selector(s): {string.Join(", ", discovered)}");
                             break; // One successful AXFR is enough
@@ -49,6 +51,8 @@ public class DkimSelectorsCheck : ICheck
                     }
                     if (axfrSelectors.Any()) break;
                 }
+                if (!axfrSucceeded)
+                    result.Details.Add("AXFR selector discovery: zone transfer denied (probing common selectors only)");
             }
 
             // Merge AXFR-discovered + user-provided + common selectors (deduped)

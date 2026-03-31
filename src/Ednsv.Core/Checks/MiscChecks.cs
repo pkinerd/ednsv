@@ -232,11 +232,13 @@ public class TtlSanityCheck : ICheck
             foreach (var (name, type, queryDomain) in checks)
             {
                 var resp = await ctx.Dns.QueryRawAsync(queryDomain, type);
-                foreach (var answer in resp.Answers)
-                {
-                    var ttl = answer.TimeToLive;
-                    var label = $"{name} ({queryDomain})";
+                var ttls = resp.Answers.Select(a => a.TimeToLive).Distinct().ToList();
+                var label = $"{name} ({queryDomain})";
 
+                if (!ttls.Any()) continue;
+
+                foreach (var ttl in ttls)
+                {
                     if (ttl < 60)
                     {
                         result.Warnings.Add($"{label}: TTL {ttl}s is very low (< 60s)");
@@ -249,7 +251,11 @@ public class TtlSanityCheck : ICheck
                     {
                         result.Details.Add($"{label}: TTL {ttl}s");
                     }
-                    break; // Just check first record of each type
+                }
+
+                if (ttls.Count > 1)
+                {
+                    result.Warnings.Add($"{label}: inconsistent TTLs across records ({string.Join(", ", ttls.Select(t => $"{t}s"))})");
                 }
             }
 

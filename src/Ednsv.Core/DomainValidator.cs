@@ -239,6 +239,22 @@ public class DomainValidator
             }
         }
 
+        // Surface any DNS query errors so users know results may be incomplete
+        if (_dns.QueryErrors.Any())
+        {
+            report.Results.Add(new CheckResult
+            {
+                CheckName = "DNS Query Errors",
+                Category = CheckCategory.NS,
+                Severity = CheckSeverity.Warning,
+                Summary = $"{_dns.QueryErrors.Count} DNS query error(s) — some results may be incomplete",
+                Warnings = _dns.QueryErrors.Take(20).ToList(),
+                Details = _dns.QueryErrors.Count > 20
+                    ? new List<string> { $"...and {_dns.QueryErrors.Count - 20} more" }
+                    : new List<string>()
+            });
+        }
+
         sw.Stop();
         report.Duration = sw.Elapsed;
         return report;
