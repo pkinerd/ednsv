@@ -560,21 +560,36 @@ public class BimiCheck : ICheck
                 result.Details.Add($"Logo URL: {logoUrl}");
                 if (!string.IsNullOrEmpty(logoUrl))
                 {
-                    if (!logoUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                        result.Warnings.Add("BIMI logo URL must use HTTPS");
+                    // #36 - Multiple l= URIs (comma-separated)
+                    var logoUrls = logoUrl.Contains(',')
+                        ? logoUrl.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(u => u.Trim()).ToList()
+                        : new List<string> { logoUrl };
 
-                    if (!logoUrl.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-                        result.Warnings.Add("BIMI logo should be SVG format");
+                    foreach (var singleLogoUrl in logoUrls)
+                    {
+                        if (logoUrls.Count > 1)
+                            result.Details.Add($"Logo URL found: {singleLogoUrl}");
 
-                    var (success, svgContent, statusCode) = await ctx.Http.GetAsync(logoUrl);
-                    result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
-                    if (!success)
-                    {
-                        result.Warnings.Add("BIMI logo URL is not reachable");
-                    }
-                    else
-                    {
-                        ValidateSvg(svgContent, result);
+                        if (!singleLogoUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                            result.Warnings.Add($"BIMI logo URL must use HTTPS: {singleLogoUrl}");
+
+                        if (!singleLogoUrl.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+                            result.Warnings.Add($"BIMI logo should be SVG format: {singleLogoUrl}");
+
+                        var (success, svgContent, statusCode, svgContentType) = await ctx.Http.GetWithHeadersAsync(singleLogoUrl);
+                        result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
+                        if (!success)
+                        {
+                            result.Warnings.Add($"BIMI logo URL is not reachable: {singleLogoUrl}");
+                        }
+                        else
+                        {
+                            // #61 - SVG Content-Type validation
+                            if (svgContentType != null && !svgContentType.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
+                                result.Details.Add($"SVG logo served with Content-Type '{svgContentType}' — expected image/svg+xml");
+
+                            ValidateSvg(svgContent, result);
+                        }
                     }
                 }
                 else
@@ -610,7 +625,7 @@ public class BimiCheck : ICheck
             }
             else
             {
-                result.Details.Add("No VMC (a= tag) specified — self-asserted BIMI");
+                result.Details.Add("No authority evidence (a= tag) — self-asserted BIMI (VMC or CMC certificate recommended for wider receiver support)");
             }
 
             // Check DMARC prerequisite
@@ -622,6 +637,17 @@ public class BimiCheck : ICheck
                 {
                     result.Warnings.Add($"BIMI requires DMARC p=quarantine or p=reject (current: p={policy ?? "none"})");
                 }
+
+                // #33 - DMARC pct= check for BIMI
+                if (policy == "quarantine" && dmarcTags.TryGetValue("pct", out var pctStr))
+                {
+                    if (int.TryParse(pctStr, out var pct) && pct != 100)
+                        result.Warnings.Add($"DMARC pct={pct} with p=quarantine — BIMI requires pct=100 (or omitted) when policy is quarantine");
+                }
+
+                // #34 - DMARC sp=none breaks BIMI
+                if (dmarcTags.TryGetValue("sp", out var spPolicy) && spPolicy == "none")
+                    result.Warnings.Add("DMARC sp=none — BIMI will not work for subdomains and some receivers may reject BIMI entirely");
             }
             else
             {
