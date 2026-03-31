@@ -151,6 +151,21 @@ public class SpfExpansionCheck : ICheck
         return new List<CheckResult> { result };
     }
 
+    private static (string domain, string? cidr) SplitCidr(string value)
+    {
+        var slashIdx = value.IndexOf('/');
+        if (slashIdx >= 0)
+            return (value.Substring(0, slashIdx), value.Substring(slashIdx));
+        return (value, null);
+    }
+
+    private static string QualifierPrefix(string part)
+    {
+        if (part.Length > 0 && "+-~?".Contains(part[0]))
+            return part[0].ToString();
+        return "+"; // implicit pass
+    }
+
     private async Task ExpandSpfAsync(CheckContext ctx, string domain, string spf, CheckResult result, int depth)
     {
         if (depth > 10)
@@ -165,13 +180,15 @@ public class SpfExpansionCheck : ICheck
         foreach (var part in parts)
         {
             if (part.Equals("v=spf1", StringComparison.OrdinalIgnoreCase)) continue;
+            var qualifier = QualifierPrefix(part);
             var mech = part.TrimStart('+', '-', '~', '?');
+            var qualLabel = qualifier == "+" ? "" : $"({qualifier}) ";
 
             if (mech.StartsWith("include:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
                 var target = mech.Substring(8);
-                result.Details.Add($"{indent}include:{target}");
+                result.Details.Add($"{indent}{qualLabel}include:{target}");
                 var txt = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
@@ -182,51 +199,75 @@ public class SpfExpansionCheck : ICheck
             {
                 _lookupCount++;
                 var target = mech.Substring(9);
-                result.Details.Add($"{indent}redirect={target}");
+                result.Details.Add($"{indent}{qualLabel}redirect={target}");
                 var txt = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
                 else
                     _voidLookupCount++;
             }
-            else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a")
+            else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a"
+                     || (mech.StartsWith("a/", StringComparison.OrdinalIgnoreCase)))
             {
                 _lookupCount++;
-                var target = mech.Length > 2 ? mech.Substring(2) : domain;
+                string raw = mech.Length > 2 && mech[1] == ':' ? mech.Substring(2) : (mech == "a" ? "" : mech.Substring(1));
+                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(target)) target = domain;
+                var cidrLabel = cidr ?? "";
                 var ips = await ctx.Dns.ResolveAAsync(target);
-                result.Details.Add($"{indent}a:{target} -> {string.Join(", ", ips)}");
-                if (!ips.Any()) _voidLookupCount++;
+                var ipsV6 = await ctx.Dns.ResolveAAAAAsync(target);
+                var allIps = ips.Concat(ipsV6).ToList();
+                result.Details.Add($"{indent}{qualLabel}a:{target}{cidrLabel} -> {string.Join(", ", allIps)}");
+                if (!allIps.Any()) _voidLookupCount++;
             }
-            else if (mech.StartsWith("mx:", StringComparison.OrdinalIgnoreCase) || mech == "mx")
+            else if (mech.StartsWith("mx:", StringComparison.OrdinalIgnoreCase) || mech == "mx"
+                     || (mech.StartsWith("mx/", StringComparison.OrdinalIgnoreCase)))
             {
                 _lookupCount++;
-                var target = mech.Length > 3 ? mech.Substring(3) : domain;
+                string raw = mech.Length > 3 && mech[2] == ':' ? mech.Substring(3) : (mech == "mx" ? "" : mech.Substring(2));
+                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(target)) target = domain;
+                var cidrLabel = cidr ?? "";
                 var mxRecs = await ctx.Dns.GetMxRecordsAsync(target);
                 foreach (var mx in mxRecs)
                 {
                     var mxHost = mx.Exchange.Value.TrimEnd('.');
                     var ips = await ctx.Dns.ResolveAAsync(mxHost);
-                    result.Details.Add($"{indent}mx:{target} -> {mxHost} -> {string.Join(", ", ips)}");
+                    var ipsV6 = await ctx.Dns.ResolveAAAAAsync(mxHost);
+                    var allIps = ips.Concat(ipsV6).ToList();
+                    result.Details.Add($"{indent}{qualLabel}mx:{target}{cidrLabel} -> {mxHost} -> {string.Join(", ", allIps)}");
                 }
                 if (!mxRecs.Any()) _voidLookupCount++;
             }
             else if (mech.StartsWith("ip4:", StringComparison.OrdinalIgnoreCase))
             {
-                result.Details.Add($"{indent}{mech}");
+                result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("ip6:", StringComparison.OrdinalIgnoreCase))
             {
-                result.Details.Add($"{indent}{mech}");
+                result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("exists:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                result.Details.Add($"{indent}{mech}");
+                result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("ptr", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                result.Details.Add($"{indent}{mech} (deprecated)");
+                result.Details.Add($"{indent}{qualLabel}{mech} (deprecated)");
+            }
+            else if (mech.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Details.Add($"{indent}{qualifier}all");
+            }
+            else if (mech.StartsWith("exp=", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Details.Add($"{indent}exp={mech.Substring(4)}");
+            }
+            else
+            {
+                result.Details.Add($"{indent}(unrecognized: {part})");
             }
         }
     }
