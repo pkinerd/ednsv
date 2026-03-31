@@ -28,7 +28,13 @@ public class DkimSelectorsCheck : ICheck
 
         try
         {
-            foreach (var selector in CommonSelectors)
+            // Merge common selectors with user-provided ones (user selectors first, deduped)
+            var allSelectors = ctx.Options.AdditionalDkimSelectors
+                .Concat(CommonSelectors)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var selector in allSelectors)
             {
                 var dkimDomain = $"{selector}._domainkey.{domain}";
                 var txts = await ctx.Dns.GetTxtRecordsAsync(dkimDomain);
@@ -113,7 +119,7 @@ public class DkimSelectorsCheck : ICheck
             {
                 result.Severity = CheckSeverity.Warning;
                 result.Summary = "No DKIM selectors found";
-                result.Warnings.Add($"Probed {CommonSelectors.Length} common selectors - none found");
+                result.Warnings.Add($"Probed {allSelectors.Count} selectors - none found");
             }
         }
         catch (Exception ex)

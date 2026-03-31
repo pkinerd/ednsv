@@ -1,19 +1,28 @@
 using System.CommandLine;
 using System.Text.Json;
 using Ednsv.Core;
+using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
 using Spectre.Console;
 
-
 var domainArg = new Argument<string>("domain", "The domain name to validate (e.g., example.com)");
 var jsonOption = new Option<bool>("--json", "Output results as JSON");
+var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
+var dkimSelectorsOption = new Option<string[]>(
+    "--dkim-selectors",
+    "Additional DKIM selectors to probe (comma-separated or repeated)")
+{
+    AllowMultipleArgumentsPerToken = true
+};
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool")
 {
     domainArg,
-    jsonOption
+    jsonOption,
+    noAxfrOption,
+    dkimSelectorsOption
 };
 
-rootCommand.SetHandler(async (string domain, bool json) =>
+rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, string[] dkimSelectors) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
 
@@ -23,23 +32,46 @@ rootCommand.SetHandler(async (string domain, bool json) =>
         return;
     }
 
+    // Parse comma-separated selectors (--dkim-selectors s1,s2,s3 or --dkim-selectors s1 --dkim-selectors s2)
+    var parsedSelectors = new List<string>();
+    if (dkimSelectors != null)
+    {
+        foreach (var s in dkimSelectors)
+        {
+            foreach (var part in s.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = part.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                    parsedSelectors.Add(trimmed);
+            }
+        }
+    }
+
+    var options = new ValidationOptions
+    {
+        EnableAxfr = !noAxfr,
+        AdditionalDkimSelectors = parsedSelectors
+    };
+
     if (json)
     {
-        await RunJsonAsync(domain);
+        await RunJsonAsync(domain, options);
     }
     else
     {
-        await RunInteractiveAsync(domain);
+        await RunInteractiveAsync(domain, options);
     }
-}, domainArg, jsonOption);
+}, domainArg, jsonOption, noAxfrOption, dkimSelectorsOption);
 
 return await rootCommand.InvokeAsync(args);
 
-static async Task RunInteractiveAsync(string domain)
+static async Task RunInteractiveAsync(string domain, ValidationOptions options)
 {
     AnsiConsole.Write(new Rule($"[bold blue]ednsv - Email DNS Validation[/]").RuleStyle("blue"));
     AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
     AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    if (!options.EnableAxfr)
+        AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
     AnsiConsole.WriteLine();
 
     var validator = new DomainValidator();
@@ -55,7 +87,7 @@ static async Task RunInteractiveAsync(string domain)
                 statusCtx.Status($"[blue]Running:[/] {Markup.Escape(name)}");
             };
 
-            report = await validator.ValidateAsync(domain);
+            report = await validator.ValidateAsync(domain, options);
         });
 
     if (report == null) return;
@@ -130,16 +162,16 @@ static async Task RunInteractiveAsync(string domain)
         AnsiConsole.MarkupLine("[green]All checks passed. Email configuration looks good![/]");
 }
 
-static async Task RunJsonAsync(string domain)
+static async Task RunJsonAsync(string domain, ValidationOptions options)
 {
     var validator = new DomainValidator();
-    var report = await validator.ValidateAsync(domain);
+    var report = await validator.ValidateAsync(domain, options);
 
-    var options = new JsonSerializerOptions
+    var jsonOptions = new JsonSerializerOptions
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    Console.WriteLine(JsonSerializer.Serialize(report, options));
+    Console.WriteLine(JsonSerializer.Serialize(report, jsonOptions));
 }

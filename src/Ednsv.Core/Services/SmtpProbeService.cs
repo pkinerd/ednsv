@@ -16,6 +16,10 @@ public class SmtpProbeResult
     public string? CertIssuer { get; set; }
     public DateTime? CertExpiry { get; set; }
     public List<string>? CertSans { get; set; }
+    public System.Security.Authentication.SslProtocols TlsProtocol { get; set; }
+    public string? TlsCipherSuite { get; set; }
+    public int? SmtpMaxSize { get; set; }
+    public bool SupportsRequireTls { get; set; }
     public string? Error { get; set; }
 }
 
@@ -47,12 +51,30 @@ public class SmtpProbeService
             result.Banner = await ReadLineAsync(stream);
 
             // Send EHLO
-            await WriteLineAsync(stream, "EHLO ednsv.check");
+            await WriteLineAsync(stream, "EHLO email-dns-validator");
             var ehloResponse = await ReadMultiLineAsync(stream);
             result.EhloCapabilities = ehloResponse;
 
             result.SupportsStartTls = ehloResponse.Any(l =>
                 l.Contains("STARTTLS", StringComparison.OrdinalIgnoreCase));
+            result.SupportsRequireTls = ehloResponse.Any(l =>
+                l.Contains("REQUIRETLS", StringComparison.OrdinalIgnoreCase));
+
+            // Parse SIZE from EHLO
+            var sizeLine = ehloResponse.FirstOrDefault(l =>
+                l.Contains("SIZE", StringComparison.OrdinalIgnoreCase));
+            if (sizeLine != null)
+            {
+                var parts = sizeLine.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                foreach (var p in parts)
+                {
+                    if (int.TryParse(p, out var size) && size > 0)
+                    {
+                        result.SmtpMaxSize = size;
+                        break;
+                    }
+                }
+            }
 
             // Try STARTTLS
             if (result.SupportsStartTls)
@@ -67,6 +89,9 @@ public class SmtpProbeService
                         var sslStream = new SslStream(stream, false,
                             (sender, cert, chain, errors) => true);
                         await sslStream.AuthenticateAsClientAsync(host);
+
+                        result.TlsProtocol = sslStream.SslProtocol;
+                        result.TlsCipherSuite = sslStream.NegotiatedCipherSuite.ToString();
 
                         if (sslStream.RemoteCertificate != null)
                         {
@@ -136,7 +161,7 @@ public class SmtpProbeService
             stream.WriteTimeout = (int)_timeout.TotalMilliseconds;
 
             await ReadLineAsync(stream); // banner
-            await WriteLineAsync(stream, "EHLO ednsv.check");
+            await WriteLineAsync(stream, "EHLO email-dns-validator");
             await ReadMultiLineAsync(stream);
 
             await WriteLineAsync(stream, "MAIL FROM:<>");

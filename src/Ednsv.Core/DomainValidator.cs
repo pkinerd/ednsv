@@ -28,8 +28,12 @@ public class DomainValidator
             // SOA (4)
             new SoaRecordCheck(),
 
+            // Glue records
+            new NsGlueRecordCheck(),
+
             // NS (5-8)
             new NsRecordsCheck(),
+            new NsMinimumCountCheck(),
             new NsLameDelegationCheck(),
             new NsNetworkDiversityCheck(),
             new DuplicateNsIpCheck(),
@@ -44,10 +48,12 @@ public class DomainValidator
             // MX (12-16, 51, 43)
             new MxRecordsCheck(),
             new MxIpDetectionCheck(),
+            new MxPrivateIpCheck(),
             new MxCnameCheck(),
             new NullMxCheck(),
             new MxPriorityDistributionCheck(),
             new MxBackupSecurityCheck(),
+            new MailSubdomainSurveyCheck(),
 
             // SPF (16-21)
             new SpfRecordCheck(),
@@ -56,17 +62,22 @@ public class DomainValidator
             new SpfIncludeDepthCheck(),
             new SpfRecordSizeCheck(),
             new SpfMacrosCheck(),
+            new SpfIncludesAllCheck(),
+            new SpfOverlapCheck(),
+            new MxCoveredBySpfCheck(),
 
             // DMARC (22-27)
             new DmarcRecordCheck(),
+            new DmarcPctAnalysisCheck(),
             new DmarcInheritanceCheck(),
             new DmarcExternalReportAuthCheck(),
             new DmarcReportTargetMxCheck(),
             new SpfDmarcCombinedCheck(),
             new SubdomainDmarcOverrideCheck(),
 
-            // DKIM (28)
+            // DKIM (28) + ARC
             new DkimSelectorsCheck(),
+            new ArcCheck(),
 
             // PTR (29)
             new ReverseDnsCheck(),
@@ -76,6 +87,7 @@ public class DomainValidator
 
             // Blocklists (31-32)
             new IpBlocklistCheck(),
+            new ExtendedDnsblCheck(),
             new DomainBlocklistCheck(),
 
             // DNSSEC (33)
@@ -96,8 +108,11 @@ public class DomainValidator
 
             // SMTP (38, 40-42)
             new SmtpTlsCertCheck(),
+            new SmtpTlsVersionCheck(),
             new SmtpBannerCheck(),
             new EhloCapabilitiesCheck(),
+            new SmtpSizeCheck(),
+            new SmtpRequireTlsCheck(),
             new SubmissionPortsCheck(),
 
             // SRV (44)
@@ -118,6 +133,9 @@ public class DomainValidator
             // Abuse (49)
             new AbuseAddressCheck(),
 
+            // DNS propagation
+            new DnsPropagationCheck(),
+
             // Wildcard (50)
             new WildcardDnsCheck(),
 
@@ -130,7 +148,13 @@ public class DomainValidator
             // security.txt (54)
             new SecurityTxtCheck(),
 
-            // TXT dump (55)
+            // Provider verification
+            new ProviderVerificationTxtCheck(),
+
+            // Certificate Transparency
+            new CertificateTransparencyCheck(),
+
+            // TXT dump
             new AllTxtRecordsCheck(),
         };
     }
@@ -138,7 +162,7 @@ public class DomainValidator
     public event Action<string>? OnCheckStarted;
     public event Action<string, CheckResult>? OnCheckCompleted;
 
-    public async Task<ValidationReport> ValidateAsync(string domain)
+    public async Task<ValidationReport> ValidateAsync(string domain, ValidationOptions? options = null)
     {
         var report = new ValidationReport { Domain = domain };
         var sw = Stopwatch.StartNew();
@@ -147,7 +171,8 @@ public class DomainValidator
         {
             Dns = _dns,
             Smtp = _smtp,
-            Http = _http
+            Http = _http,
+            Options = options ?? new ValidationOptions()
         };
 
         foreach (var check in _checks)

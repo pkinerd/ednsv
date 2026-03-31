@@ -15,6 +15,9 @@ public class CheckContext
     public Services.SmtpProbeService Smtp { get; set; } = null!;
     public Services.HttpProbeService Http { get; set; } = null!;
 
+    // Options
+    public ValidationOptions Options { get; set; } = new();
+
     // Shared state between checks
     public List<string> MxHosts { get; set; } = new();
     public Dictionary<string, List<string>> MxHostIps { get; set; } = new();
@@ -24,4 +27,12 @@ public class CheckContext
     public string? DmarcRecord { get; set; }
     public List<string> DomainARecords { get; set; } = new();
     public List<string> DomainAAAARecords { get; set; } = new();
+    // Cached SMTP probe results (avoid probing same host multiple times)
+    public Dictionary<string, Services.SmtpProbeResult> SmtpProbeCache { get; set; } = new();
+}
+
+public class ValidationOptions
+{
+    public bool EnableAxfr { get; set; } = true;
+    public List<string> AdditionalDkimSelectors { get; set; } = new();
 }

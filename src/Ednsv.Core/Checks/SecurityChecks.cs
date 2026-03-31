@@ -352,6 +352,14 @@ public class ZoneTransferCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
+        if (!ctx.Options.EnableAxfr)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "AXFR test skipped (--no-axfr)";
+            result.Details.Add("Zone transfer test was disabled via --no-axfr option");
+            return new List<CheckResult> { result };
+        }
+
         try
         {
             int vulnerable = 0;
