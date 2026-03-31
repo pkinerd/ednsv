@@ -58,23 +58,27 @@ public class DkimSelectorsCheck : ICheck
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            foreach (var selector in allSelectors)
+            // Probe selectors in parallel (10 concurrent DNS lookups)
+            using var semaphore = new SemaphoreSlim(10);
+            var probeTasks = allSelectors.Select(selector => Task.Run(async () =>
             {
-                var dkimDomain = $"{selector}._domainkey.{domain}";
-                var txts = await ctx.Dns.GetTxtRecordsAsync(dkimDomain);
-                var dkimRec = txts.FirstOrDefault(t => t.Text.Any(s =>
-                    s.Contains("v=DKIM1", StringComparison.OrdinalIgnoreCase) ||
-                    s.Contains("k=rsa", StringComparison.OrdinalIgnoreCase) ||
-                    s.Contains("k=ed25519", StringComparison.OrdinalIgnoreCase) ||
-                    s.Contains("p=", StringComparison.OrdinalIgnoreCase)));
+                await semaphore.WaitAsync();
+                try
+                {
+                    var dkimDomain = $"{selector}._domainkey.{domain}";
+                    var txts = await ctx.Dns.GetTxtRecordsAsync(dkimDomain);
+                    var dkimRec = txts.FirstOrDefault(t => t.Text.Any(s =>
+                        s.Contains("v=DKIM1", StringComparison.OrdinalIgnoreCase) ||
+                        s.Contains("k=rsa", StringComparison.OrdinalIgnoreCase) ||
+                        s.Contains("k=ed25519", StringComparison.OrdinalIgnoreCase) ||
+                        s.Contains("p=", StringComparison.OrdinalIgnoreCase)));
 
-                if (dkimRec != null)
-                {
-                    var text = string.Join("", dkimRec.Text);
-                    found.Add((selector, text));
-                }
-                else
-                {
+                    if (dkimRec != null)
+                    {
+                        var text = string.Join("", dkimRec.Text);
+                        return (selector, record: text, cnameChain: (string?)null);
+                    }
+
                     // Check for CNAME delegation (common for ESP-managed DKIM)
                     var chain = await ctx.Dns.ResolveCnameChainAsync(dkimDomain);
                     if (chain.Any())
@@ -88,10 +92,23 @@ public class DkimSelectorsCheck : ICheck
                         if (targetDkim != null)
                         {
                             var text = string.Join("", targetDkim.Text);
-                            found.Add((selector, text));
-                            cnameSelectors.Add(selector, string.Join(" → ", chain));
+                            return (selector, record: text, cnameChain: (string?)string.Join(" → ", chain));
                         }
                     }
+
+                    return (selector, record: (string?)null, cnameChain: (string?)null);
+                }
+                finally { semaphore.Release(); }
+            })).ToList();
+
+            var probeResults = await Task.WhenAll(probeTasks);
+            foreach (var pr in probeResults)
+            {
+                if (pr.record != null)
+                {
+                    found.Add((pr.selector, pr.record));
+                    if (pr.cnameChain != null)
+                        cnameSelectors[pr.selector] = pr.cnameChain;
                 }
             }
 
