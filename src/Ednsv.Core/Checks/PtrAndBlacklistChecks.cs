@@ -128,6 +128,15 @@ public class IpBlocklistCheck : ICheck
         "bl.spamcop.net"
     };
 
+    // Well-known DNSBL responses that indicate resolver/query errors, not actual listings
+    // Spamhaus: 127.255.255.254 = public/open resolver, 127.255.255.252 = ANY query not supported
+    // URIBL/SURBL: 127.0.0.1 = query refused (public resolver)
+    private static readonly HashSet<string> FalsePositiveResponses = new(StringComparer.Ordinal)
+    {
+        "127.255.255.254", "127.255.255.253", "127.255.255.252",
+        "127.0.0.1"
+    };
+
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
@@ -158,8 +167,20 @@ public class IpBlocklistCheck : ICheck
                     var aRecs = resp.Answers.ARecords().ToList();
                     if (aRecs.Any())
                     {
-                        listed++;
-                        result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", aRecs.Select(a => a.Address))})");
+                        var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                        var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                        var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+
+                        if (realListings.Any())
+                        {
+                            listed++;
+                            result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", realListings)})");
+                        }
+
+                        if (falsePositives.Any())
+                        {
+                            result.Details.Add($"{ip}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
+                        }
                     }
                     else
                     {
@@ -193,6 +214,16 @@ public class DomainBlocklistCheck : ICheck
         "black.uribl.com"
     };
 
+    // Well-known responses that indicate resolver/query errors, not actual listings
+    // Spamhaus DBL: 127.255.255.254 = public/open resolver
+    // URIBL: 127.0.0.1 = query refused (public resolver)
+    // SURBL: 127.0.0.1 = query refused (public resolver)
+    private static readonly HashSet<string> FalsePositiveResponses = new(StringComparer.Ordinal)
+    {
+        "127.255.255.254", "127.255.255.253", "127.255.255.252",
+        "127.0.0.1"
+    };
+
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
@@ -207,10 +238,20 @@ public class DomainBlocklistCheck : ICheck
                 var aRecs = resp.Answers.ARecords().ToList();
                 if (aRecs.Any())
                 {
-                    var returnCodes = string.Join(", ", aRecs.Select(a => a.Address));
-                    // Filter out NXDOMAIN-like responses (127.0.0.1 is often "not listed" for some)
-                    listed++;
-                    result.Errors.Add($"{domain} is LISTED on {bl} (response: {returnCodes})");
+                    var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                    var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                    var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+
+                    if (realListings.Any())
+                    {
+                        listed++;
+                        result.Errors.Add($"{domain} is LISTED on {bl} (response: {string.Join(", ", realListings)})");
+                    }
+
+                    if (falsePositives.Any())
+                    {
+                        result.Details.Add($"{domain}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
+                    }
                 }
                 else
                 {
