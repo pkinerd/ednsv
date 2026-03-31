@@ -106,18 +106,30 @@ public class DaneTlsaCertMatchCheck : ICheck
                 if (probe.Certificate != null)
                 {
                     result.Details.Add($"{mxHost}: TLSA records found, certificate available");
-                    // Check SAN match
+
+                    // Determine if any TLSA record has usage=3 (DANE-EE)
+                    var hasDaneEe = tlsaRecords.Any(t => (int)t.CertificateUsage == 3);
+
+                    // Check SAN match — DANE-EE (usage=3) exempts hostname checks per RFC 7671 §5.1
                     var inSans = probe.CertSans?.Any(s =>
                         s.Equals(mxHost, StringComparison.OrdinalIgnoreCase) ||
                         (s.StartsWith("*.") && mxHost.EndsWith(s.Substring(1), StringComparison.OrdinalIgnoreCase))) ?? false;
 
                     if (inSans)
                         result.Details.Add($"  SAN match: Yes");
+                    else if (hasDaneEe)
+                        result.Details.Add($"  {mxHost}: Certificate SAN does not match MX hostname (acceptable for DANE-EE usage=3)");
                     else
                         result.Warnings.Add($"{mxHost}: Certificate SAN does not match MX hostname");
 
-                    if (probe.CertExpiry < DateTime.UtcNow)
+                    // Check expiry — DANE-EE (usage=3) exempts expiry checks per RFC 7671 §5.1
+                    if (probe.CertExpiry < DateTime.UtcNow && !hasDaneEe)
                         result.Errors.Add($"{mxHost}: Certificate expired (DANE validation would fail)");
+                    else if (probe.CertExpiry < DateTime.UtcNow && hasDaneEe)
+                        result.Details.Add($"  {mxHost}: Certificate expired but DANE-EE (usage=3) does not require expiry validation");
+
+                    if (hasDaneEe)
+                        result.Details.Add($"  DANE-EE (usage=3): hostname and expiry checks are not required per RFC 7671 §5.1");
 
                     // Validate TLSA digest against actual certificate
                     foreach (var tlsa in tlsaRecords)
@@ -132,6 +144,10 @@ public class DaneTlsaCertMatchCheck : ICheck
                             _ => $"Unknown ({usage})"
                         };
                         result.Details.Add($"  TLSA Usage={usage} ({usageDesc}), Selector={(int)tlsa.Selector}, MatchingType={(int)tlsa.MatchingType}");
+
+                        // #42: DANE-TA (usage=2) chain validation warning
+                        if (usage == 2)
+                            result.Warnings.Add($"{mxHost}: DANE-TA (usage=2): validation should include the full certificate chain, not just the leaf certificate — intermediary CA matching not performed");
 
                         // Compute digest from cert and compare
                         byte[]? dataToHash = null;
@@ -355,6 +371,9 @@ public class SubmissionPortsCheck : ICheck
                 result.Details.Add($"{mxHost}:");
                 result.Details.Add($"  Port 587 (submission): {(port587 ? "Open" : "Closed/Filtered")}");
                 result.Details.Add($"  Port 465 (SMTPS): {(port465 ? "Open" : "Closed/Filtered")}");
+
+                if (port465)
+                    result.Details.Add($"  Port 465 (implicit TLS) is open — TLS certificate and version details not probed (only port 25/587 STARTTLS is checked)");
 
                 // Probe TLS on open submission ports
                 if (port587)

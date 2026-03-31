@@ -364,6 +364,7 @@ public class SmtpRequireTlsCheck : ICheck
             {
                 supported++;
                 result.Details.Add($"{mxHost}: REQUIRETLS supported");
+                result.Warnings.Add($"REQUIRETLS advertised by {mxHost} — requires either DANE (with DNSSEC) or MTA-STS for certificate validation (RFC 8689 §4.1). Verify these are configured.");
             }
             else if (probe.Connected)
             {
@@ -375,9 +376,9 @@ public class SmtpRequireTlsCheck : ICheck
             }
         }
 
-        result.Severity = supported > 0 ? CheckSeverity.Pass : CheckSeverity.Info;
+        result.Severity = supported > 0 ? CheckSeverity.Warning : CheckSeverity.Info;
         result.Summary = supported > 0 ?
-            $"REQUIRETLS supported by {supported}/{ctx.MxHosts.Count} MX host(s)" :
+            $"REQUIRETLS supported by {supported}/{ctx.MxHosts.Count} MX host(s) — verify DANE/MTA-STS prerequisites" :
             "REQUIRETLS not supported (optional RFC 8689 extension)";
 
         return new List<CheckResult> { result };
