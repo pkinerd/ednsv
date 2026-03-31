@@ -16,23 +16,34 @@ var dkimSelectorsOption = new Option<string[]>(
 {
     AllowMultipleArgumentsPerToken = true
 };
-var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool")
+var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
+var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
     jsonOption,
     noAxfrOption,
     catchAllOption,
     openRelayOption,
-    dkimSelectorsOption
+    dkimSelectorsOption,
+    listChecksOption
 };
 
-rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors) =>
+// Make domain optional when --list-checks is used
+domainArg.SetDefaultValue("");
+
+rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks) =>
 {
+    if (listChecks)
+    {
+        Console.WriteLine(CheckDescriptions.GetDetailedListing());
+        return;
+    }
+
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
 
     if (string.IsNullOrWhiteSpace(domain))
     {
-        AnsiConsole.MarkupLine("[red]Error: Please provide a domain name.[/]");
+        Console.Error.WriteLine("Error: Please provide a domain name. Use --help for usage information.");
         return;
     }
 
@@ -67,7 +78,7 @@ rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchA
     {
         await RunInteractiveAsync(domain, options);
     }
-}, domainArg, jsonOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption);
+}, domainArg, jsonOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption);
 
 return await rootCommand.InvokeAsync(args);
 
