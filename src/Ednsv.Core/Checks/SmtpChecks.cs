@@ -385,6 +385,23 @@ public class SubmissionPortsCheck : ICheck
     }
 }
 
+internal static class SmtpResponseAnalyzer
+{
+    private static readonly string[] BlocklistIndicators = { "spamhaus", "barracuda", "blocklist", "blacklist", "blocked", "denied", "reject", "dnsbl", "rbl", "cbl", "sbl", "xbl", "Client host" };
+
+    /// <summary>
+    /// Determines if an SMTP rejection response indicates our source IP was blocked
+    /// rather than the recipient address being refused.
+    /// </summary>
+    public static bool IsSourceIpBlocked(string response)
+    {
+        if (string.IsNullOrEmpty(response)) return false;
+        // 5.7.1 with blocklist keywords = our IP is blocked
+        return response.Contains("5.7.1") &&
+               BlocklistIndicators.Any(kw => response.Contains(kw, StringComparison.OrdinalIgnoreCase));
+    }
+}
+
 public class PostmasterAddressCheck : ICheck
 {
     public string Name => "Postmaster Address";
@@ -405,6 +422,7 @@ public class PostmasterAddressCheck : ICheck
 
             int acceptedCount = 0;
             int rejectedCount = 0;
+            int ipBlockedCount = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
@@ -412,7 +430,15 @@ public class PostmasterAddressCheck : ICheck
                 if (!accepted)
                 {
                     result.Details.Add($"  Server response: {response}");
-                    result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                    if (SmtpResponseAnalyzer.IsSourceIpBlocked(response))
+                    {
+                        ipBlockedCount++;
+                        result.Details.Add($"  Note: Rejection appears to be IP-based blocking, not address refusal");
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                    }
                     rejectedCount++;
                 }
                 else
@@ -421,12 +447,20 @@ public class PostmasterAddressCheck : ICheck
                 }
             }
 
-            if (rejectedCount > 0)
+            if (rejectedCount > 0 && ipBlockedCount == rejectedCount)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "postmaster@ check inconclusive — our source IP is blocklisted by the server";
+            }
+            else if (rejectedCount > ipBlockedCount && rejectedCount - ipBlockedCount == ctx.MxHosts.Count - ipBlockedCount)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = rejectedCount == ctx.MxHosts.Count
-                    ? "postmaster@ not accepted on any MX (RFC 5321 §4.5.1 requires it)"
-                    : $"postmaster@ rejected on {rejectedCount}/{ctx.MxHosts.Count} MX host(s)";
+                result.Summary = "postmaster@ not accepted on any MX (RFC 5321 §4.5.1 requires it)";
+            }
+            else if (rejectedCount > ipBlockedCount)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"postmaster@ rejected on {rejectedCount - ipBlockedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {
@@ -466,6 +500,7 @@ public class AbuseAddressCheck : ICheck
 
             int acceptedCount = 0;
             int rejectedCount = 0;
+            int ipBlockedCount = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
@@ -473,7 +508,15 @@ public class AbuseAddressCheck : ICheck
                 if (!accepted)
                 {
                     result.Details.Add($"  Server response: {response}");
-                    result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                    if (SmtpResponseAnalyzer.IsSourceIpBlocked(response))
+                    {
+                        ipBlockedCount++;
+                        result.Details.Add($"  Note: Rejection appears to be IP-based blocking, not address refusal");
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                    }
                     rejectedCount++;
                 }
                 else
@@ -482,12 +525,20 @@ public class AbuseAddressCheck : ICheck
                 }
             }
 
-            if (rejectedCount > 0)
+            if (rejectedCount > 0 && ipBlockedCount == rejectedCount)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "abuse@ check inconclusive — our source IP is blocklisted by the server";
+            }
+            else if (rejectedCount > ipBlockedCount && rejectedCount - ipBlockedCount == ctx.MxHosts.Count - ipBlockedCount)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = rejectedCount == ctx.MxHosts.Count
-                    ? "abuse@ not accepted on any MX (RFC 2142 recommends it)"
-                    : $"abuse@ rejected on {rejectedCount}/{ctx.MxHosts.Count} MX host(s)";
+                result.Summary = "abuse@ not accepted on any MX (RFC 2142 recommends it)";
+            }
+            else if (rejectedCount > ipBlockedCount)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"abuse@ rejected on {rejectedCount - ipBlockedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {

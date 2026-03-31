@@ -115,6 +115,7 @@ public class NsLameDelegationCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int lameCount = 0;
+        int unreachableCount = 0;
         int totalChecked = 0;
 
         try
@@ -130,16 +131,28 @@ public class NsLameDelegationCheck : ICheck
                 foreach (var ip in ips)
                 {
                     totalChecked++;
+                    var errorsBefore = ctx.Dns.QueryErrors.Count;
                     var soaResp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), domain, QueryType.SOA);
-                    var hasSoa = soaResp.Answers.SoaRecords().Any() || soaResp.Authorities.SoaRecords().Any();
-                    if (hasSoa)
+                    var errorsAfter = ctx.Dns.QueryErrors.Count;
+
+                    if (errorsAfter > errorsBefore)
                     {
-                        result.Details.Add($"{nsHost} ({ip}): Authoritative (SOA present)");
+                        // Query failed (timeout, network error, etc.) — not the same as lame
+                        unreachableCount++;
+                        result.Details.Add($"{nsHost} ({ip}): Unreachable (query failed)");
                     }
                     else
                     {
-                        lameCount++;
-                        result.Warnings.Add($"{nsHost} ({ip}): LAME - does not return SOA for {domain}");
+                        var hasSoa = soaResp.Answers.SoaRecords().Any() || soaResp.Authorities.SoaRecords().Any();
+                        if (hasSoa)
+                        {
+                            result.Details.Add($"{nsHost} ({ip}): Authoritative (SOA present)");
+                        }
+                        else
+                        {
+                            lameCount++;
+                            result.Warnings.Add($"{nsHost} ({ip}): LAME — responded but does not return SOA for {domain}");
+                        }
                     }
                 }
             }
@@ -147,7 +160,18 @@ public class NsLameDelegationCheck : ICheck
             if (lameCount > 0)
             {
                 result.Severity = CheckSeverity.Error;
-                result.Summary = $"{lameCount}/{totalChecked} nameservers are lame";
+                var extra = unreachableCount > 0 ? $", {unreachableCount} unreachable" : "";
+                result.Summary = $"{lameCount}/{totalChecked} nameservers are lame{extra}";
+            }
+            else if (unreachableCount > 0 && unreachableCount < totalChecked)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{unreachableCount}/{totalChecked} nameservers unreachable (none confirmed lame)";
+            }
+            else if (unreachableCount > 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"All {totalChecked} nameservers unreachable — cannot verify";
             }
             else if (totalChecked > 0)
             {

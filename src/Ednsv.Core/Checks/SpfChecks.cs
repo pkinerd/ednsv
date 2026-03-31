@@ -105,11 +105,21 @@ public class SpfRecordCheck : ICheck
             }
             else
             {
-                result.Severity = CheckSeverity.Warning;
-                result.Warnings.Add("No 'all' mechanism - implicit ?all (neutral)");
+                // RFC 7208 §5.1: redirect= replaces the entire record, so no 'all' is expected
+                var hasRedirect = parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase));
+                if (hasRedirect)
+                {
+                    result.Severity = CheckSeverity.Pass;
+                    result.Details.Add("Policy defined by redirect= target (no local 'all' expected)");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Warning;
+                    result.Warnings.Add("No 'all' mechanism and no redirect= — implicit ?all (neutral)");
+                }
             }
 
-            result.Summary = $"SPF record found: {allMech ?? "no all mechanism"}";
+            result.Summary = $"SPF record found: {allMech ?? (parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase)) ? "redirect" : "no all mechanism")}";
         }
         catch (Exception ex)
         {

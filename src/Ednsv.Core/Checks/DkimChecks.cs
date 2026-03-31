@@ -127,6 +127,19 @@ public class DkimSelectorsCheck : ICheck
 
             if (found.Any())
             {
+                // Detect wildcard DNS at *._domainkey.domain — if most probed selectors
+                // return the identical record, it's a wildcard, not real selectors
+                var distinctRecords = found.Select(f => f.record).Distinct().ToList();
+                if (distinctRecords.Count == 1 && found.Count >= 10)
+                {
+                    result.Severity = CheckSeverity.Info;
+                    result.Summary = "Wildcard DNS at *._domainkey — not real DKIM selectors";
+                    result.Details.Add($"All {found.Count} probed selectors returned the identical record (wildcard DNS)");
+                    result.Details.Add($"  Record: {distinctRecords[0]}");
+                    result.Details.Add("Cannot determine actual DKIM selectors via probing when wildcard is present");
+                    return new List<CheckResult> { result };
+                }
+
                 int activeCount = 0;
                 int revokedCount = 0;
 
