@@ -65,9 +65,25 @@ public class MxRecordsCheck : ICheck
             }
             else
             {
-                result.Severity = CheckSeverity.Warning;
-                result.Summary = "No MX records found";
-                result.Warnings.Add("No MX records - email may fall back to A record delivery");
+                // RFC 5321 §5: If no MX records, fall back to A/AAAA for the domain itself
+                var fallbackA = await ctx.Dns.ResolveAAsync(domain);
+                var fallbackAAAA = await ctx.Dns.ResolveAAAAAsync(domain);
+                if (fallbackA.Any() || fallbackAAAA.Any())
+                {
+                    result.Severity = CheckSeverity.Warning;
+                    result.Summary = "No MX records — using implicit A/AAAA fallback (RFC 5321 §5)";
+                    result.Warnings.Add("No MX records found — SMTP will attempt delivery to the domain's A/AAAA addresses directly");
+                    foreach (var ip in fallbackA)
+                        result.Details.Add($"  Fallback A: {ip}");
+                    foreach (var ip in fallbackAAAA)
+                        result.Details.Add($"  Fallback AAAA: {ip}");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Error;
+                    result.Summary = "No MX records and no A/AAAA fallback — domain cannot receive email";
+                    result.Errors.Add("No MX records and no A/AAAA records for the domain — mail delivery is impossible (RFC 5321 §5)");
+                }
             }
         }
         catch (Exception ex)
@@ -146,10 +162,15 @@ public class NullMxCheck : ICheck
             var mxRecords = await ctx.Dns.GetMxRecordsAsync(domain);
 
             // Check null MX (RFC 7505): single MX with preference 0 and empty exchange "."
-            var nullMx = mxRecords.Any(m => m.Exchange.Value.TrimEnd('.') == "" || m.Exchange.Value == ".");
-            if (nullMx)
+            var nullMxRecords = mxRecords.Where(m => m.Exchange.Value.TrimEnd('.') == "" || m.Exchange.Value == ".").ToList();
+            if (nullMxRecords.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                var nullMxRec = nullMxRecords.First();
+                if (nullMxRec.Preference != 0)
+                    result.Warnings.Add($"Null MX record has preference {nullMxRec.Preference} — RFC 7505 §3 requires preference 0");
+                if (mxRecords.Count > 1)
+                    result.Warnings.Add($"Null MX present alongside {mxRecords.Count - 1} other MX record(s) — RFC 7505 §3 requires it to be the only MX");
+                result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Info;
                 result.Summary = "Null MX (RFC 7505) - domain explicitly does not accept email";
                 result.Details.Add("Domain has declared it does not accept email via null MX");
                 return new List<CheckResult> { result };

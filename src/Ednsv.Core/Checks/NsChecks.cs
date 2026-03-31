@@ -36,11 +36,22 @@ public class SoaRecordCheck : ICheck
                 else
                     result.Warnings.Add($"Serial {soa.Serial} doesn't follow YYYYMMDDnn convention");
 
-                // Check reasonable values
+                // RFC 1035 §3.3.13 / RFC 2308 SOA timer validation
                 if (soa.Refresh < 3600)
                     result.Warnings.Add($"Refresh interval {soa.Refresh}s is low (recommended >= 3600)");
+                if (soa.Retry < 600)
+                    result.Warnings.Add($"Retry interval {soa.Retry}s is low (recommended >= 600)");
+                if (soa.Retry >= soa.Refresh)
+                    result.Warnings.Add($"Retry ({soa.Retry}s) should be less than Refresh ({soa.Refresh}s)");
                 if (soa.Expire < 604800)
                     result.Warnings.Add($"Expire interval {soa.Expire}s is low (recommended >= 604800)");
+                if (soa.Expire <= soa.Refresh)
+                    result.Warnings.Add($"Expire ({soa.Expire}s) must be greater than Refresh ({soa.Refresh}s)");
+                // RFC 2308 §5: Minimum TTL field is used as the negative caching TTL
+                if (soa.Minimum < 60)
+                    result.Warnings.Add($"Minimum TTL {soa.Minimum}s is very low — affects NXDOMAIN cache duration (RFC 2308)");
+                else if (soa.Minimum > 86400)
+                    result.Warnings.Add($"Minimum TTL {soa.Minimum}s is high — NXDOMAIN responses cached for > 1 day (RFC 2308 recommends 1-3 hours)");
             }
             else
             {
@@ -104,6 +115,7 @@ public class NsLameDelegationCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int lameCount = 0;
+        int unreachableCount = 0;
         int totalChecked = 0;
 
         try
@@ -119,16 +131,28 @@ public class NsLameDelegationCheck : ICheck
                 foreach (var ip in ips)
                 {
                     totalChecked++;
+                    var errorsBefore = ctx.Dns.QueryErrors.Count;
                     var soaResp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), domain, QueryType.SOA);
-                    var hasSoa = soaResp.Answers.SoaRecords().Any() || soaResp.Authorities.SoaRecords().Any();
-                    if (hasSoa)
+                    var errorsAfter = ctx.Dns.QueryErrors.Count;
+
+                    if (errorsAfter > errorsBefore)
                     {
-                        result.Details.Add($"{nsHost} ({ip}): Authoritative (SOA present)");
+                        // Query failed (timeout, network error, etc.) — not the same as lame
+                        unreachableCount++;
+                        result.Details.Add($"{nsHost} ({ip}): Unreachable (query failed)");
                     }
                     else
                     {
-                        lameCount++;
-                        result.Warnings.Add($"{nsHost} ({ip}): LAME - does not return SOA for {domain}");
+                        var hasSoa = soaResp.Answers.SoaRecords().Any() || soaResp.Authorities.SoaRecords().Any();
+                        if (hasSoa)
+                        {
+                            result.Details.Add($"{nsHost} ({ip}): Authoritative (SOA present)");
+                        }
+                        else
+                        {
+                            lameCount++;
+                            result.Warnings.Add($"{nsHost} ({ip}): LAME — responded but does not return SOA for {domain}");
+                        }
                     }
                 }
             }
@@ -136,7 +160,18 @@ public class NsLameDelegationCheck : ICheck
             if (lameCount > 0)
             {
                 result.Severity = CheckSeverity.Error;
-                result.Summary = $"{lameCount}/{totalChecked} nameservers are lame";
+                var extra = unreachableCount > 0 ? $", {unreachableCount} unreachable" : "";
+                result.Summary = $"{lameCount}/{totalChecked} nameservers are lame{extra}";
+            }
+            else if (unreachableCount > 0 && unreachableCount < totalChecked)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{unreachableCount}/{totalChecked} nameservers unreachable (none confirmed lame)";
+            }
+            else if (unreachableCount > 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"All {totalChecked} nameservers unreachable — cannot verify";
             }
             else if (totalChecked > 0)
             {

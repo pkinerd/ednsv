@@ -74,6 +74,23 @@ jobs:
 
           exit $OVERALL_EXIT
 
+      - name: Run verbose check against test domains
+        if: always()
+        run: |
+          DOMAINS="google.com gmail.com cnn.com example.com"
+
+          for domain in $DOMAINS; do
+            echo "============================================"
+            echo "Verbose: $domain"
+            echo "============================================"
+
+            dotnet run --project src/Ednsv.Cli --configuration Release -- "$domain" --verbose \
+              > "test-output/${domain}-verbose.txt" 2>&1 || true
+
+            cat "test-output/${domain}-verbose.txt"
+            echo ""
+          done
+
       - name: Upload test output
         uses: actions/upload-artifact@v4
         if: always()

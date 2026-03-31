@@ -31,8 +31,9 @@ public class DkimSelectorsCheck : ICheck
         {
             // Try AXFR to discover selectors from zone data (if enabled and NS IPs available)
             var axfrSelectors = new List<string>();
-            if (ctx.Options.EnableAxfr)
+            if (ctx.Options.EnableAxfr && ctx.NsHosts.Any())
             {
+                bool axfrSucceeded = false;
                 foreach (var nsHost in ctx.NsHosts)
                 {
                     if (!ctx.NsHostIps.TryGetValue(nsHost, out var ips)) continue;
@@ -42,6 +43,7 @@ public class DkimSelectorsCheck : ICheck
                         var discovered = await ctx.Dns.ExtractDkimSelectorsFromAxfrAsync(addr, domain);
                         if (discovered.Any())
                         {
+                            axfrSucceeded = true;
                             axfrSelectors.AddRange(discovered);
                             result.Details.Add($"AXFR from {nsHost}: discovered {discovered.Count} selector(s): {string.Join(", ", discovered)}");
                             break; // One successful AXFR is enough
@@ -49,6 +51,8 @@ public class DkimSelectorsCheck : ICheck
                     }
                     if (axfrSelectors.Any()) break;
                 }
+                if (!axfrSucceeded)
+                    result.Details.Add("AXFR selector discovery: zone transfer denied (probing common selectors only)");
             }
 
             // Merge AXFR-discovered + user-provided + common selectors (deduped)
@@ -123,6 +127,19 @@ public class DkimSelectorsCheck : ICheck
 
             if (found.Any())
             {
+                // Detect wildcard DNS at *._domainkey.domain — if most probed selectors
+                // return the identical record, it's a wildcard, not real selectors
+                var distinctRecords = found.Select(f => f.record).Distinct().ToList();
+                if (distinctRecords.Count == 1 && found.Count >= 10)
+                {
+                    result.Severity = CheckSeverity.Info;
+                    result.Summary = "Wildcard DNS at *._domainkey — not real DKIM selectors";
+                    result.Details.Add($"All {found.Count} probed selectors returned the identical record (wildcard DNS)");
+                    result.Details.Add($"  Record: {distinctRecords[0]}");
+                    result.Details.Add("Cannot determine actual DKIM selectors via probing when wildcard is present");
+                    return new List<CheckResult> { result };
+                }
+
                 int activeCount = 0;
                 int revokedCount = 0;
 
@@ -135,8 +152,25 @@ public class DkimSelectorsCheck : ICheck
 
                     // Analyze key
                     var tags = ParseDkimTags(record);
+
+                    // RFC 6376 §3.6.1: v=DKIM1 is required
+                    if (!tags.TryGetValue("v", out var version) || !version.Equals("DKIM1", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (version == null)
+                            result.Warnings.Add($"Selector {selector}: Missing v=DKIM1 tag (RFC 6376 §3.6.1 requires it)");
+                        else
+                            result.Errors.Add($"Selector {selector}: Invalid version '{version}' — expected DKIM1");
+                    }
+
+                    // RFC 6376 §3.6.1: k= must be rsa (default) or ed25519 (RFC 8463)
                     if (tags.TryGetValue("k", out var keyType))
+                    {
                         result.Details.Add($"  Key type: {keyType}");
+                        if (!keyType.Equals("rsa", StringComparison.OrdinalIgnoreCase) &&
+                            !keyType.Equals("ed25519", StringComparison.OrdinalIgnoreCase))
+                            result.Errors.Add($"Selector {selector}: Unknown key type '{keyType}' — must be 'rsa' or 'ed25519' (RFC 6376 §3.6.1)");
+                    }
+
                     if (tags.TryGetValue("p", out var pubKey))
                     {
                         if (string.IsNullOrEmpty(pubKey))
@@ -152,14 +186,14 @@ public class DkimSelectorsCheck : ICheck
                             var keyBits = keyBytes * 8;
                             result.Details.Add($"  Key size: ~{keyBits} bits");
                             if (keyBits < 1024)
-                                result.Warnings.Add($"Selector {selector}: Key is only ~{keyBits} bits (recommended >= 2048)");
+                                result.Errors.Add($"Selector {selector}: Key is only ~{keyBits} bits — too weak (RFC 8301 requires >= 1024 for RSA)");
                             else if (keyBits < 2048)
-                                result.Warnings.Add($"Selector {selector}: Key is ~{keyBits} bits (recommended >= 2048)");
+                                result.Warnings.Add($"Selector {selector}: Key is ~{keyBits} bits (RFC 8301 recommends >= 2048)");
                         }
                     }
                     else
                     {
-                        activeCount++; // No p= tag means key might be valid
+                        result.Errors.Add($"Selector {selector}: Missing p= tag (public key is required, RFC 6376 §3.6.1)");
                     }
                     if (tags.TryGetValue("t", out var flags))
                     {
@@ -167,10 +201,26 @@ public class DkimSelectorsCheck : ICheck
                             result.Warnings.Add($"Selector {selector}: Testing mode (t=y) - signatures not enforced");
                         result.Details.Add($"  Flags: {flags}");
                     }
+                    // RFC 6376 §3.6.1: h= hash algorithms
                     if (tags.TryGetValue("h", out var hash))
+                    {
                         result.Details.Add($"  Hash algorithms: {hash}");
+                        var algorithms = hash.Split(':', StringSplitOptions.RemoveEmptyEntries).Select(a => a.Trim()).ToList();
+                        if (algorithms.Any(a => a.Equals("sha1", StringComparison.OrdinalIgnoreCase)))
+                            result.Warnings.Add($"Selector {selector}: sha1 hash is deprecated (RFC 8301) — use sha256");
+                        foreach (var algo in algorithms)
+                            if (!algo.Equals("sha1", StringComparison.OrdinalIgnoreCase) && !algo.Equals("sha256", StringComparison.OrdinalIgnoreCase))
+                                result.Warnings.Add($"Selector {selector}: Non-standard hash algorithm '{algo}'");
+                    }
+                    // RFC 6376 §3.6.1: s= service type (default is *, email is the other valid value)
                     if (tags.TryGetValue("s", out var service))
+                    {
                         result.Details.Add($"  Service type: {service}");
+                        var services = service.Split(':', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToList();
+                        foreach (var svc in services)
+                            if (!svc.Equals("*", StringComparison.Ordinal) && !svc.Equals("email", StringComparison.OrdinalIgnoreCase))
+                                result.Warnings.Add($"Selector {selector}: Non-standard service type '{svc}' (RFC 6376 §3.6.1 allows '*' or 'email')");
+                    }
                 }
 
                 if (activeCount > 0)

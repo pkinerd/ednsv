@@ -16,23 +16,36 @@ var dkimSelectorsOption = new Option<string[]>(
 {
     AllowMultipleArgumentsPerToken = true
 };
-var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool")
+var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
+var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
+var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
     jsonOption,
     noAxfrOption,
     catchAllOption,
     openRelayOption,
-    dkimSelectorsOption
+    dkimSelectorsOption,
+    listChecksOption,
+    verboseOption
 };
 
-rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors) =>
+// Make domain optional when --list-checks is used
+domainArg.SetDefaultValue("");
+
+rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
 {
+    if (listChecks)
+    {
+        Console.WriteLine(CheckDescriptions.GetDetailedListing());
+        return;
+    }
+
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
 
     if (string.IsNullOrWhiteSpace(domain))
     {
-        AnsiConsole.MarkupLine("[red]Error: Please provide a domain name.[/]");
+        Console.Error.WriteLine("Error: Please provide a domain name. Use --help for usage information.");
         return;
     }
 
@@ -65,19 +78,21 @@ rootCommand.SetHandler(async (string domain, bool json, bool noAxfr, bool catchA
     }
     else
     {
-        await RunInteractiveAsync(domain, options);
+        await RunInteractiveAsync(domain, options, verbose);
     }
-}, domainArg, jsonOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption);
+}, domainArg, jsonOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption, verboseOption);
 
 return await rootCommand.InvokeAsync(args);
 
-static async Task RunInteractiveAsync(string domain, ValidationOptions options)
+static async Task RunInteractiveAsync(string domain, ValidationOptions options, bool verbose = false)
 {
     AnsiConsole.Write(new Rule($"[bold blue]ednsv - Email DNS Validation[/]").RuleStyle("blue"));
     AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
     AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     if (!options.EnableAxfr)
         AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
+    if (verbose)
+        AnsiConsole.MarkupLine("[grey]Verbose mode: showing check descriptions[/]");
     AnsiConsole.WriteLine();
 
     var validator = new DomainValidator();
@@ -119,6 +134,7 @@ static async Task RunInteractiveAsync(string domain, ValidationOptions options)
 
     // Group results by category
     var grouped = report.Results.GroupBy(r => r.Category).OrderBy(g => g.Key);
+    var shownDescriptions = new HashSet<string>();
 
     foreach (var group in grouped)
     {
@@ -127,6 +143,16 @@ static async Task RunInteractiveAsync(string domain, ValidationOptions options)
                            group.Any(r => r.Severity == CheckSeverity.Warning) ? "yellow" : "green";
 
         AnsiConsole.Write(new Rule($"[{categoryColor}]{group.Key}[/]").RuleStyle("grey"));
+
+        if (verbose)
+        {
+            var catDesc = CheckDescriptions.GetForCategory(group.Key);
+            if (catDesc != null && shownDescriptions.Add(catDesc.Name))
+            {
+                AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(catDesc.Description)}[/]");
+                AnsiConsole.WriteLine();
+            }
+        }
 
         foreach (var check in group)
         {

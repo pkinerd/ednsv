@@ -53,6 +53,10 @@ public class SmtpTlsCertCheck : ICheck
 
                     if (!inSans)
                         result.Warnings.Add($"{mxHost}: MX hostname not found in certificate SANs");
+
+                    // Show TLS protocol version
+                    if (probe.TlsProtocol != default)
+                        result.Details.Add($"  TLS Protocol: {probe.TlsProtocol}");
                 }
                 else if (probe.Connected)
                 {
@@ -205,10 +209,24 @@ public class SmtpBannerCheck : ICheck
                 {
                     result.Details.Add($"{mxHost}: Banner: {probe.Banner}");
 
-                    // Check if banner starts with 220
+                    // RFC 5321 §4.2: Response must start with "220"
                     if (!probe.Banner.StartsWith("220"))
                     {
-                        result.Warnings.Add($"{mxHost}: Banner does not start with 220");
+                        result.Warnings.Add($"{mxHost}: Banner does not start with 220 (RFC 5321 §4.2)");
+                    }
+                    else
+                    {
+                        // RFC 5321 §4.3.1: "220 <domain> <text>" format expected
+                        var bannerBody = probe.Banner.Length > 4 ? probe.Banner.Substring(4).Trim() : "";
+                        if (string.IsNullOrEmpty(bannerBody))
+                            result.Warnings.Add($"{mxHost}: Banner has no hostname after 220 (RFC 5321 §4.3.1)");
+                        else
+                        {
+                            var bannerHost = bannerBody.Split(' ')[0];
+                            // Warn if banner hostname is not an FQDN (no dots)
+                            if (!bannerHost.Contains('.'))
+                                result.Warnings.Add($"{mxHost}: Banner hostname '{bannerHost}' is not an FQDN (RFC 5321 §4.1.2)");
+                        }
                     }
 
                     // Check if hostname in banner matches MX — mismatch is common
@@ -272,11 +290,11 @@ public class EhloCapabilitiesCheck : ICheck
                             result.Details.Add($"  Missing: {ext}");
                     }
 
-                    // Highlight SMTPUTF8/EAI readiness
+                    // Highlight SMTPUTF8/EAI readiness (RFC 6531 — optional extension)
                     if (capText.Contains("SMTPUTF8", StringComparison.OrdinalIgnoreCase))
                         result.Details.Add($"  {mxHost} supports SMTPUTF8 (internationalized email addresses/EAI ready)");
                     else
-                        result.Warnings.Add($"{mxHost}: No SMTPUTF8 — cannot handle internationalized email addresses (RFC 6531)");
+                        result.Details.Add($"  {mxHost}: No SMTPUTF8 (internationalized email not supported — optional per RFC 6531)");
                 }
                 else
                 {
@@ -337,10 +355,25 @@ public class SubmissionPortsCheck : ICheck
                 result.Details.Add($"{mxHost}:");
                 result.Details.Add($"  Port 587 (submission): {(port587 ? "Open" : "Closed/Filtered")}");
                 result.Details.Add($"  Port 465 (SMTPS): {(port465 ? "Open" : "Closed/Filtered")}");
+
+                // Probe TLS on open submission ports
+                if (port587)
+                {
+                    var probe587 = await ctx.Smtp.ProbeSmtpAsync(mxHost, 587);
+                    if (probe587.Connected)
+                    {
+                        if (probe587.SupportsStartTls)
+                            result.Details.Add($"  Port 587 TLS: {probe587.TlsProtocol} ({probe587.TlsCipherSuite ?? "unknown cipher"})");
+                        else
+                            result.Warnings.Add($"{mxHost}: Port 587 open but STARTTLS not offered");
+                    }
+                }
             }
 
-            result.Severity = CheckSeverity.Info;
-            result.Summary = "Submission port probe completed";
+            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Info;
+            result.Summary = result.Warnings.Any()
+                ? "Submission port issues detected"
+                : "Submission port probe completed";
         }
         catch (Exception ex)
         {
@@ -349,6 +382,23 @@ public class SubmissionPortsCheck : ICheck
         }
 
         return new List<CheckResult> { result };
+    }
+}
+
+internal static class SmtpResponseAnalyzer
+{
+    private static readonly string[] BlocklistIndicators = { "spamhaus", "barracuda", "blocklist", "blacklist", "blocked", "denied", "reject", "dnsbl", "rbl", "cbl", "sbl", "xbl", "Client host" };
+
+    /// <summary>
+    /// Determines if an SMTP rejection response indicates our source IP was blocked
+    /// rather than the recipient address being refused.
+    /// </summary>
+    public static bool IsSourceIpBlocked(string response)
+    {
+        if (string.IsNullOrEmpty(response)) return false;
+        // 5.7.1 with blocklist keywords = our IP is blocked
+        return response.Contains("5.7.1") &&
+               BlocklistIndicators.Any(kw => response.Contains(kw, StringComparison.OrdinalIgnoreCase));
     }
 }
 
@@ -370,22 +420,54 @@ public class PostmasterAddressCheck : ICheck
                 return new List<CheckResult> { result };
             }
 
-            var mxHost = ctx.MxHosts.First();
-            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
-            result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
-            if (!accepted)
-                result.Details.Add($"  Server response: {response}");
+            int acceptedCount = 0;
+            int rejectedCount = 0;
+            int ipBlockedCount = 0;
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"postmaster@{domain}");
+                result.Details.Add($"postmaster@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+                if (!accepted)
+                {
+                    result.Details.Add($"  Server response: {response}");
+                    if (SmtpResponseAnalyzer.IsSourceIpBlocked(response))
+                    {
+                        ipBlockedCount++;
+                        result.Details.Add($"  Note: Rejection appears to be IP-based blocking, not address refusal");
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                    }
+                    rejectedCount++;
+                }
+                else
+                {
+                    acceptedCount++;
+                }
+            }
 
-            if (!accepted)
+            if (rejectedCount > 0 && ipBlockedCount == rejectedCount)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "postmaster@ check inconclusive — our source IP is blocklisted by the server";
+            }
+            else if (rejectedCount > ipBlockedCount && rejectedCount - ipBlockedCount == ctx.MxHosts.Count - ipBlockedCount)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = "postmaster@ not accepted (RFC 5321 §4.5.1 requires it)";
-                result.Warnings.Add($"postmaster@{domain} rejected by {mxHost} ({response})");
+                result.Summary = "postmaster@ not accepted on any MX (RFC 5321 §4.5.1 requires it)";
+            }
+            else if (rejectedCount > ipBlockedCount)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"postmaster@ rejected on {rejectedCount - ipBlockedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "postmaster@ accepted";
+                result.Summary = ctx.MxHosts.Count > 1
+                    ? $"postmaster@ accepted on all {ctx.MxHosts.Count} MX hosts"
+                    : "postmaster@ accepted";
             }
         }
         catch (Exception ex)
@@ -416,22 +498,54 @@ public class AbuseAddressCheck : ICheck
                 return new List<CheckResult> { result };
             }
 
-            var mxHost = ctx.MxHosts.First();
-            var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
-            result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
-            if (!accepted)
-                result.Details.Add($"  Server response: {response}");
+            int acceptedCount = 0;
+            int rejectedCount = 0;
+            int ipBlockedCount = 0;
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var (accepted, response) = await ctx.Smtp.ProbeRcptDetailedAsync(mxHost, $"abuse@{domain}");
+                result.Details.Add($"abuse@{domain} via {mxHost}: {(accepted ? "Accepted" : "Rejected")}");
+                if (!accepted)
+                {
+                    result.Details.Add($"  Server response: {response}");
+                    if (SmtpResponseAnalyzer.IsSourceIpBlocked(response))
+                    {
+                        ipBlockedCount++;
+                        result.Details.Add($"  Note: Rejection appears to be IP-based blocking, not address refusal");
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                    }
+                    rejectedCount++;
+                }
+                else
+                {
+                    acceptedCount++;
+                }
+            }
 
-            if (!accepted)
+            if (rejectedCount > 0 && ipBlockedCount == rejectedCount)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "abuse@ check inconclusive — our source IP is blocklisted by the server";
+            }
+            else if (rejectedCount > ipBlockedCount && rejectedCount - ipBlockedCount == ctx.MxHosts.Count - ipBlockedCount)
             {
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = "abuse@ not accepted (RFC 2142 recommends it)";
-                result.Warnings.Add($"abuse@{domain} rejected by {mxHost} ({response})");
+                result.Summary = "abuse@ not accepted on any MX (RFC 2142 recommends it)";
+            }
+            else if (rejectedCount > ipBlockedCount)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"abuse@ rejected on {rejectedCount - ipBlockedCount}/{ctx.MxHosts.Count} MX host(s)";
             }
             else
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "abuse@ accepted";
+                result.Summary = ctx.MxHosts.Count > 1
+                    ? $"abuse@ accepted on all {ctx.MxHosts.Count} MX hosts"
+                    : "abuse@ accepted";
             }
         }
         catch (Exception ex)

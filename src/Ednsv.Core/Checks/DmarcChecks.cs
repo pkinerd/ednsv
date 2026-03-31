@@ -68,6 +68,36 @@ public class DmarcRecordCheck : ICheck
             if (tags.TryGetValue("ri", out var ri))
                 result.Details.Add($"Report interval (ri): {ri}s");
 
+            // RFC 7489 tag value validation
+            var validPolicies = new[] { "none", "quarantine", "reject" };
+            if (policy != null && !validPolicies.Contains(policy, StringComparer.OrdinalIgnoreCase))
+                result.Errors.Add($"Invalid DMARC policy (p): '{policy}' — must be none, quarantine, or reject (RFC 7489 §6.3)");
+            if (sp != null && !validPolicies.Contains(sp, StringComparer.OrdinalIgnoreCase))
+                result.Errors.Add($"Invalid subdomain policy (sp): '{sp}' — must be none, quarantine, or reject");
+            if (pct != null && (!int.TryParse(pct, out var pctVal) || pctVal < 0 || pctVal > 100))
+                result.Errors.Add($"Invalid pct value: '{pct}' — must be 0-100 (RFC 7489 §6.3)");
+            if (adkim != null && adkim != "r" && adkim != "s")
+                result.Errors.Add($"Invalid DKIM alignment (adkim): '{adkim}' — must be 'r' (relaxed) or 's' (strict)");
+            if (aspf != null && aspf != "r" && aspf != "s")
+                result.Errors.Add($"Invalid SPF alignment (aspf): '{aspf}' — must be 'r' (relaxed) or 's' (strict)");
+            if (fo != null)
+            {
+                var foValues = fo.Split(':', StringSplitOptions.RemoveEmptyEntries).Select(v => v.Trim());
+                var validFo = new[] { "0", "1", "d", "s" };
+                foreach (var fv in foValues)
+                    if (!validFo.Contains(fv))
+                        result.Errors.Add($"Invalid failure option (fo): '{fv}' — must be 0, 1, d, or s (RFC 7489 §6.3)");
+            }
+            if (rf != null && !rf.Equals("afrf", StringComparison.OrdinalIgnoreCase) && !rf.Equals("iodef", StringComparison.OrdinalIgnoreCase))
+                result.Warnings.Add($"Non-standard report format (rf): '{rf}' — expected 'afrf' (RFC 7489 §6.3)");
+            if (ri != null)
+            {
+                if (!long.TryParse(ri, out var riVal))
+                    result.Errors.Add($"Invalid report interval (ri): '{ri}' — must be a number of seconds");
+                else if (riVal < 3600)
+                    result.Warnings.Add($"Report interval (ri) is very short: {riVal}s (< 1 hour)");
+            }
+
             if (result.Severity == default)
             {
                 result.Severity = policy == "reject" || policy == "quarantine" ? CheckSeverity.Pass : CheckSeverity.Warning;

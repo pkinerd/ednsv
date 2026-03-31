@@ -92,16 +92,18 @@ public class AuthoritativeNsCheck : ICheck
                 ctx.NsHosts.Add(nsHost);
 
                 var aRecords = await ctx.Dns.ResolveAAsync(nsHost);
-                ctx.NsHostIps[nsHost] = aRecords;
+                var aaaaRecords = await ctx.Dns.ResolveAAAAAsync(nsHost);
+                var allIps = aRecords.Concat(aaaaRecords).ToList();
+                ctx.NsHostIps[nsHost] = allIps;
 
-                foreach (var ip in aRecords)
+                foreach (var ip in allIps)
                 {
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                     var ptrStr = ptrs.Any() ? string.Join(", ", ptrs) : "No PTR";
                     result.Details.Add($"NS: {nsHost} -> {ip} (PTR: {ptrStr})");
                 }
-                if (!aRecords.Any())
-                    result.Details.Add($"NS: {nsHost} -> No A records found");
+                if (!allIps.Any())
+                    result.Details.Add($"NS: {nsHost} -> No A or AAAA records found");
             }
 
             result.Summary = $"Found {nsRecords.Count} authoritative nameservers";

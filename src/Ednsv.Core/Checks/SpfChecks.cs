@@ -56,6 +56,19 @@ public class SpfRecordCheck : ICheck
                 result.Details.Add($"  Mechanism: {part}");
             }
 
+            // Validate mechanism syntax (RFC 7208 §12)
+            var validMechanisms = new[] { "all", "include:", "a", "a:", "a/", "mx", "mx:", "mx/", "ip4:", "ip6:", "ptr", "ptr:", "exists:", "redirect=", "exp=" };
+            foreach (var part in parts.Skip(1))
+            {
+                var stripped = part.TrimStart('+', '-', '~', '?');
+                if (!validMechanisms.Any(vm => stripped.StartsWith(vm, StringComparison.OrdinalIgnoreCase)))
+                    result.Warnings.Add($"Unrecognized SPF mechanism: '{part}' — may cause PermError during evaluation");
+            }
+
+            // Validate v=spf1 is the first token (RFC 7208 §4.5)
+            if (!parts[0].Equals("v=spf1", StringComparison.OrdinalIgnoreCase))
+                result.Warnings.Add($"First token is '{parts[0]}', expected 'v=spf1' (RFC 7208 §4.5)");
+
             // Check for deprecated ptr mechanism (RFC 7208 §5.5)
             if (parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("ptr", StringComparison.OrdinalIgnoreCase)))
             {
@@ -92,11 +105,21 @@ public class SpfRecordCheck : ICheck
             }
             else
             {
-                result.Severity = CheckSeverity.Warning;
-                result.Warnings.Add("No 'all' mechanism - implicit ?all (neutral)");
+                // RFC 7208 §5.1: redirect= replaces the entire record, so no 'all' is expected
+                var hasRedirect = parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase));
+                if (hasRedirect)
+                {
+                    result.Severity = CheckSeverity.Pass;
+                    result.Details.Add("Policy defined by redirect= target (no local 'all' expected)");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Warning;
+                    result.Warnings.Add("No 'all' mechanism and no redirect= — implicit ?all (neutral)");
+                }
             }
 
-            result.Summary = $"SPF record found: {allMech ?? "no all mechanism"}";
+            result.Summary = $"SPF record found: {allMech ?? (parts.Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase)) ? "redirect" : "no all mechanism")}";
         }
         catch (Exception ex)
         {
@@ -116,6 +139,7 @@ public class SpfExpansionCheck : ICheck
     private int _lookupCount;
     private int _voidLookupCount;
     private int _maxDepth;
+    private readonly HashSet<string> _visitedDomains = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
@@ -123,6 +147,7 @@ public class SpfExpansionCheck : ICheck
         _lookupCount = 0;
         _voidLookupCount = 0;
         _maxDepth = 0;
+        _visitedDomains.Clear();
 
         try
         {
@@ -151,9 +176,33 @@ public class SpfExpansionCheck : ICheck
         return new List<CheckResult> { result };
     }
 
+    private static (string domain, string? cidr) SplitCidr(string value)
+    {
+        var slashIdx = value.IndexOf('/');
+        if (slashIdx >= 0)
+            return (value.Substring(0, slashIdx), value.Substring(slashIdx));
+        return (value, null);
+    }
+
+    private static string QualifierPrefix(string part)
+    {
+        if (part.Length > 0 && "+-~?".Contains(part[0]))
+            return part[0].ToString();
+        return "+"; // implicit pass
+    }
+
     private async Task ExpandSpfAsync(CheckContext ctx, string domain, string spf, CheckResult result, int depth)
     {
-        if (depth > 10) return;
+        if (depth > 10)
+        {
+            result.Warnings.Add($"SPF expansion truncated at depth {depth} (safety limit)");
+            return;
+        }
+        if (!_visitedDomains.Add(domain))
+        {
+            result.Warnings.Add($"Circular SPF reference detected: {domain} was already visited in this chain");
+            return;
+        }
         if (depth > _maxDepth) _maxDepth = depth;
         var indent = new string(' ', depth * 2);
 
@@ -161,77 +210,128 @@ public class SpfExpansionCheck : ICheck
         foreach (var part in parts)
         {
             if (part.Equals("v=spf1", StringComparison.OrdinalIgnoreCase)) continue;
+            var qualifier = QualifierPrefix(part);
             var mech = part.TrimStart('+', '-', '~', '?');
+            var qualLabel = qualifier == "+" ? "" : $"({qualifier}) ";
 
             if (mech.StartsWith("include:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
                 var target = mech.Substring(8);
-                result.Details.Add($"{indent}include:{target}");
-                var txt = await GetSpfForDomainAsync(ctx, target);
+                result.Details.Add($"{indent}{qualLabel}include:{target}");
+                var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
                 else
+                {
                     _voidLookupCount++;
+                    if (lookupError != null)
+                        result.Warnings.Add($"include:{target} — could not expand: {lookupError}");
+                    else
+                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                }
             }
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
                 var target = mech.Substring(9);
-                result.Details.Add($"{indent}redirect={target}");
-                var txt = await GetSpfForDomainAsync(ctx, target);
+                result.Details.Add($"{indent}{qualLabel}redirect={target}");
+                var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
                 else
+                {
                     _voidLookupCount++;
+                    if (lookupError != null)
+                        result.Warnings.Add($"redirect={target} — could not expand: {lookupError}");
+                    else
+                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                }
             }
-            else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a")
+            else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a"
+                     || (mech.StartsWith("a/", StringComparison.OrdinalIgnoreCase)))
             {
                 _lookupCount++;
-                var target = mech.Length > 2 ? mech.Substring(2) : domain;
+                string raw = mech.Length > 2 && mech[1] == ':' ? mech.Substring(2) : (mech == "a" ? "" : mech.Substring(1));
+                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(target)) target = domain;
+                var cidrLabel = cidr ?? "";
                 var ips = await ctx.Dns.ResolveAAsync(target);
-                result.Details.Add($"{indent}a:{target} -> {string.Join(", ", ips)}");
-                if (!ips.Any()) _voidLookupCount++;
+                var ipsV6 = await ctx.Dns.ResolveAAAAAsync(target);
+                var allIps = ips.Concat(ipsV6).ToList();
+                result.Details.Add($"{indent}{qualLabel}a:{target}{cidrLabel} -> {string.Join(", ", allIps)}");
+                if (!allIps.Any()) _voidLookupCount++;
             }
-            else if (mech.StartsWith("mx:", StringComparison.OrdinalIgnoreCase) || mech == "mx")
+            else if (mech.StartsWith("mx:", StringComparison.OrdinalIgnoreCase) || mech == "mx"
+                     || (mech.StartsWith("mx/", StringComparison.OrdinalIgnoreCase)))
             {
                 _lookupCount++;
-                var target = mech.Length > 3 ? mech.Substring(3) : domain;
+                string raw = mech.Length > 3 && mech[2] == ':' ? mech.Substring(3) : (mech == "mx" ? "" : mech.Substring(2));
+                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(target)) target = domain;
+                var cidrLabel = cidr ?? "";
                 var mxRecs = await ctx.Dns.GetMxRecordsAsync(target);
                 foreach (var mx in mxRecs)
                 {
                     var mxHost = mx.Exchange.Value.TrimEnd('.');
                     var ips = await ctx.Dns.ResolveAAsync(mxHost);
-                    result.Details.Add($"{indent}mx:{target} -> {mxHost} -> {string.Join(", ", ips)}");
+                    var ipsV6 = await ctx.Dns.ResolveAAAAAsync(mxHost);
+                    var allIps = ips.Concat(ipsV6).ToList();
+                    result.Details.Add($"{indent}{qualLabel}mx:{target}{cidrLabel} -> {mxHost} -> {string.Join(", ", allIps)}");
                 }
                 if (!mxRecs.Any()) _voidLookupCount++;
             }
             else if (mech.StartsWith("ip4:", StringComparison.OrdinalIgnoreCase))
             {
-                result.Details.Add($"{indent}{mech}");
+                result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("ip6:", StringComparison.OrdinalIgnoreCase))
             {
-                result.Details.Add($"{indent}{mech}");
+                result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("exists:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                result.Details.Add($"{indent}{mech}");
+                var existsDomain = mech.Substring(7);
+                if (existsDomain.Contains("%{"))
+                    result.Details.Add($"{indent}{qualLabel}{mech} (macro — expands at evaluation time)");
+                else
+                    result.Details.Add($"{indent}{qualLabel}{mech}");
             }
             else if (mech.StartsWith("ptr", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                result.Details.Add($"{indent}{mech} (deprecated)");
+                result.Details.Add($"{indent}{qualLabel}{mech} (deprecated)");
+            }
+            else if (mech.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Details.Add($"{indent}{qualifier}all");
+            }
+            else if (mech.StartsWith("exp=", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Details.Add($"{indent}exp={mech.Substring(4)}");
+            }
+            else
+            {
+                result.Details.Add($"{indent}(unrecognized: {part})");
             }
         }
     }
 
-    private async Task<string?> GetSpfForDomainAsync(CheckContext ctx, string domain)
+    private async Task<(string? spf, string? error)> GetSpfForDomainAsync(CheckContext ctx, string domain)
     {
+        var errorsBefore = ctx.Dns.QueryErrors.Count;
         var txts = await ctx.Dns.GetTxtRecordsAsync(domain);
+        var errorsAfter = ctx.Dns.QueryErrors.Count;
+
+        if (errorsAfter > errorsBefore)
+        {
+            var error = ctx.Dns.QueryErrors[errorsAfter - 1];
+            return (null, error);
+        }
+
         var spf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
-        return spf != null ? string.Join("", spf.Text) : null;
+        return spf != null ? (string.Join("", spf.Text), null) : (null, null);
     }
 }
 

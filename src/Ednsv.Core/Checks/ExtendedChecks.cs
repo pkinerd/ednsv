@@ -202,11 +202,17 @@ public class DnsPropagationCheck : ICheck
             result.Details.Add($"{name} ({ip}): A=[{string.Join(", ", aRecords)}] MX=[{string.Join(", ", mxRecords)}]");
         }
 
-        // Compare — use set-based comparison for A records (anycast/GeoDNS returns different IPs per resolver)
-        bool aConsistent = resolverResults.Values.All(v =>
-            new HashSet<string>(v).SetEquals(resolverResults.Values.First()));
-        bool mxConsistent = mxResults.Values.All(v =>
-            v.SequenceEqual(mxResults.Values.First()));
+        // Compare all resolver pairs (not just against the first)
+        var resolverSets = resolverResults.Values.Select(v => new HashSet<string>(v)).ToList();
+        bool aConsistent = resolverSets.All(s => s.SetEquals(resolverSets[0]));
+        // For broader check: also flag if any pair differs
+        if (aConsistent && resolverSets.Count > 2)
+        {
+            for (int i = 1; i < resolverSets.Count; i++)
+                aConsistent &= resolverSets[i].SetEquals(resolverSets[0]);
+        }
+        var mxLists = mxResults.Values.ToList();
+        bool mxConsistent = mxLists.All(v => v.SequenceEqual(mxLists[0]));
 
         if (!aConsistent)
         {
@@ -531,7 +537,7 @@ public class CertificateTransparencyCheck : ICheck
             {
                 // Count unique issuers from JSON (simple parsing)
                 var issuerMatches = Regex.Matches(content, "\"issuer_name\":\"([^\"]+)\"");
-                var issuers = issuerMatches.Cast<Match>().Select(m => m.Groups[1].Value).Distinct().Take(10).ToList();
+                var issuers = issuerMatches.Cast<Match>().Select(m => m.Groups[1].Value).Distinct().ToList();
                 var entryCount = Regex.Matches(content, "\"id\":").Count;
 
                 result.Severity = CheckSeverity.Info;
