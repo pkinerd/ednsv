@@ -12,7 +12,7 @@ var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection
 var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
 var dkimSelectorsOption = new Option<string[]>(
     "--dkim-selectors",
-    "Additional DKIM selectors to probe (comma-separated or repeated)")
+    "DKIM selectors to probe instead of defaults (comma-separated or repeated; combined with any discovered via AXFR)")
 {
     AllowMultipleArgumentsPerToken = true
 };
