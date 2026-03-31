@@ -139,7 +139,7 @@ public class SmtpTlsVersionCheck : ICheck
 }
 
 /// <summary>
-/// Checks whether MX server IPs are covered by the SPF record
+/// Checks whether MX server IPs are covered by the SPF record (supports CIDR range matching)
 /// </summary>
 public class MxCoveredBySpfCheck : ICheck
 {
@@ -164,29 +164,29 @@ public class MxCoveredBySpfCheck : ICheck
             return new List<CheckResult> { result };
         }
 
-        // Collect all IPs authorized by SPF (ip4/ip6 mechanisms + expanded a/mx)
+        // Collect all IPs and CIDR ranges authorized by SPF
         var authorizedIps = new HashSet<string>();
-        await CollectSpfIps(ctx, domain, ctx.SpfRecord, authorizedIps, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        var authorizedCidrs = new List<(IPAddress network, int prefixLen)>();
+        await CollectSpfIps(ctx, domain, ctx.SpfRecord, authorizedIps, authorizedCidrs, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
 
         var uncovered = new List<string>();
         foreach (var kvp in ctx.MxHostIps)
         {
             foreach (var ip in kvp.Value)
             {
-                // Simple exact-match check (CIDR matching would be more thorough)
-                if (!authorizedIps.Contains(ip))
-                    uncovered.Add($"{kvp.Key} ({ip})");
-                else
+                if (authorizedIps.Contains(ip) || IsInAnyCidr(ip, authorizedCidrs))
                     result.Details.Add($"{kvp.Key} ({ip}): Covered by SPF");
+                else
+                    uncovered.Add($"{kvp.Key} ({ip})");
             }
         }
 
         if (uncovered.Any())
         {
             result.Severity = CheckSeverity.Warning;
-            result.Summary = $"{uncovered.Count} MX IP(s) not explicitly covered by SPF";
+            result.Summary = $"{uncovered.Count} MX IP(s) not covered by SPF";
             foreach (var u in uncovered)
-                result.Warnings.Add($"{u}: Not found in SPF authorized IPs (may be covered by CIDR range)");
+                result.Warnings.Add($"{u}: Not found in SPF authorized IPs/ranges");
         }
         else
         {
@@ -197,8 +197,42 @@ public class MxCoveredBySpfCheck : ICheck
         return new List<CheckResult> { result };
     }
 
+    private static bool IsInAnyCidr(string ipStr, List<(IPAddress network, int prefixLen)> cidrs)
+    {
+        if (!IPAddress.TryParse(ipStr, out var ip)) return false;
+        foreach (var (network, prefixLen) in cidrs)
+        {
+            if (ip.AddressFamily != network.AddressFamily) continue;
+            if (IsInCidr(ip, network, prefixLen)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsInCidr(IPAddress ip, IPAddress network, int prefixLen)
+    {
+        var ipBytes = ip.GetAddressBytes();
+        var netBytes = network.GetAddressBytes();
+        if (ipBytes.Length != netBytes.Length) return false;
+
+        int fullBytes = prefixLen / 8;
+        int remainingBits = prefixLen % 8;
+
+        for (int i = 0; i < fullBytes && i < ipBytes.Length; i++)
+        {
+            if (ipBytes[i] != netBytes[i]) return false;
+        }
+
+        if (remainingBits > 0 && fullBytes < ipBytes.Length)
+        {
+            int mask = 0xFF << (8 - remainingBits);
+            if ((ipBytes[fullBytes] & mask) != (netBytes[fullBytes] & mask)) return false;
+        }
+
+        return true;
+    }
+
     private async Task CollectSpfIps(CheckContext ctx, string domain, string spf,
-        HashSet<string> ips, HashSet<string> visited)
+        HashSet<string> ips, List<(IPAddress network, int prefixLen)> cidrs, HashSet<string> visited)
     {
         if (!visited.Add(domain + "|" + spf)) return;
         var parts = spf.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -208,14 +242,12 @@ public class MxCoveredBySpfCheck : ICheck
             if (mech.StartsWith("ip4:", StringComparison.OrdinalIgnoreCase))
             {
                 var cidr = mech.Substring(4);
-                var ipPart = cidr.Split('/')[0];
-                ips.Add(ipPart);
+                ParseAndStoreCidr(cidr, 32, ips, cidrs);
             }
             else if (mech.StartsWith("ip6:", StringComparison.OrdinalIgnoreCase))
             {
                 var cidr = mech.Substring(4);
-                var ipPart = cidr.Split('/')[0];
-                ips.Add(ipPart);
+                ParseAndStoreCidr(cidr, 128, ips, cidrs);
             }
             else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a")
             {
@@ -240,7 +272,7 @@ public class MxCoveredBySpfCheck : ICheck
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var childSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
                 if (childSpf != null)
-                    await CollectSpfIps(ctx, target, string.Join("", childSpf.Text), ips, visited);
+                    await CollectSpfIps(ctx, target, string.Join("", childSpf.Text), ips, cidrs, visited);
             }
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
             {
@@ -248,8 +280,28 @@ public class MxCoveredBySpfCheck : ICheck
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var childSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
                 if (childSpf != null)
-                    await CollectSpfIps(ctx, target, string.Join("", childSpf.Text), ips, visited);
+                    await CollectSpfIps(ctx, target, string.Join("", childSpf.Text), ips, cidrs, visited);
             }
+        }
+    }
+
+    private static void ParseAndStoreCidr(string cidr, int defaultPrefix,
+        HashSet<string> ips, List<(IPAddress network, int prefixLen)> cidrs)
+    {
+        var slashIdx = cidr.IndexOf('/');
+        if (slashIdx >= 0)
+        {
+            var ipPart = cidr.Substring(0, slashIdx);
+            if (IPAddress.TryParse(ipPart, out var addr) &&
+                int.TryParse(cidr.Substring(slashIdx + 1), out var prefix))
+            {
+                cidrs.Add((addr, prefix));
+            }
+        }
+        else
+        {
+            // Single IP, no CIDR - exact match
+            ips.Add(cidr);
         }
     }
 }

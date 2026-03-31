@@ -202,21 +202,29 @@ public class DnsPropagationCheck : ICheck
             result.Details.Add($"{name} ({ip}): A=[{string.Join(", ", aRecords)}] MX=[{string.Join(", ", mxRecords)}]");
         }
 
-        // Compare
+        // Compare — use set-based comparison for A records (anycast/GeoDNS returns different IPs per resolver)
         bool aConsistent = resolverResults.Values.All(v =>
-            v.SequenceEqual(resolverResults.Values.First()));
+            new HashSet<string>(v).SetEquals(resolverResults.Values.First()));
         bool mxConsistent = mxResults.Values.All(v =>
             v.SequenceEqual(mxResults.Values.First()));
 
         if (!aConsistent)
-            result.Warnings.Add("A record answers differ across resolvers - propagation may be in progress");
+        {
+            // Check if all resolvers return at least some records — differing IPs are normal for anycast/GeoDNS
+            bool allHaveRecords = resolverResults.Values.All(v => v.Count > 0);
+            if (allHaveRecords)
+                result.Details.Add("A record IPs differ across resolvers (normal for anycast/GeoDNS)");
+            else
+                result.Warnings.Add("Some resolvers return no A records — possible propagation issue");
+        }
         if (!mxConsistent)
             result.Warnings.Add("MX record answers differ across resolvers - propagation may be in progress");
 
-        result.Severity = (aConsistent && mxConsistent) ? CheckSeverity.Pass : CheckSeverity.Warning;
-        result.Summary = (aConsistent && mxConsistent) ?
-            "DNS answers consistent across resolvers" :
-            "DNS propagation inconsistency detected";
+        bool hasWarnings = result.Warnings.Any();
+        result.Severity = hasWarnings ? CheckSeverity.Warning : CheckSeverity.Pass;
+        result.Summary = hasWarnings ?
+            "DNS propagation inconsistency detected" :
+            "DNS answers consistent across resolvers";
 
         return new List<CheckResult> { result };
     }

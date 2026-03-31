@@ -73,8 +73,8 @@ public class DkimSelectorsCheck : ICheck
 
             if (found.Any())
             {
-                result.Severity = CheckSeverity.Pass;
-                result.Summary = $"Found {found.Count} DKIM selector(s)";
+                int activeCount = 0;
+                int revokedCount = 0;
 
                 foreach (var (selector, record) in found)
                 {
@@ -89,10 +89,12 @@ public class DkimSelectorsCheck : ICheck
                     {
                         if (string.IsNullOrEmpty(pubKey))
                         {
+                            revokedCount++;
                             result.Warnings.Add($"Selector {selector}: Empty public key (revoked)");
                         }
                         else
                         {
+                            activeCount++;
                             // Estimate key size from base64 length
                             var keyBytes = pubKey.Length * 3 / 4;
                             var keyBits = keyBytes * 8;
@@ -102,6 +104,10 @@ public class DkimSelectorsCheck : ICheck
                             else if (keyBits < 2048)
                                 result.Warnings.Add($"Selector {selector}: Key is ~{keyBits} bits (recommended >= 2048)");
                         }
+                    }
+                    else
+                    {
+                        activeCount++; // No p= tag means key might be valid
                     }
                     if (tags.TryGetValue("t", out var flags))
                     {
@@ -113,6 +119,18 @@ public class DkimSelectorsCheck : ICheck
                         result.Details.Add($"  Hash algorithms: {hash}");
                     if (tags.TryGetValue("s", out var service))
                         result.Details.Add($"  Service type: {service}");
+                }
+
+                if (activeCount > 0)
+                {
+                    result.Severity = CheckSeverity.Pass;
+                    result.Summary = $"Found {activeCount} active DKIM selector(s)" +
+                        (revokedCount > 0 ? $" ({revokedCount} revoked)" : "");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Warning;
+                    result.Summary = $"Found {found.Count} DKIM selector(s) but all have revoked keys";
                 }
             }
             else
