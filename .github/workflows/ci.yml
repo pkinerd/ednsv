@@ -1,0 +1,243 @@
+name: CI
+
+on:
+  push:
+    branches: ['*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build & Test
+  # ──────────────────────────────────────────────────────────────────────────
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run against test domains
+        run: |
+          mkdir -p test-output
+
+          DOMAINS="google.com gmail.com cnn.com example.com"
+          OVERALL_EXIT=0
+
+          for domain in $DOMAINS; do
+            echo "============================================"
+            echo "Testing: $domain"
+            echo "============================================"
+
+            # Run with JSON output, capture result
+            if dotnet run --project src/Ednsv.Cli --configuration Release -- "$domain" --json > "test-output/${domain}.json" 2>&1; then
+              echo "PASS: $domain completed successfully"
+            else
+              echo "FAIL: $domain exited with error"
+              OVERALL_EXIT=1
+            fi
+
+            # Show summary
+            python3 -c "
+          import json, sys
+          try:
+              d = json.load(open('test-output/${domain}.json'))
+              total = len(d['results'])
+              print(f'  Checks: {total}, Pass: {d[\"passCount\"]}, Warn: {d[\"warningCount\"]}, Error: {d[\"errorCount\"]}, Critical: {d[\"criticalCount\"]}')
+              print(f'  Duration: {d[\"duration\"]}')
+              for r in d['results']:
+                  sev = {0:'INFO', 1:'PASS', 2:'WARN', 3:'FAIL', 4:'CRIT'}.get(r['severity'], '????')
+                  print(f'    [{sev}] {r[\"checkName\"]}: {r[\"summary\"]}')
+                  for w in r.get('warnings', []):
+                      print(f'          ⚠ {w}')
+                  for e in r.get('errors', []):
+                      print(f'          ✗ {e}')
+          except Exception as e:
+              print(f'  Could not parse output: {e}')
+              with open('test-output/${domain}.json') as f:
+                  print(f.read()[:2000])
+          " || true
+
+            echo ""
+          done
+
+          exit $OVERALL_EXIT
+
+      - name: Upload test output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: test-output/
+          retention-days: 30
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Push Build Logs
+  # ──────────────────────────────────────────────────────────────────────────
+  push-build-logs:
+    name: Push Build Logs
+    needs: [build-and-test]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Determine build status
+        id: status
+        run: |
+          BUILD_RESULT="${{ needs.build-and-test.result }}"
+          if [ "$BUILD_RESULT" = "success" ]; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download test artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: test-reports
+          path: test-reports
+        continue-on-error: true
+
+      - name: Generate log summary
+        env:
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.triggering_actor }}
+          RESULT: ${{ steps.status.outputs.result }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          mkdir -p logs
+          {
+            echo "# Build Log"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| **Run** | #${RUN_NUMBER} (attempt ${RUN_ATTEMPT}) |"
+            echo "| **Run ID** | ${RUN_ID} |"
+            echo "| **Result** | ${RESULT} |"
+            echo "| **Commit** | ${SHA} |"
+            echo "| **Ref** | ${REF} |"
+            echo "| **Event** | ${EVENT_NAME} |"
+            echo "| **Actor** | ${ACTOR} |"
+            if [ -n "$PR_NUMBER" ]; then
+              echo "| **PR** | #${PR_NUMBER}: ${PR_TITLE} |"
+              echo "| **Branch** | ${HEAD_REF} |"
+            fi
+            echo ""
+            if [ -d "test-reports" ]; then
+              echo "## Artifacts"
+              echo '```'
+              find test-reports -type f | sort
+              echo '```'
+            fi
+          } > logs/build-summary.md
+
+      - name: Fetch build and test logs via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch job details
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+            > logs/jobs.json 2>/dev/null || true
+
+          # Download logs for completed jobs only
+          if [ -f logs/jobs.json ]; then
+            jq -r '.jobs[] | select(.status == "completed") | "\(.id) \(.name)"' logs/jobs.json 2>/dev/null \
+              | while read -r job_id job_name; do
+                  safe_name=$(echo "$job_name" | tr ' /' '-_' | tr '[:upper:]' '[:lower:]')
+                  gh api "repos/${{ github.repository }}/actions/jobs/${job_id}/logs" \
+                    > "logs/${safe_name}.log" 2>/dev/null || true
+                done
+          fi
+
+      - name: Push logs to build-logs branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          STATUS="${{ steps.status.outputs.result }}"
+          RUN_NUMBER="${{ github.run_number }}"
+          RUN_ID="${{ github.run_id }}"
+          FOLDER="${RUN_NUMBER}-${RUN_ID}-${TIMESTAMP}-${STATUS}"
+          REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          # Prepare the new build folder
+          mkdir -p "${FOLDER}"
+          cp logs/* "${FOLDER}/"
+          if [ -d "test-reports" ]; then
+            cp -r test-reports "${FOLDER}/test-reports"
+          fi
+          rm -rf logs test-reports
+
+          git init -b build-logs
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add origin "${REMOTE_URL}"
+
+          # Delete any old-format build-logs/* branches
+          gh api "repos/${{ github.repository }}/git/matching-refs/heads/build-logs/" \
+            --jq '.[].ref' 2>/dev/null \
+            | while read -r ref; do
+                short="${ref#refs/}"
+                echo "Deleting old-format branch: $short"
+                gh api -X DELETE "repos/${{ github.repository }}/git/refs/${short}" || true
+              done
+
+          MAX_RETRIES=3
+          for attempt in $(seq 1 $MAX_RETRIES); do
+            git checkout --orphan build-logs
+            git rm -r --cached . 2>/dev/null || true
+
+            if git fetch origin build-logs --depth=1 --filter=blob:none 2>/dev/null; then
+              git reset FETCH_HEAD
+
+              FOLDERS=$(git ls-tree HEAD --name-only | sort -t- -k1 -n)
+              if [ -n "$FOLDERS" ]; then
+                COUNT=$(echo "$FOLDERS" | wc -l)
+                KEEP=49
+                if [ "$COUNT" -gt "$KEEP" ]; then
+                  echo "$FOLDERS" | head -n $((COUNT - KEEP)) | while read -r old_folder; do
+                    echo "Pruning old build folder: $old_folder"
+                    git rm -r --cached "$old_folder"
+                  done
+                fi
+              fi
+            else
+              echo "Branch does not exist yet — creating fresh"
+            fi
+
+            git add "${FOLDER}/"
+            git commit -m "Build #${RUN_NUMBER} (${STATUS})"
+
+            if git push -u origin build-logs; then
+              echo "Successfully pushed build logs (attempt $attempt)"
+              break
+            fi
+
+            if [ "$attempt" -eq "$MAX_RETRIES" ]; then
+              echo "::warning::Failed to push build logs after $MAX_RETRIES attempts"
+              exit 0
+            fi
+
+            echo "Push failed (attempt $attempt/$MAX_RETRIES), retrying..."
+            sleep $((attempt * 2))
+          done
