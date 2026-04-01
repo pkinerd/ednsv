@@ -33,6 +33,7 @@ var dkimSelectorsOption = new Option<string[]>(
 };
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
+var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index file after each domain completes (use with --output-dir)");
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
@@ -47,7 +48,8 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     openResolverDomainOption,
     dkimSelectorsOption,
     listChecksOption,
-    verboseOption
+    verboseOption,
+    liveIndexOption
 };
 
 rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
@@ -153,8 +155,9 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
             return;
         }
 
+        var liveIndex = parseResult.GetValueForOption(liveIndexOption);
         Directory.CreateDirectory(outputDir);
-        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex);
         return;
     }
 
@@ -577,7 +580,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 /// with progressive console output, then generates an index file with
 /// the summary and links to each domain report.
 /// </summary>
-static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose)
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false)
 {
     var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
     var reports = new List<ValidationReport>();
@@ -717,30 +720,41 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         }
 
         AnsiConsole.MarkupLine($"  [grey]Wrote {Markup.Escape(filepath)}[/]");
-    }
 
-    // Write index file
-    var indexPath = Path.Combine(outputDir, $"index.{ext}");
-    await using (var fw = new StreamWriter(indexPath, false, new UTF8Encoding(false)))
-    {
-        switch (fmt)
+        // Rewrite the index after each domain so it's always up to date
+        if (liveIndex)
         {
-            case "json":
-                await WriteJsonIndexAsync(reports, fw);
-                break;
-            case "html":
-                WriteHtmlIndex(reports, ext, fw);
-                break;
-            case "markdown":
-            case "md":
-                WriteMdIndex(reports, ext, fw);
-                break;
+            await WriteIndexFileAsync(reports, fmt, ext, outputDir);
+            AnsiConsole.MarkupLine($"  [grey]Updated index ({reports.Count}/{domains.Count} domains)[/]");
         }
     }
 
+    // Write final index (always — covers non-live-index mode and ensures
+    // the final version includes all domains)
+    await WriteIndexFileAsync(reports, fmt, ext, outputDir);
+
     AnsiConsole.WriteLine();
-    AnsiConsole.MarkupLine($"[bold green]Index written to {Markup.Escape(indexPath)}[/]");
+    AnsiConsole.MarkupLine($"[bold green]Index written to {Markup.Escape(Path.Combine(outputDir, $"index.{ext}"))}[/]");
     Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext})");
+}
+
+static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir)
+{
+    var indexPath = Path.Combine(outputDir, $"index.{ext}");
+    await using var fw = new StreamWriter(indexPath, false, new UTF8Encoding(false));
+    switch (fmt)
+    {
+        case "json":
+            await WriteJsonIndexAsync(reports, fw);
+            break;
+        case "html":
+            WriteHtmlIndex(reports, ext, fw);
+            break;
+        case "markdown":
+        case "md":
+            WriteMdIndex(reports, ext, fw);
+            break;
+    }
 }
 
 static string SanitizeFilename(string domain)
