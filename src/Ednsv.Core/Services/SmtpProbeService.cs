@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -20,6 +21,10 @@ public class SmtpProbeResult
     public string? TlsCipherSuite { get; set; }
     public int? SmtpMaxSize { get; set; }
     public bool SupportsRequireTls { get; set; }
+    public long ConnectTimeMs { get; set; }
+    public long BannerTimeMs { get; set; }
+    public long EhloTimeMs { get; set; }
+    public long TlsTimeMs { get; set; }
     public string? Error { get; set; }
 }
 
@@ -34,6 +39,7 @@ public class SmtpProbeService
         try
         {
             client = new TcpClient();
+            var sw = Stopwatch.StartNew();
             var connectTask = client.ConnectAsync(host, port);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
             {
@@ -41,6 +47,7 @@ public class SmtpProbeService
                 return result;
             }
             await connectTask; // propagate exception if any
+            result.ConnectTimeMs = sw.ElapsedMilliseconds;
 
             result.Connected = true;
             var stream = client.GetStream();
@@ -48,12 +55,16 @@ public class SmtpProbeService
             stream.WriteTimeout = (int)_timeout.TotalMilliseconds;
 
             // Read banner
+            sw.Restart();
             result.Banner = await ReadLineAsync(stream);
+            result.BannerTimeMs = sw.ElapsedMilliseconds;
 
             // Send EHLO
+            sw.Restart();
             await WriteLineAsync(stream, "EHLO email-dns-validator");
             var ehloResponse = await ReadMultiLineAsync(stream);
             result.EhloCapabilities = ehloResponse;
+            result.EhloTimeMs = sw.ElapsedMilliseconds;
 
             result.SupportsStartTls = ehloResponse.Any(l =>
                 l.Contains("STARTTLS", StringComparison.OrdinalIgnoreCase));
@@ -79,6 +90,7 @@ public class SmtpProbeService
             // Try STARTTLS
             if (result.SupportsStartTls)
             {
+                sw.Restart();
                 await WriteLineAsync(stream, "STARTTLS");
                 var tlsResponse = await ReadLineAsync(stream);
 
@@ -102,9 +114,11 @@ public class SmtpProbeService
                             result.CertExpiry = cert2.NotAfter;
                             result.CertSans = GetSans(cert2);
                         }
+                        result.TlsTimeMs = sw.ElapsedMilliseconds;
                     }
                     catch (Exception ex)
                     {
+                        result.TlsTimeMs = sw.ElapsedMilliseconds;
                         result.Error = $"TLS negotiation failed: {ex.Message}";
                     }
                 }

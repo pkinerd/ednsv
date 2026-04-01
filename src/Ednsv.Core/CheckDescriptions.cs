@@ -140,7 +140,7 @@ public static class CheckDescriptions
         }
 
         lines.Add("Use --catch-all and --open-relay to enable opt-in active probing checks.");
-        lines.Add("Use --dkim-selectors to probe additional DKIM selectors beyond the defaults.");
+        lines.Add("Use --dkim-selectors to specify DKIM selectors to probe (replaces defaults; combined with any discovered via AXFR).");
 
         return string.Join(Environment.NewLine, lines);
     }

@@ -249,6 +249,195 @@ public class NsNetworkDiversityCheck : ICheck
     }
 }
 
+/// <summary>
+/// Queries SOA from each NS server and compares serial numbers — mismatches indicate
+/// replication lag or misconfiguration (MXToolbox "SOA Serial Number" check).
+/// </summary>
+public class SoaSerialConsistencyCheck : ICheck
+{
+    public string Name => "SOA Serial Consistency";
+    public CheckCategory Category => CheckCategory.SOA;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.NsHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No NS hosts to check SOA serial consistency";
+                return new List<CheckResult> { result };
+            }
+
+            var serials = new Dictionary<string, uint>();
+            var failures = new List<string>();
+
+            foreach (var nsHost in ctx.NsHosts)
+            {
+                if (!ctx.NsHostIps.TryGetValue(nsHost, out var ips) || !ips.Any())
+                {
+                    failures.Add($"{nsHost}: No IP addresses");
+                    continue;
+                }
+
+                foreach (var ip in ips)
+                {
+                    try
+                    {
+                        var resp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), domain, QueryType.SOA);
+                        var soaRec = resp.Answers.SoaRecords().FirstOrDefault()
+                                  ?? resp.Authorities.SoaRecords().FirstOrDefault();
+                        if (soaRec != null)
+                        {
+                            serials[$"{nsHost} ({ip})"] = soaRec.Serial;
+                            result.Details.Add($"{nsHost} ({ip}): Serial {soaRec.Serial}");
+                        }
+                        else
+                        {
+                            failures.Add($"{nsHost} ({ip}): No SOA in response");
+                        }
+                    }
+                    catch
+                    {
+                        failures.Add($"{nsHost} ({ip}): Query failed");
+                    }
+                }
+            }
+
+            foreach (var f in failures)
+                result.Details.Add(f);
+
+            if (serials.Count < 2)
+            {
+                result.Severity = serials.Count == 1 ? CheckSeverity.Info : CheckSeverity.Warning;
+                result.Summary = serials.Count == 1
+                    ? $"Only 1 NS responded with SOA (serial {serials.Values.First()}) — cannot compare"
+                    : "No NS servers returned SOA records";
+                return new List<CheckResult> { result };
+            }
+
+            var uniqueSerials = serials.Values.Distinct().ToList();
+            if (uniqueSerials.Count == 1)
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"All {serials.Count} nameservers agree on SOA serial {uniqueSerials[0]}";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"SOA serial mismatch across nameservers ({uniqueSerials.Count} different serials)";
+                foreach (var g in serials.GroupBy(kv => kv.Value))
+                {
+                    result.Warnings.Add($"Serial {g.Key}: {string.Join(", ", g.Select(kv => kv.Key))}");
+                }
+                result.Warnings.Add("Serial mismatch indicates zone transfer lag or misconfigured secondary nameservers");
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+            result.Summary = "SOA serial consistency check failed";
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+/// <summary>
+/// Tests whether NS servers respond to queries for external domains (open recursive resolver),
+/// which is a security risk (DNS amplification attacks).
+/// </summary>
+public class OpenRecursiveResolverCheck : ICheck
+{
+    public string Name => "Open Recursive Resolver Detection";
+    public CheckCategory Category => CheckCategory.NS;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        if (!ctx.Options.EnableOpenResolver)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Open resolver check skipped (use --open-resolver to enable)";
+            return new List<CheckResult> { result };
+        }
+
+        try
+        {
+            var testDomain = ctx.Options.OpenResolverTestDomain;
+
+            if (!ctx.NsHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No NS hosts to check for open recursion";
+                return new List<CheckResult> { result };
+            }
+
+            int openCount = 0;
+            int checkedCount = 0;
+
+            foreach (var nsHost in ctx.NsHosts)
+            {
+                if (!ctx.NsHostIps.TryGetValue(nsHost, out var ips) || !ips.Any())
+                    continue;
+
+                foreach (var ip in ips)
+                {
+                    checkedCount++;
+                    try
+                    {
+                        var resp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), testDomain, QueryType.A);
+                        var aRecords = resp.Answers.ARecords().ToList();
+                        if (aRecords.Any())
+                        {
+                            openCount++;
+                            result.Errors.Add($"{nsHost} ({ip}): Resolved external domain '{testDomain}' — open recursive resolver");
+                        }
+                        else
+                        {
+                            result.Details.Add($"{nsHost} ({ip}): Did not resolve external domain (good)");
+                        }
+                    }
+                    catch
+                    {
+                        // Query failure = not resolving external domains = good
+                        result.Details.Add($"{nsHost} ({ip}): Refused/failed external query (good)");
+                    }
+                }
+            }
+
+            if (openCount > 0)
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = $"{openCount}/{checkedCount} nameservers are open recursive resolvers";
+                result.Errors.Add("Open resolvers can be abused for DNS amplification attacks — disable recursion for external queries");
+            }
+            else if (checkedCount > 0)
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"All {checkedCount} nameservers correctly refuse external recursive queries";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No NS IPs available to test";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+            result.Summary = "Open recursive resolver check failed";
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
 public class DuplicateNsIpCheck : ICheck
 {
     public string Name => "Duplicate NS IPs";

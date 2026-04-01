@@ -205,6 +205,99 @@ public class IpBlocklistCheck : ICheck
     }
 }
 
+/// <summary>
+/// Checks MX hostnames (not just the domain) against domain-based blocklists (RHSBL).
+/// MXToolbox checks MX hostnames individually for listing.
+/// </summary>
+public class MxHostnameBlocklistCheck : ICheck
+{
+    public string Name => "MX Hostname Blocklist (RHSBL)";
+    public CheckCategory Category => CheckCategory.DomainBL;
+
+    private static readonly string[] DomainBlocklists =
+    {
+        "dbl.spamhaus.org",
+        "multi.surbl.org",
+        "black.uribl.com"
+    };
+
+    private static readonly HashSet<string> FalsePositiveResponses = new(StringComparer.Ordinal)
+    {
+        "127.255.255.254", "127.255.255.253", "127.255.255.252", "127.0.0.1"
+    };
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to check against domain blocklists";
+                return new List<CheckResult> { result };
+            }
+
+            // Extract unique base domains from MX hostnames to avoid redundant lookups
+            var mxDomains = ctx.MxHosts
+                .Select(h => h.TrimEnd('.'))
+                .Where(h => h != domain && !h.Equals(domain, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (!mxDomains.Any())
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "MX hostnames same as domain (already checked by domain blocklist check)";
+                return new List<CheckResult> { result };
+            }
+
+            int listed = 0;
+            foreach (var mxDomain in mxDomains)
+            {
+                foreach (var bl in DomainBlocklists)
+                {
+                    var query = $"{mxDomain}.{bl}";
+                    var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                    var aRecs = resp.Answers.ARecords().ToList();
+                    if (aRecs.Any())
+                    {
+                        var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                        var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                        var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+
+                        if (realListings.Any())
+                        {
+                            listed++;
+                            result.Errors.Add($"MX host {mxDomain} is LISTED on {bl} ({string.Join(", ", realListings)})");
+                        }
+                        if (falsePositives.Any())
+                            result.Details.Add($"{mxDomain}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)})");
+                    }
+                    else
+                    {
+                        result.Details.Add($"{mxDomain}: Not listed on {bl}");
+                    }
+                }
+            }
+
+            result.Severity = listed > 0 ? CheckSeverity.Critical : CheckSeverity.Pass;
+            result.Summary = listed > 0
+                ? $"{listed} MX hostname blocklist listing(s) found!"
+                : $"MX hostnames clean on all domain blocklists ({mxDomains.Count} checked)";
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+            result.Summary = "MX hostname blocklist check failed";
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
 public class DomainBlocklistCheck : ICheck
 {
     public string Name => "Domain Blocklist Check";

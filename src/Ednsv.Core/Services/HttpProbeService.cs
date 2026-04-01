@@ -31,4 +31,19 @@ public class HttpProbeService
             return (false, ex.Message, 0);
         }
     }
+
+    public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
+    {
+        try
+        {
+            var response = await _client.GetAsync(url);
+            var content = await response.Content.ReadAsStringAsync();
+            var contentType = response.Content.Headers.ContentType?.MediaType;
+            return (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message, 0, null);
+        }
+    }
 }

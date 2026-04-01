@@ -40,14 +40,35 @@ public class DmarcRecordCheck : ICheck
             ctx.DmarcRecord = dmarcText;
             result.Details.Add($"DMARC: {dmarcText}");
 
-            // Parse tags
-            var tags = ParseDmarcTags(dmarcText);
+            // #30 - v=DMARC1 case sensitivity check
+            var vTagMatch = dmarcRecords[0].Text.FirstOrDefault(s => s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase));
+            if (vTagMatch != null)
+            {
+                var trimmedV = vTagMatch.TrimStart();
+                // Extract the v=DMARC1 portion (up to first ; or end)
+                var vPart = trimmedV.Split(';')[0].Trim();
+                if (!vPart.StartsWith("v=DMARC1") && vPart.StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase))
+                    result.Warnings.Add("v=DMARC1 uses incorrect case — RFC 7489 ABNF requires exact uppercase 'DMARC1'");
+            }
+
+            // Parse tags (with duplicate detection - #29)
+            var tags = ParseDmarcTags(dmarcText, out var duplicateTags);
+
+            // #29 - Duplicate tags detection
+            foreach (var dup in duplicateTags)
+                result.Warnings.Add($"Duplicate tag '{dup}' in DMARC record — behavior is unpredictable");
 
             if (tags.TryGetValue("p", out var policy))
             {
                 result.Details.Add($"Policy (p): {policy}");
                 if (policy == "none")
                     result.Warnings.Add("DMARC policy is 'none' - no enforcement");
+            }
+            else
+            {
+                // #13 - Missing p= tag
+                result.Severity = CheckSeverity.Error;
+                result.Errors.Add("Missing required p= tag — DMARC record is invalid without it (RFC 7489 §6.3)");
             }
             if (tags.TryGetValue("sp", out var sp))
                 result.Details.Add($"Subdomain policy (sp): {sp}");
@@ -58,9 +79,57 @@ public class DmarcRecordCheck : ICheck
             if (tags.TryGetValue("aspf", out var aspf))
                 result.Details.Add($"SPF alignment (aspf): {aspf}");
             if (tags.TryGetValue("rua", out var rua))
+            {
                 result.Details.Add($"Aggregate reports (rua): {rua}");
+                // #14 - Empty rua= value
+                var ruaUris = rua.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(u => u.Trim()).Where(u => u.Length > 0).ToList();
+                if (!ruaUris.Any())
+                {
+                    result.Severity = CheckSeverity.Error;
+                    result.Errors.Add("rua= tag is present but contains no valid URI");
+                }
+                else
+                {
+                    // #27 - Report size suffix validation for rua URIs
+                    foreach (var ruaUri in ruaUris)
+                    {
+                        var bangIdx = ruaUri.IndexOf('!');
+                        if (bangIdx >= 0 && bangIdx < ruaUri.Length - 1)
+                        {
+                            var suffix = ruaUri.Substring(bangIdx + 1);
+                            if (!Regex.IsMatch(suffix, @"^\d+[kmgt]?$", RegexOptions.IgnoreCase))
+                                result.Warnings.Add($"Report size limit '{suffix}' is malformed in URI — expected format: !<digits>[k|m|g|t]");
+                        }
+                    }
+                }
+            }
             if (tags.TryGetValue("ruf", out var ruf))
+            {
                 result.Details.Add($"Forensic reports (ruf): {ruf}");
+                // #14 - Empty ruf= value
+                var rufUris = ruf.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(u => u.Trim()).Where(u => u.Length > 0).ToList();
+                if (!rufUris.Any())
+                {
+                    result.Severity = CheckSeverity.Error;
+                    result.Errors.Add("ruf= tag is present but contains no valid URI");
+                }
+                else
+                {
+                    // #27 - Report size suffix validation for ruf URIs
+                    foreach (var rufUri in rufUris)
+                    {
+                        var bangIdx = rufUri.IndexOf('!');
+                        if (bangIdx >= 0 && bangIdx < rufUri.Length - 1)
+                        {
+                            var suffix = rufUri.Substring(bangIdx + 1);
+                            if (!Regex.IsMatch(suffix, @"^\d+[kmgt]?$", RegexOptions.IgnoreCase))
+                                result.Warnings.Add($"Report size limit '{suffix}' is malformed in URI — expected format: !<digits>[k|m|g|t]");
+                        }
+                    }
+                }
+            }
             if (tags.TryGetValue("fo", out var fo))
                 result.Details.Add($"Failure options (fo): {fo}");
             if (tags.TryGetValue("rf", out var rf))
@@ -87,15 +156,52 @@ public class DmarcRecordCheck : ICheck
                 foreach (var fv in foValues)
                     if (!validFo.Contains(fv))
                         result.Errors.Add($"Invalid failure option (fo): '{fv}' — must be 0, 1, d, or s (RFC 7489 §6.3)");
+
+                // #25 - fo= without ruf=
+                if (ruf == null)
+                    result.Warnings.Add("fo= tag has no effect without ruf= (RFC 7489 §6.3)");
             }
-            if (rf != null && !rf.Equals("afrf", StringComparison.OrdinalIgnoreCase) && !rf.Equals("iodef", StringComparison.OrdinalIgnoreCase))
-                result.Warnings.Add($"Non-standard report format (rf): '{rf}' — expected 'afrf' (RFC 7489 §6.3)");
+            // #26 - rf= validation: only afrf is valid
+            if (rf != null && !rf.Equals("afrf", StringComparison.OrdinalIgnoreCase))
+                result.Warnings.Add($"rf= value '{rf}' is not valid — only 'afrf' is defined (RFC 7489 §6.3)");
             if (ri != null)
             {
                 if (!long.TryParse(ri, out var riVal))
                     result.Errors.Add($"Invalid report interval (ri): '{ri}' — must be a number of seconds");
                 else if (riVal < 3600)
                     result.Warnings.Add($"Report interval (ri) is very short: {riVal}s (< 1 hour)");
+            }
+
+            // #56 - pct= with p=none
+            if (pct != null && policy != null && string.Equals(policy, "none", StringComparison.OrdinalIgnoreCase))
+                result.Details.Add($"pct={pct} has no practical effect with p=none (no action is taken regardless of pct)");
+
+            // #57 - Unknown tags detection
+            var knownTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                { "v", "p", "sp", "rua", "ruf", "adkim", "aspf", "pct", "fo", "rf", "ri", "np", "psd" };
+            foreach (var tagName in tags.Keys)
+            {
+                if (!knownTags.Contains(tagName))
+                    result.Details.Add($"Unknown tag '{tagName}' in DMARC record (will be ignored, possible typo?)");
+            }
+
+            // #58 - np= tag (RFC 9091)
+            if (tags.TryGetValue("np", out var np))
+            {
+                result.Details.Add($"Non-existent subdomain policy (np=): {np} (RFC 9091)");
+                if (!validPolicies.Contains(np, StringComparer.OrdinalIgnoreCase))
+                    result.Warnings.Add($"Invalid np= value '{np}' — must be none, quarantine, or reject (RFC 9091)");
+            }
+
+            // #59 - psd=y tag (RFC 9091)
+            if (tags.TryGetValue("psd", out var psd))
+            {
+                if (string.Equals(psd, "y", StringComparison.OrdinalIgnoreCase))
+                {
+                    result.Details.Add("Public Suffix Domain DMARC record (psd=y, RFC 9091)");
+                    if (ruf != null)
+                        result.Warnings.Add("ruf= MUST NOT be used with psd=y (RFC 9091) — failure reports must not be sent for PSD DMARC records");
+                }
             }
 
             if (result.Severity == default)
@@ -115,7 +221,13 @@ public class DmarcRecordCheck : ICheck
 
     public static Dictionary<string, string> ParseDmarcTags(string dmarc)
     {
+        return ParseDmarcTags(dmarc, out _);
+    }
+
+    public static Dictionary<string, string> ParseDmarcTags(string dmarc, out List<string> duplicates)
+    {
         var tags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        duplicates = new List<string>();
         // Remove v=DMARC1 prefix
         var content = dmarc;
         if (content.StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase))
@@ -129,6 +241,8 @@ public class DmarcRecordCheck : ICheck
             {
                 var key = trimmed.Substring(0, eqIdx).Trim();
                 var value = trimmed.Substring(eqIdx + 1).Trim();
+                if (tags.ContainsKey(key))
+                    duplicates.Add(key);
                 tags[key] = value;
             }
         }
@@ -157,14 +271,86 @@ public class DmarcInheritanceCheck : ICheck
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = "DMARC record exists at this domain level";
                 result.Details.Add("No inheritance needed - DMARC found directly");
+
+                // #28 - sp= on subdomain records: if this domain has 3+ parts, it's likely a subdomain
+                var domainParts = domain.Split('.');
+                if (domainParts.Length > 2)
+                {
+                    var rec = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)));
+                    if (rec != null)
+                    {
+                        var dmarcText = string.Join("", rec.Text);
+                        var subTags = DmarcRecordCheck.ParseDmarcTags(dmarcText);
+                        if (subTags.ContainsKey("sp"))
+                            result.Warnings.Add("sp= tag on subdomain DMARC record is ignored — sp= only applies at the Organizational Domain level (RFC 7489 §6.3)");
+
+                        // Check parent domain for conflicting DMARC policy
+                        subTags.TryGetValue("p", out var subPolicy);
+                        for (int i = 1; i < domainParts.Length - 1; i++)
+                        {
+                            var parent = string.Join('.', domainParts.Skip(i));
+                            var parentDmarc = $"_dmarc.{parent}";
+                            var parentTxts = await ctx.Dns.GetTxtRecordsAsync(parentDmarc);
+                            var parentRec = parentTxts.FirstOrDefault(t =>
+                                t.Text.Any(s => s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)));
+
+                            if (parentRec != null)
+                            {
+                                var parentText = string.Join("", parentRec.Text);
+                                var parentTags = DmarcRecordCheck.ParseDmarcTags(parentText);
+
+                                // Determine what policy the parent intended for subdomains
+                                parentTags.TryGetValue("sp", out var parentSp);
+                                parentTags.TryGetValue("p", out var parentP);
+                                var parentSubdomainPolicy = parentSp ?? parentP;
+
+                                result.Details.Add($"Parent domain ({parent}) DMARC: p={parentP ?? "not set"}, sp={parentSp ?? "not set (inherits p)"}");;
+                                result.Details.Add($"This subdomain DMARC: p={subPolicy ?? "not set"}");
+
+                                if (parentSubdomainPolicy != null && subPolicy != null)
+                                {
+                                    var strength = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                                        { { "none", 0 }, { "quarantine", 1 }, { "reject", 2 } };
+                                    var parentStr = strength.GetValueOrDefault(parentSubdomainPolicy, 0);
+                                    var subStr = strength.GetValueOrDefault(subPolicy, 0);
+
+                                    if (subStr < parentStr)
+                                        result.Warnings.Add($"Subdomain DMARC policy (p={subPolicy}) is weaker than parent's subdomain policy ({(parentSp != null ? $"sp={parentSp}" : $"p={parentP}")}) — this subdomain overrides the parent with a less restrictive policy");
+                                    else if (subStr > parentStr)
+                                        result.Details.Add($"Subdomain enforces stricter policy (p={subPolicy}) than parent's subdomain policy ({(parentSp != null ? $"sp={parentSp}" : $"p={parentP}")})");
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 return new List<CheckResult> { result };
             }
 
             // Walk up parent domains
+            // NOTE: PSL limitation — this tree walk uses simple domain splitting and does not
+            // consult the Public Suffix List (PSL). For multi-level TLDs (e.g., co.uk, com.au),
+            // the Organizational Domain detection may be incorrect. A proper implementation
+            // should use the PSL to determine the Organizational Domain boundary.
+            var knownMultiLevelSuffixes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "co.uk", "com.au", "co.za", "co.jp", "com.br", "co.in",
+                "org.uk", "net.au", "ac.uk", "co.nz"
+            };
+
             var parts = domain.Split('.');
             for (int i = 1; i < parts.Length - 1; i++)
             {
                 var parent = string.Join('.', parts.Skip(i));
+
+                // #31 - PSL-aware tree walk: warn if we reach a known multi-level TLD suffix
+                if (knownMultiLevelSuffixes.Contains(parent))
+                {
+                    result.Warnings.Add($"DMARC tree walk reached public suffix '{parent}' — Organizational Domain detection may be incorrect for multi-level TLDs. Consider using the Public Suffix List.");
+                    continue;
+                }
+
                 var parentDmarc = $"_dmarc.{parent}";
                 var parentTxts = await ctx.Dns.GetTxtRecordsAsync(parentDmarc);
                 var parentRecord = parentTxts.FirstOrDefault(t =>
@@ -447,6 +633,10 @@ public class SubdomainDmarcOverrideCheck : ICheck
                     subTags.TryGetValue("p", out var subPolicy);
 
                     result.Details.Add($"{sub}.{domain}: p={subPolicy ?? "not set"}");
+
+                    // #28 - sp= on subdomain records is ignored
+                    if (subTags.ContainsKey("sp"))
+                        result.Warnings.Add($"sp= tag on subdomain DMARC record is ignored — sp= only applies at the Organizational Domain level (RFC 7489 §6.3)");
 
                     if (IsWeaker(subPolicy, parentPolicy))
                     {

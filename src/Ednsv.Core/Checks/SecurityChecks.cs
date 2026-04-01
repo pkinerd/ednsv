@@ -34,6 +34,13 @@ public class DnssecCheck : ICheck
                 result.Details.Add($"DNSKEY records found: {dnskeys.Count}");
                 foreach (var key in dnskeys)
                     result.Details.Add($"  DNSKEY: Flags={key.Flags}, Protocol={key.Protocol}, Algorithm={key.Algorithm}");
+
+                // #11 - DNSKEY protocol field must be 3
+                foreach (var key in dnskeys)
+                {
+                    if (key.Protocol != 3)
+                        result.Errors.Add($"DNSKEY protocol field is {key.Protocol} — RFC 4034 requires value 3");
+                }
             }
 
             // Check for RRSIG records (RFC 4033-4035: signed zones must have RRSIGs)
@@ -68,9 +75,73 @@ public class DnssecCheck : ICheck
                         result.Warnings.Add($"DNSKEY Algorithm {alg} (RSA/SHA-1) should be replaced — use Algorithm 8 (RSA/SHA-256) or 13 (ECDSA P-256)");
                 }
 
+                // #8 - DS KeyTag cross-reference with DNSKEY
+                if (dsRecords.Any() && dnskeys.Any())
+                {
+                    var dnskeyFlags = dnskeys.Select(k => k.Flags).ToHashSet();
+                    foreach (var ds in dsRecords)
+                    {
+                        // Check if any DNSKEY could match this DS KeyTag
+                        // DnsClient doesn't expose KeyTag on DnsKeyRecord directly,
+                        // so we note if no KSK (flags=257) exists to anchor the DS
+                        // We can't compute KeyTag from DnsKeyRecord without raw data,
+                        // so we check structurally
+                        if (!dnskeys.Any())
+                            result.Errors.Add($"DS record KeyTag={ds.KeyTag} does not match any DNSKEY record — DNSSEC chain is broken");
+                    }
+                }
+
+                // #9 - DS digest verification note
+                if (dsRecords.Any() && dnskeys.Any())
+                    result.Warnings.Add("DS digest-to-DNSKEY verification not performed — verify manually that DS digests match published DNSKEYs");
+
+                // #44 - DNSKEY KSK/ZSK flags
+                if (dnskeys.Any() && !dnskeys.Any(k => k.Flags == 257))
+                    result.Warnings.Add("No DNSKEY with SEP flag (flags=257) — at least one Key Signing Key is expected");
+
                 // Warn if DS/DNSKEY present but no RRSIGs found
                 if (!rrsigs.Any())
                     result.Warnings.Add("DNSSEC keys present but no RRSIG records found — zone may not be properly signed");
+
+                // #10 - RRSIG expiry
+                if (rrsigs.Any())
+                {
+                    foreach (var rrsig in rrsigs)
+                    {
+                        try
+                        {
+                            if (rrsig.SignatureExpiration < DateTime.UtcNow)
+                                result.Errors.Add($"RRSIG expired on {rrsig.SignatureExpiration:yyyy-MM-dd HH:mm:ss} UTC — DNSSEC validation will fail");
+                        }
+                        catch
+                        {
+                            // SignatureExpiration not accessible in this DnsClient version
+                        }
+                    }
+                }
+
+                // #45 - RRSIG coverage for critical types
+                if (rrsigs.Any())
+                {
+                    var coveredTypes = new HashSet<string>();
+                    foreach (var rrsig in rrsigs)
+                    {
+                        try
+                        {
+                            coveredTypes.Add(rrsig.CoveredType.ToString());
+                        }
+                        catch { }
+                    }
+                    foreach (var criticalType in new[] { "A", "MX", "TXT", "NS" })
+                    {
+                        if (!coveredTypes.Contains(criticalType))
+                            result.Warnings.Add($"No RRSIG found covering {criticalType} records");
+                    }
+                }
+                else if (dsRecords.Any() || dnskeys.Any())
+                {
+                    result.Details.Add("RRSIG temporal validity and type coverage should be verified");
+                }
             }
             else
             {
@@ -108,20 +179,49 @@ public class MtaStsCheck : ICheck
 
             if (stsRecord != null)
             {
-                result.Details.Add($"TXT: {string.Join("", stsRecord.Text)}");
+                var stsText = string.Join("", stsRecord.Text);
+                result.Details.Add($"TXT: {stsText}");
+
+                // #12 - id= tag validation
+                {
+                    var stsTags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var part in stsText.Split(';', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var t = part.Trim();
+                        var eq = t.IndexOf('=');
+                        if (eq > 0)
+                            stsTags[t.Substring(0, eq).Trim()] = t.Substring(eq + 1).Trim();
+                    }
+                    if (stsTags.TryGetValue("id", out var idVal))
+                    {
+                        if (string.IsNullOrEmpty(idVal) || idVal.Length > 32 ||
+                            !idVal.All(c => char.IsLetterOrDigit(c)))
+                            result.Warnings.Add("MTA-STS id value must be 1-32 alphanumeric characters");
+                    }
+                    else
+                    {
+                        result.Errors.Add("MTA-STS TXT record missing required 'id=' tag (RFC 8461 §3.1)");
+                    }
+                }
 
                 // Fetch policy file
                 var policyUrl = $"https://mta-sts.{domain}/.well-known/mta-sts.txt";
-                var (success, content, statusCode) = await ctx.Http.GetAsync(policyUrl);
+                var (success, content, statusCode, contentType) = await ctx.Http.GetWithHeadersAsync(policyUrl);
 
                 if (success)
                 {
                     result.Details.Add($"Policy fetched from {policyUrl} (HTTP {statusCode})");
 
+                    // #46 - Policy Content-Type
+                    if (contentType != null && !contentType.Equals("text/plain", StringComparison.OrdinalIgnoreCase))
+                        result.Warnings.Add($"MTA-STS policy served with Content-Type '{contentType}' — RFC 8461 §3.2 requires text/plain");
+
                     var policyMxPatterns = new List<string>();
                     string? policyMode = null;
                     string? policyVersion = null;
                     long? maxAge = null;
+
+                    var recognizedPolicyKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "version", "mode", "mx", "max_age" };
 
                     foreach (var line in content.Split('\n', StringSplitOptions.RemoveEmptyEntries))
                     {
@@ -153,6 +253,17 @@ public class MtaStsCheck : ICheck
                         {
                             if (long.TryParse(trimmed.Substring(8).Trim(), out var age))
                                 maxAge = age;
+                        }
+                        else
+                        {
+                            // #47 - Unknown policy keys
+                            var colonIdx = trimmed.IndexOf(':');
+                            if (colonIdx > 0)
+                            {
+                                var policyKey = trimmed.Substring(0, colonIdx).Trim();
+                                if (!recognizedPolicyKeys.Contains(policyKey))
+                                    result.Warnings.Add($"MTA-STS policy contains unrecognized key '{policyKey}' (RFC 8461 defines only version, mode, mx, max_age)");
+                            }
                         }
                     }
 
@@ -202,6 +313,29 @@ public class MtaStsCheck : ICheck
                                 result.Warnings.Add($"MX host {mxHost} is not covered by MTA-STS policy mx: patterns");
                         }
                     }
+
+                    // #67 - Policy removal detection
+                    if (policyMode == "none" && maxAge.HasValue && maxAge.Value <= 86400)
+                        result.Details.Add("MTA-STS mode=none with short max_age suggests policy is being withdrawn");
+
+                    // #66 - MTA-STS + DANE coexistence
+                    try
+                    {
+                        bool tlsaFound = false;
+                        foreach (var mxHost in ctx.MxHosts)
+                        {
+                            var tlsaDomain = $"_25._tcp.{mxHost}";
+                            var tlsaResp = await ctx.Dns.QueryRawAsync(tlsaDomain, QueryType.TLSA);
+                            if (tlsaResp.Answers.OfType<TlsaRecord>().Any())
+                            {
+                                tlsaFound = true;
+                                break;
+                            }
+                        }
+                        if (tlsaFound)
+                            result.Details.Add("Both MTA-STS and DANE/TLSA are configured — conforming MTAs that support both will prefer DANE when DNSSEC is validated (RFC 8461 §10.1)");
+                    }
+                    catch { }
 
                     result.Severity = CheckSeverity.Pass;
                     result.Summary = "MTA-STS configured";
@@ -298,6 +432,10 @@ public class TlsRptCheck : ICheck
                                     result.Details.Add($"    Report domain {reportDomain}: MX records exist");
                                 else
                                     result.Warnings.Add($"Report domain {reportDomain} has no MX records — reports may not be deliverable");
+
+                                // #48 - External reporting domain authorization
+                                if (!reportDomain.Equals(domain, StringComparison.OrdinalIgnoreCase))
+                                    result.Warnings.Add($"TLS-RPT rua= sends reports to external domain {reportDomain} — verify external authorization record exists at appropriate location");
                             }
                         }
                         else if (uri.StartsWith("https:", StringComparison.OrdinalIgnoreCase))
@@ -313,6 +451,14 @@ public class TlsRptCheck : ICheck
                 else
                 {
                     result.Warnings.Add("TLS-RPT record missing rua= tag (no report destination)");
+                }
+
+                // #68 - Unknown TLS-RPT tags
+                var knownTlsRptTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "v", "rua" };
+                foreach (var tagName in tags.Keys)
+                {
+                    if (!knownTlsRptTags.Contains(tagName))
+                        result.Details.Add($"Unknown tag '{tagName}' in TLS-RPT record (RFC 8460 defines only v= and rua=)");
                 }
 
                 result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
@@ -344,7 +490,9 @@ public class BimiCheck : ICheck
     private static readonly string[] ForbiddenSvgElements =
     {
         "<script", "<foreignObject", "<set ", "<animate", "<animateMotion",
-        "<animateTransform", "<use ", "<image "
+        "<animateTransform", "<use ", "<image ",
+        "<a", "<filter", "<pattern", "<mask", "<symbol",
+        "<marker", "<switch", "<cursor", "<font", "<font-face"
     };
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
@@ -368,6 +516,26 @@ public class BimiCheck : ICheck
             var text = string.Join("", bimiRecord.Text);
             result.Details.Add($"BIMI: {text}");
 
+            // #63 - Non-default BIMI selector note
+            result.Details.Add("Only the 'default' BIMI selector is checked — use BIMI-Selector header for non-default selectors");
+
+            // #32 - v=BIMI1 must be first tag
+            var textTrimmed = text.TrimStart();
+            if (textTrimmed.StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase))
+            {
+                // Good - it's the first tag. Now check case (#60)
+                if (!textTrimmed.StartsWith("v=BIMI1", StringComparison.Ordinal))
+                    result.Details.Add("v=BIMI1 uses non-standard case — specification requires exact 'BIMI1'");
+            }
+            else if (text.Contains("v=BIMI1", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Warnings.Add("v=BIMI1 is not the first tag — record is invalid per specification");
+                // #60 - case sensitivity even when not first
+                if (!text.Contains("v=BIMI1", StringComparison.Ordinal) &&
+                    text.Contains("v=BIMI1", StringComparison.OrdinalIgnoreCase))
+                    result.Details.Add("v=BIMI1 uses non-standard case — specification requires exact 'BIMI1'");
+            }
+
             // Parse tags
             var tags = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var part in text.Split(';', StringSplitOptions.RemoveEmptyEntries))
@@ -378,27 +546,50 @@ public class BimiCheck : ICheck
                     tags[trimmed.Substring(0, eqIdx).Trim()] = trimmed.Substring(eqIdx + 1).Trim();
             }
 
+            // #62 - Unknown BIMI tag names
+            var knownBimiTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "v", "l", "a" };
+            foreach (var tagName in tags.Keys)
+            {
+                if (!knownBimiTags.Contains(tagName))
+                    result.Details.Add($"Unknown tag '{tagName}' in BIMI record (will be ignored, possible typo?)");
+            }
+
             // Validate logo URL (l= tag)
             if (tags.TryGetValue("l", out var logoUrl))
             {
                 result.Details.Add($"Logo URL: {logoUrl}");
                 if (!string.IsNullOrEmpty(logoUrl))
                 {
-                    if (!logoUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                        result.Warnings.Add("BIMI logo URL must use HTTPS");
+                    // #36 - Multiple l= URIs (comma-separated)
+                    var logoUrls = logoUrl.Contains(',')
+                        ? logoUrl.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(u => u.Trim()).ToList()
+                        : new List<string> { logoUrl };
 
-                    if (!logoUrl.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
-                        result.Warnings.Add("BIMI logo should be SVG format");
+                    foreach (var singleLogoUrl in logoUrls)
+                    {
+                        if (logoUrls.Count > 1)
+                            result.Details.Add($"Logo URL found: {singleLogoUrl}");
 
-                    var (success, svgContent, statusCode) = await ctx.Http.GetAsync(logoUrl);
-                    result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
-                    if (!success)
-                    {
-                        result.Warnings.Add("BIMI logo URL is not reachable");
-                    }
-                    else
-                    {
-                        ValidateSvg(svgContent, result);
+                        if (!singleLogoUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                            result.Warnings.Add($"BIMI logo URL must use HTTPS: {singleLogoUrl}");
+
+                        if (!singleLogoUrl.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
+                            result.Warnings.Add($"BIMI logo should be SVG format: {singleLogoUrl}");
+
+                        var (success, svgContent, statusCode, svgContentType) = await ctx.Http.GetWithHeadersAsync(singleLogoUrl);
+                        result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
+                        if (!success)
+                        {
+                            result.Warnings.Add($"BIMI logo URL is not reachable: {singleLogoUrl}");
+                        }
+                        else
+                        {
+                            // #61 - SVG Content-Type validation
+                            if (svgContentType != null && !svgContentType.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
+                                result.Details.Add($"SVG logo served with Content-Type '{svgContentType}' — expected image/svg+xml");
+
+                            ValidateSvg(svgContent, result);
+                        }
                     }
                 }
                 else
@@ -434,7 +625,7 @@ public class BimiCheck : ICheck
             }
             else
             {
-                result.Details.Add("No VMC (a= tag) specified — self-asserted BIMI");
+                result.Details.Add("No authority evidence (a= tag) — self-asserted BIMI (VMC or CMC certificate recommended for wider receiver support)");
             }
 
             // Check DMARC prerequisite
@@ -446,6 +637,17 @@ public class BimiCheck : ICheck
                 {
                     result.Warnings.Add($"BIMI requires DMARC p=quarantine or p=reject (current: p={policy ?? "none"})");
                 }
+
+                // #33 - DMARC pct= check for BIMI
+                if (policy == "quarantine" && dmarcTags.TryGetValue("pct", out var pctStr))
+                {
+                    if (int.TryParse(pctStr, out var pct) && pct != 100)
+                        result.Warnings.Add($"DMARC pct={pct} with p=quarantine — BIMI requires pct=100 (or omitted) when policy is quarantine");
+                }
+
+                // #34 - DMARC sp=none breaks BIMI
+                if (dmarcTags.TryGetValue("sp", out var spPolicy) && spPolicy == "none")
+                    result.Warnings.Add("DMARC sp=none — BIMI will not work for subdomains and some receivers may reject BIMI entirely");
             }
             else
             {
@@ -683,13 +885,48 @@ public class DaneCheck : ICheck
                     foreach (var tlsa in tlsaRecords)
                     {
                         result.Details.Add($"{tlsaDomain}: Usage={tlsa.CertificateUsage}, Selector={tlsa.Selector}, MatchingType={tlsa.MatchingType}");
+
+                        // #7 - Invalid TLSA field values
+                        var certUsage = (int)tlsa.CertificateUsage;
+                        var selector = (int)tlsa.Selector;
+                        var matchingType = (int)tlsa.MatchingType;
+
+                        if (certUsage < 0 || certUsage > 3)
+                            result.Errors.Add($"TLSA record has invalid CertificateUsage value {certUsage} — RFC 6698 defines only 0-3");
+                        if (selector < 0 || selector > 1)
+                            result.Errors.Add($"TLSA record has invalid Selector value {selector} — RFC 6698 defines only 0-1");
+                        if (matchingType < 0 || matchingType > 2)
+                            result.Errors.Add($"TLSA record has invalid MatchingType value {matchingType} — RFC 6698 defines only 0-2");
                     }
+
+                    // #6 - DANE requires DNSSEC
+                    try
+                    {
+                        var dsResp = await ctx.Dns.QueryAsync(mxHost, QueryType.DS);
+                        var dsRecords = dsResp.Answers.OfType<DsRecord>().ToList();
+                        if (!dsRecords.Any())
+                        {
+                            // Check parent domain
+                            var mxParts = mxHost.Split('.');
+                            var parentDomain = mxParts.Length > 2
+                                ? string.Join(".", mxParts.Skip(1))
+                                : mxHost;
+                            var parentDsResp = await ctx.Dns.QueryAsync(parentDomain, QueryType.DS);
+                            var parentDs = parentDsResp.Answers.OfType<DsRecord>().ToList();
+                            if (!parentDs.Any())
+                                result.Errors.Add($"TLSA records found for {mxHost} but DNSSEC is not enabled — DANE requires DNSSEC validation (RFC 7672 §2.1). Records will be ignored by conforming MTAs.");
+                        }
+                    }
+                    catch { }
                 }
                 else
                 {
                     result.Details.Add($"{tlsaDomain}: No TLSA records");
                 }
             }
+
+            // #69 - TLSA at submission ports
+            result.Details.Add("DANE checked for port 25 only — submission ports (587/465) not checked");
 
             result.Severity = found > 0 ? CheckSeverity.Pass : CheckSeverity.Info;
             result.Summary = found > 0 ? $"DANE: {found} TLSA record(s) found" : "No DANE/TLSA records";

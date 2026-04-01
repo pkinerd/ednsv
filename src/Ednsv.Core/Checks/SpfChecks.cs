@@ -1,9 +1,25 @@
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using DnsClient;
 using Ednsv.Core.Models;
 
 namespace Ednsv.Core.Checks;
+
+internal static class SpfHelpers
+{
+    /// <summary>
+    /// Checks whether a TXT string is a valid SPF record identifier.
+    /// Matches "v=spf1" exactly as a complete token (followed by space or end-of-string).
+    /// Prevents false positives like "v=spf10".
+    /// </summary>
+    internal static bool IsSpfRecord(string s)
+    {
+        var trimmed = s.TrimStart();
+        return trimmed.Equals("v=spf1", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("v=spf1 ", StringComparison.OrdinalIgnoreCase);
+    }
+}
 
 public class SpfRecordCheck : ICheck
 {
@@ -18,7 +34,7 @@ public class SpfRecordCheck : ICheck
         {
             var txtRecords = await ctx.Dns.GetTxtRecordsAsync(domain);
             var spfRecords = txtRecords
-                .Where(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)))
+                .Where(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)))
                 .ToList();
 
             if (spfRecords.Count == 0)
@@ -65,6 +81,93 @@ public class SpfRecordCheck : ICheck
                     result.Warnings.Add($"Unrecognized SPF mechanism: '{part}' — may cause PermError during evaluation");
             }
 
+            // #16 - ip4/ip6 CIDR range validation
+            foreach (var part in parts.Skip(1))
+            {
+                var stripped = part.TrimStart('+', '-', '~', '?');
+                if (stripped.StartsWith("ip4:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var value = stripped.Substring(4);
+                    var slashIdx = value.IndexOf('/');
+                    var addrPart = slashIdx >= 0 ? value.Substring(0, slashIdx) : value;
+                    if (!IPAddress.TryParse(addrPart, out _))
+                    {
+                        result.Errors.Add($"ip4:{value} — invalid IP address '{addrPart}'");
+                    }
+                    else if (slashIdx >= 0)
+                    {
+                        var cidrStr = value.Substring(slashIdx + 1);
+                        if (!int.TryParse(cidrStr, out var cidr) || cidr < 0 || cidr > 32)
+                            result.Errors.Add($"ip4:{value} — CIDR prefix length must be 0-32");
+                        else if (cidr <= 16)
+                        {
+                            var count = (long)1 << (32 - cidr);
+                            result.Warnings.Add($"Overly broad ip4 range /{cidr} authorizes {count} addresses");
+                        }
+                    }
+                }
+                else if (stripped.StartsWith("ip6:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var value = stripped.Substring(4);
+                    var slashIdx = value.IndexOf('/');
+                    var addrPart = slashIdx >= 0 ? value.Substring(0, slashIdx) : value;
+                    if (!IPAddress.TryParse(addrPart, out _))
+                    {
+                        result.Errors.Add($"ip6:{value} — invalid IP address '{addrPart}'");
+                    }
+                    else if (slashIdx >= 0)
+                    {
+                        var cidrStr = value.Substring(slashIdx + 1);
+                        if (!int.TryParse(cidrStr, out var cidr) || cidr < 0 || cidr > 128)
+                            result.Errors.Add($"ip6:{value} — CIDR prefix length must be 0-128");
+                        else if (cidr <= 48)
+                        {
+                            result.Warnings.Add($"Overly broad ip6 range /{cidr} authorizes a very large address space");
+                        }
+                    }
+                }
+            }
+
+            // #19 - Duplicate redirect= or exp= modifiers
+            var redirectCount = parts.Skip(1).Count(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase));
+            var expCount = parts.Skip(1).Count(p => p.TrimStart('+', '-', '~', '?').StartsWith("exp=", StringComparison.OrdinalIgnoreCase));
+            if (redirectCount > 1)
+                result.Errors.Add("Duplicate 'redirect=' modifier — each modifier can appear only once (RFC 7208 §6)");
+            if (expCount > 1)
+                result.Errors.Add("Duplicate 'exp=' modifier — each modifier can appear only once (RFC 7208 §6)");
+
+            // #37 - Mechanisms after all are unreachable
+            var allIndex = -1;
+            for (int i = 1; i < parts.Length; i++)
+            {
+                var stripped = parts[i].TrimStart('+', '-', '~', '?');
+                if (stripped.Equals("all", StringComparison.OrdinalIgnoreCase))
+                {
+                    allIndex = i;
+                    break;
+                }
+            }
+            if (allIndex >= 0 && allIndex < parts.Length - 1)
+            {
+                // Check if any tokens after 'all' are mechanisms (not modifiers like redirect= or exp=)
+                var mechanismsAfterAll = parts.Skip(allIndex + 1)
+                    .Where(p =>
+                    {
+                        var s = p.TrimStart('+', '-', '~', '?');
+                        return !s.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase)
+                            && !s.StartsWith("exp=", StringComparison.OrdinalIgnoreCase);
+                    })
+                    .Any();
+                if (mechanismsAfterAll)
+                    result.Warnings.Add("Mechanisms after 'all' are unreachable and will never be evaluated");
+            }
+
+            // #38 - redirect= ignored when all present
+            var hasRedirectMod = parts.Skip(1).Any(p => p.TrimStart('+', '-', '~', '?').StartsWith("redirect=", StringComparison.OrdinalIgnoreCase));
+            var hasAllMech = parts.Skip(1).Any(p => p.TrimStart('+', '-', '~', '?').Equals("all", StringComparison.OrdinalIgnoreCase));
+            if (hasRedirectMod && hasAllMech)
+                result.Warnings.Add("redirect= is ignored because an 'all' mechanism is present (RFC 7208 §6.1)");
+
             // Validate v=spf1 is the first token (RFC 7208 §4.5)
             if (!parts[0].Equals("v=spf1", StringComparison.OrdinalIgnoreCase))
                 result.Warnings.Add($"First token is '{parts[0]}', expected 'v=spf1' (RFC 7208 §4.5)");
@@ -97,6 +200,12 @@ public class SpfRecordCheck : ICheck
                 {
                     result.Severity = CheckSeverity.Pass;
                     result.Details.Add("-all (hardfail) - note: ~all is generally preferred when DMARC is enforced, as -all can break legitimate mail forwarding");
+                }
+                else if (allMech == "?all")
+                {
+                    // #40 - ?all (neutral) provides no protection
+                    result.Severity = CheckSeverity.Warning;
+                    result.Warnings.Add("?all (neutral) provides no protection against spoofing");
                 }
                 else
                 {
@@ -228,7 +337,7 @@ public class SpfExpansionCheck : ICheck
                     if (lookupError != null)
                         result.Warnings.Add($"include:{target} — could not expand: {lookupError}");
                     else
-                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                        result.Errors.Add($"include:{target} has no SPF record — this causes PermError (RFC 7208 §5.2)");
                 }
             }
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
@@ -245,7 +354,7 @@ public class SpfExpansionCheck : ICheck
                     if (lookupError != null)
                         result.Warnings.Add($"redirect={target} — could not expand: {lookupError}");
                     else
-                        result.Details.Add($"{indent}  (no SPF record found for {target})");
+                        result.Errors.Add($"redirect={target} has no SPF record — this causes PermError (RFC 7208 §6.1)");
                 }
             }
             else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a"
@@ -271,6 +380,9 @@ public class SpfExpansionCheck : ICheck
                 if (string.IsNullOrEmpty(target)) target = domain;
                 var cidrLabel = cidr ?? "";
                 var mxRecs = await ctx.Dns.GetMxRecordsAsync(target);
+                // #41 - mx: 10 MX sub-limit
+                if (mxRecs.Count > 10)
+                    result.Warnings.Add($"mx:{target} has {mxRecs.Count} MX records — only the first 10 will be evaluated (RFC 7208 §5.4)");
                 foreach (var mx in mxRecs)
                 {
                     var mxHost = mx.Exchange.Value.TrimEnd('.');
@@ -309,7 +421,19 @@ public class SpfExpansionCheck : ICheck
             }
             else if (mech.StartsWith("exp=", StringComparison.OrdinalIgnoreCase))
             {
-                result.Details.Add($"{indent}exp={mech.Substring(4)}");
+                var expTarget = mech.Substring(4);
+                result.Details.Add($"{indent}exp={expTarget}");
+                // #39 - exp= target validation
+                try
+                {
+                    var expTxts = await ctx.Dns.GetTxtRecordsAsync(expTarget);
+                    if (!expTxts.Any())
+                        result.Warnings.Add($"exp={expTarget} target has no TXT record — explanation string will not be available");
+                }
+                catch
+                {
+                    result.Warnings.Add($"exp={expTarget} target has no TXT record — explanation string will not be available");
+                }
             }
             else
             {
@@ -330,7 +454,7 @@ public class SpfExpansionCheck : ICheck
             return (null, error);
         }
 
-        var spf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
+        var spf = txts.FirstOrDefault(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)));
         return spf != null ? (string.Join("", spf.Text), null) : (null, null);
     }
 }
@@ -440,7 +564,7 @@ public class SpfLookupCountCheck : ICheck
     private async Task<string?> GetSpfAsync(CheckContext ctx, string domain)
     {
         var txts = await ctx.Dns.GetTxtRecordsAsync(domain);
-        var spf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
+        var spf = txts.FirstOrDefault(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)));
         return spf != null ? string.Join("", spf.Text) : null;
     }
 }
@@ -498,7 +622,7 @@ public class SpfIncludeDepthCheck : ICheck
             if (target != null && visited.Add(target))
             {
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
-                var nextSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
+                var nextSpf = txts.FirstOrDefault(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)));
                 if (nextSpf != null)
                     await MeasureDepthAsync(ctx, string.Join("", nextSpf.Text), depth + 1, visited, reportDepth);
             }
