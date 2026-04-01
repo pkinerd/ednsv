@@ -152,14 +152,14 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
         switch (fmt)
         {
             case "json":
-                await RunJsonAsync(domains, options, writer, showProgress);
+                await RunJsonAsync(domains, options, writer, showProgress, verbose);
                 break;
             case "html":
-                await RunHtmlAsync(domains, options, writer, showProgress);
+                await RunHtmlAsync(domains, options, writer, showProgress, verbose);
                 break;
             case "markdown":
             case "md":
-                await RunMarkdownAsync(domains, options, writer, showProgress);
+                await RunMarkdownAsync(domains, options, writer, showProgress, verbose);
                 break;
             default:
                 await RunInteractiveAsync(domains, options, verbose);
@@ -373,8 +373,11 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 /// Validates all domains, optionally showing progressive console output.
 /// Used by non-text formatters when writing to a file so the user can
 /// monitor progress while the formatted report is being built.
+/// When verbose is true, shows the full interactive-style output with
+/// category headers, details, warnings, and errors. When false, shows
+/// a compact one-line-per-check view.
 /// </summary>
-static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress)
+static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false)
 {
     var reports = new List<ValidationReport>();
 
@@ -386,14 +389,36 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         if (showProgress)
         {
             if (i > 0)
+            {
                 AnsiConsole.WriteLine();
+                if (verbose) AnsiConsole.WriteLine();
+            }
 
             if (domains.Count > 1)
-                AnsiConsole.MarkupLine($"[bold cyan]Domain {i + 1} of {domains.Count}:[/] [bold]{Markup.Escape(domain)}[/]");
-            else
+            {
+                if (verbose)
+                    AnsiConsole.Write(new Rule($"[bold cyan]Domain {i + 1} of {domains.Count}[/]").RuleStyle("cyan"));
+                else
+                    AnsiConsole.MarkupLine($"[bold cyan]Domain {i + 1} of {domains.Count}:[/] [bold]{Markup.Escape(domain)}[/]");
+            }
+
+            if (verbose)
+            {
+                AnsiConsole.Write(new Rule($"[bold blue]ednsv - Email DNS Validation[/]").RuleStyle("blue"));
                 AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
+                AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+                if (!options.EnableAxfr)
+                    AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
+                AnsiConsole.WriteLine();
+            }
+            else if (domains.Count <= 1)
+            {
+                AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
+            }
 
             var showingRunningLine = false;
+            CheckCategory? currentCategory = null;
+            var shownDescriptions = new HashSet<string>();
 
             validator.OnCheckStarted += name =>
             {
@@ -409,6 +434,26 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
                     showingRunningLine = false;
                 }
 
+                if (verbose)
+                {
+                    // Print category header when category changes
+                    if (check.Category != currentCategory)
+                    {
+                        if (currentCategory != null)
+                            AnsiConsole.WriteLine();
+
+                        currentCategory = check.Category;
+                        AnsiConsole.Write(new Rule($"[bold]{check.Category}[/]").RuleStyle("grey"));
+
+                        var catDesc = CheckDescriptions.GetForCategory(check.Category);
+                        if (catDesc != null && shownDescriptions.Add(catDesc.Name))
+                        {
+                            AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(catDesc.Description)}[/]");
+                            AnsiConsole.WriteLine();
+                        }
+                    }
+                }
+
                 var icon = check.Severity switch
                 {
                     CheckSeverity.Pass => "[green]PASS[/]",
@@ -420,6 +465,18 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
                 };
 
                 AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+
+                if (verbose)
+                {
+                    foreach (var detail in check.Details)
+                        AnsiConsole.MarkupLine($"       [grey]{Markup.Escape(detail)}[/]");
+
+                    foreach (var warning in check.Warnings)
+                        AnsiConsole.MarkupLine($"       [yellow]⚠ {Markup.Escape(warning)}[/]");
+
+                    foreach (var error in check.Errors)
+                        AnsiConsole.MarkupLine($"       [red]✗ {Markup.Escape(error)}[/]");
+                }
             };
         }
 
@@ -428,11 +485,46 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 
         if (showProgress)
         {
-            var verdict = report.CriticalCount > 0 ? "[red bold]CRITICAL[/]" :
-                          report.ErrorCount > 0 ? "[red]ERRORS[/]" :
-                          report.WarningCount > 0 ? "[yellow]WARNINGS[/]" :
-                          "[green]PASS[/]";
-            AnsiConsole.MarkupLine($"  → {verdict} ({report.PassCount} pass, {report.WarningCount} warn, {report.ErrorCount} err, {report.CriticalCount} crit) in {report.Duration.TotalSeconds:F1}s");
+            if (verbose)
+            {
+                // Full summary table matching interactive output
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(new Rule("[bold]Summary[/]").RuleStyle("grey"));
+
+                var summaryTable = new Table()
+                    .Border(TableBorder.Rounded)
+                    .AddColumn("Metric")
+                    .AddColumn("Count");
+
+                summaryTable.AddRow("[green]Pass[/]", report.PassCount.ToString());
+                summaryTable.AddRow("[yellow]Warning[/]", report.WarningCount.ToString());
+                summaryTable.AddRow("[red]Error[/]", report.ErrorCount.ToString());
+                summaryTable.AddRow("[red bold]Critical[/]", report.CriticalCount.ToString());
+                summaryTable.AddRow("[blue]Total Checks[/]", report.Results.Count.ToString());
+                summaryTable.AddRow("[grey]Duration[/]", $"{report.Duration.TotalSeconds:F1}s");
+
+                AnsiConsole.Write(summaryTable);
+                AnsiConsole.WriteLine();
+
+                AnsiConsole.Write(new Rule("[bold]Verdict[/]").RuleStyle("grey"));
+
+                if (report.CriticalCount > 0)
+                    AnsiConsole.MarkupLine("[red bold]CRITICAL issues found that need immediate attention![/]");
+                else if (report.ErrorCount > 0)
+                    AnsiConsole.MarkupLine("[red]Errors found that should be addressed.[/]");
+                else if (report.WarningCount > 0)
+                    AnsiConsole.MarkupLine("[yellow]Warnings found - review recommended.[/]");
+                else
+                    AnsiConsole.MarkupLine("[green]All checks passed. Email configuration looks good![/]");
+            }
+            else
+            {
+                var verdict = report.CriticalCount > 0 ? "[red bold]CRITICAL[/]" :
+                              report.ErrorCount > 0 ? "[red]ERRORS[/]" :
+                              report.WarningCount > 0 ? "[yellow]WARNINGS[/]" :
+                              "[green]PASS[/]";
+                AnsiConsole.MarkupLine($"  → {verdict} ({report.PassCount} pass, {report.WarningCount} warn, {report.ErrorCount} err, {report.CriticalCount} crit) in {report.Duration.TotalSeconds:F1}s");
+            }
         }
     }
 
@@ -445,9 +537,9 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     return reports;
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress);
+    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -475,9 +567,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress);
+    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var sb = new StringBuilder();
 
@@ -618,9 +710,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress);
+    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
