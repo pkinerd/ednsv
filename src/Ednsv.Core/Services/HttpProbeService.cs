@@ -5,8 +5,11 @@ namespace Ednsv.Core.Services;
 public class HttpProbeService
 {
     private readonly HttpClient _client;
+    private const int MaxRetries = 3;
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
+    private readonly ConcurrentDictionary<string, int> _getFailCounts = new();
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
+    private readonly ConcurrentDictionary<string, int> _getWithHeadersFailCounts = new();
 
     public HttpProbeService()
     {
@@ -32,13 +35,18 @@ public class HttpProbeService
             var response = await _client.GetAsync(url);
             var content = await response.Content.ReadAsStringAsync();
             var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
+            // Any HTTP response (even 4xx/5xx) is a real answer — cache it
             _getCache.TryAdd(url, result);
+            _getFailCounts.TryRemove(url, out _);
             return result;
         }
         catch (Exception ex)
         {
+            // Network/timeout/DNS failure — only cache after max retries
             var result = (false, ex.Message, 0);
-            _getCache.TryAdd(url, result);
+            var attempts = _getFailCounts.AddOrUpdate(url, 1, (_, c) => c + 1);
+            if (attempts >= MaxRetries)
+                _getCache.TryAdd(url, result);
             return result;
         }
     }
@@ -54,13 +62,18 @@ public class HttpProbeService
             var content = await response.Content.ReadAsStringAsync();
             var contentType = response.Content.Headers.ContentType?.MediaType;
             var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
+            // Any HTTP response is a real answer — cache it
             _getWithHeadersCache.TryAdd(url, result);
+            _getWithHeadersFailCounts.TryRemove(url, out _);
             return result;
         }
         catch (Exception ex)
         {
+            // Network/timeout/DNS failure — only cache after max retries
             var result = (false, ex.Message, 0, (string?)null);
-            _getWithHeadersCache.TryAdd(url, result);
+            var attempts = _getWithHeadersFailCounts.AddOrUpdate(url, 1, (_, c) => c + 1);
+            if (attempts >= MaxRetries)
+                _getWithHeadersCache.TryAdd(url, result);
             return result;
         }
     }

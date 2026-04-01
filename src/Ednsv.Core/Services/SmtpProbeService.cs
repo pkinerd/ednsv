@@ -32,8 +32,11 @@ public class SmtpProbeResult
 public class SmtpProbeService
 {
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
+    private const int MaxRetries = 3;
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
+    private readonly ConcurrentDictionary<string, int> _probeFailCounts = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
+    private readonly ConcurrentDictionary<string, int> _portFailCounts = new();
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
@@ -51,6 +54,7 @@ public class SmtpProbeService
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
             {
                 result.Error = "Connection timed out";
+                CacheProbeIfExhausted(cacheKey, result);
                 return result;
             }
             await connectTask; // propagate exception if any
@@ -146,8 +150,26 @@ public class SmtpProbeService
         {
             client?.Dispose();
         }
-        _probeCache.TryAdd(cacheKey, result);
+
+        // Connected successfully (even if TLS had issues) — cache immediately.
+        // Failed to connect at all — only cache after max retries.
+        if (result.Connected)
+        {
+            _probeCache.TryAdd(cacheKey, result);
+            _probeFailCounts.TryRemove(cacheKey, out _);
+        }
+        else
+        {
+            CacheProbeIfExhausted(cacheKey, result);
+        }
         return result;
+    }
+
+    private void CacheProbeIfExhausted(string cacheKey, SmtpProbeResult result)
+    {
+        var attempts = _probeFailCounts.AddOrUpdate(cacheKey, 1, (_, c) => c + 1);
+        if (attempts >= MaxRetries)
+            _probeCache.TryAdd(cacheKey, result);
     }
 
     public async Task<bool> ProbePortAsync(string host, int port)
@@ -173,7 +195,19 @@ public class SmtpProbeService
         {
             reachable = false;
         }
-        _portCache.TryAdd(cacheKey, reachable);
+
+        // Port open — cache immediately. Port unreachable — only cache after max retries.
+        if (reachable)
+        {
+            _portCache.TryAdd(cacheKey, true);
+            _portFailCounts.TryRemove(cacheKey, out _);
+        }
+        else
+        {
+            var attempts = _portFailCounts.AddOrUpdate(cacheKey, 1, (_, c) => c + 1);
+            if (attempts >= MaxRetries)
+                _portCache.TryAdd(cacheKey, false);
+        }
         return reachable;
     }
 
