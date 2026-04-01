@@ -263,8 +263,10 @@ public class ArcCheck : ICheck
             if (arcRec != null)
             {
                 found++;
-                // ARC reuses DKIM key records, so just note the ones found
+                var recordText = string.Join("", arcRec.Text);
                 result.Details.Add($"ARC/DKIM key at {selector}._domainkey.{domain}");
+                // #24 - Validate ARC key records using shared DKIM validation
+                DkimSelectorsCheck.ValidateDkimKeyRecord($"ARC selector {selector}", recordText, result);
             }
         }
 
