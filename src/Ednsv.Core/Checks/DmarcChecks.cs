@@ -283,6 +283,45 @@ public class DmarcInheritanceCheck : ICheck
                         var subTags = DmarcRecordCheck.ParseDmarcTags(dmarcText);
                         if (subTags.ContainsKey("sp"))
                             result.Warnings.Add("sp= tag on subdomain DMARC record is ignored — sp= only applies at the Organizational Domain level (RFC 7489 §6.3)");
+
+                        // Check parent domain for conflicting DMARC policy
+                        subTags.TryGetValue("p", out var subPolicy);
+                        for (int i = 1; i < domainParts.Length - 1; i++)
+                        {
+                            var parent = string.Join('.', domainParts.Skip(i));
+                            var parentDmarc = $"_dmarc.{parent}";
+                            var parentTxts = await ctx.Dns.GetTxtRecordsAsync(parentDmarc);
+                            var parentRec = parentTxts.FirstOrDefault(t =>
+                                t.Text.Any(s => s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)));
+
+                            if (parentRec != null)
+                            {
+                                var parentText = string.Join("", parentRec.Text);
+                                var parentTags = DmarcRecordCheck.ParseDmarcTags(parentText);
+
+                                // Determine what policy the parent intended for subdomains
+                                parentTags.TryGetValue("sp", out var parentSp);
+                                parentTags.TryGetValue("p", out var parentP);
+                                var parentSubdomainPolicy = parentSp ?? parentP;
+
+                                result.Details.Add($"Parent domain ({parent}) DMARC: p={parentP ?? "not set"}, sp={parentSp ?? "not set (inherits p)"}");;
+                                result.Details.Add($"This subdomain DMARC: p={subPolicy ?? "not set"}");
+
+                                if (parentSubdomainPolicy != null && subPolicy != null)
+                                {
+                                    var strength = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                                        { { "none", 0 }, { "quarantine", 1 }, { "reject", 2 } };
+                                    var parentStr = strength.GetValueOrDefault(parentSubdomainPolicy, 0);
+                                    var subStr = strength.GetValueOrDefault(subPolicy, 0);
+
+                                    if (subStr < parentStr)
+                                        result.Warnings.Add($"Subdomain DMARC policy (p={subPolicy}) is weaker than parent's subdomain policy ({(parentSp != null ? $"sp={parentSp}" : $"p={parentP}")}) — this subdomain overrides the parent with a less restrictive policy");
+                                    else if (subStr > parentStr)
+                                        result.Details.Add($"Subdomain enforces stricter policy (p={subPolicy}) than parent's subdomain policy ({(parentSp != null ? $"sp={parentSp}" : $"p={parentP}")})");
+                                }
+                                break;
+                            }
+                        }
                     }
                 }
 
