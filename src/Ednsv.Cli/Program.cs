@@ -5,6 +5,7 @@ using System.Web;
 using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
+using Ednsv.Core.Services;
 using Spectre.Console;
 
 var domainArg = new Argument<string[]>("domain", "One or more domain names to validate (e.g., example.com example.org)")
@@ -182,6 +183,10 @@ return await rootCommand.InvokeAsync(args);
 static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false)
 {
     var reports = new List<ValidationReport>();
+    // Share services across domains so cached lookups are reused
+    var dns = new DnsResolverService();
+    var smtp = new SmtpProbeService();
+    var http = new HttpProbeService();
 
     for (int i = 0; i < domains.Count; i++)
     {
@@ -205,7 +210,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
             AnsiConsole.MarkupLine("[grey]Verbose mode: showing check descriptions[/]");
         AnsiConsole.WriteLine();
 
-        var validator = new DomainValidator();
+        var validator = new DomainValidator(dns, smtp, http);
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
@@ -380,11 +385,15 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false)
 {
     var reports = new List<ValidationReport>();
+    // Share services across domains so cached lookups are reused
+    var dns = new DnsResolverService();
+    var smtp = new SmtpProbeService();
+    var http = new HttpProbeService();
 
     for (int i = 0; i < domains.Count; i++)
     {
         var domain = domains[i];
-        var validator = new DomainValidator();
+        var validator = new DomainValidator(dns, smtp, http);
 
         if (showProgress)
         {

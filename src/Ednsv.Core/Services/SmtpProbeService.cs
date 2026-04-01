@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -31,9 +32,15 @@ public class SmtpProbeResult
 public class SmtpProbeService
 {
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
+    private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
+    private readonly ConcurrentDictionary<string, bool> _portCache = new();
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
+        var cacheKey = $"{host.ToLowerInvariant()}:{port}";
+        if (_probeCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
         var result = new SmtpProbeResult();
         TcpClient? client = null;
         try
@@ -139,24 +146,35 @@ public class SmtpProbeService
         {
             client?.Dispose();
         }
+        _probeCache.TryAdd(cacheKey, result);
         return result;
     }
 
     public async Task<bool> ProbePortAsync(string host, int port)
     {
+        var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
+        if (_portCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        bool reachable;
         try
         {
             using var client = new TcpClient();
             var connectTask = client.ConnectAsync(host, port);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
-                return false;
-            await connectTask;
-            return true;
+                reachable = false;
+            else
+            {
+                await connectTask;
+                reachable = true;
+            }
         }
         catch
         {
-            return false;
+            reachable = false;
         }
+        _portCache.TryAdd(cacheKey, reachable);
+        return reachable;
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)

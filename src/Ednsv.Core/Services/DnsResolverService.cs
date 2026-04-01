@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using DnsClient;
@@ -9,6 +10,10 @@ public class DnsResolverService
 {
     private readonly LookupClient _client;
     private readonly LookupClient _directClient;
+
+    // Application-level cache for DNS queries (survives across domains)
+    private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
+    private readonly ConcurrentDictionary<string, List<string>> _ptrCache = new();
 
     public DnsResolverService()
     {
@@ -32,16 +37,27 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// Tracks DNS query errors that occurred during the session.
-    /// Checks can inspect this to distinguish "no record" from "query failed".
+    /// Tracks DNS query errors that occurred during the current validation.
+    /// Reset between domains via <see cref="ResetErrors"/>.
     /// </summary>
     public List<string> QueryErrors { get; } = new();
 
+    /// <summary>
+    /// Clears per-validation error tracking while preserving the shared query cache.
+    /// </summary>
+    public void ResetErrors() => QueryErrors.Clear();
+
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
+        var key = (domain.ToLowerInvariant(), type);
+        if (_queryCache.TryGetValue(key, out var cached))
+            return cached;
+
         try
         {
-            return await _client.QueryAsync(domain, type);
+            var result = await _client.QueryAsync(domain, type);
+            _queryCache.TryAdd(key, result);
+            return result;
         }
         catch (DnsResponseException ex)
         {
@@ -101,14 +117,21 @@ public class DnsResolverService
 
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
+        if (_ptrCache.TryGetValue(ip, out var cached))
+            return cached;
+
         try
         {
             var result = await _client.QueryReverseAsync(IPAddress.Parse(ip));
-            return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
+            var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
+            _ptrCache.TryAdd(ip, ptrs);
+            return ptrs;
         }
         catch
         {
-            return new List<string>();
+            var empty = new List<string>();
+            _ptrCache.TryAdd(ip, empty);
+            return empty;
         }
     }
 

@@ -1,8 +1,12 @@
+using System.Collections.Concurrent;
+
 namespace Ednsv.Core.Services;
 
 public class HttpProbeService
 {
     private readonly HttpClient _client;
+    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
+    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
 
     public HttpProbeService()
     {
@@ -20,30 +24,44 @@ public class HttpProbeService
 
     public async Task<(bool success, string content, int statusCode)> GetAsync(string url)
     {
+        if (_getCache.TryGetValue(url, out var cached))
+            return cached;
+
         try
         {
             var response = await _client.GetAsync(url);
             var content = await response.Content.ReadAsStringAsync();
-            return (response.IsSuccessStatusCode, content, (int)response.StatusCode);
+            var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
+            _getCache.TryAdd(url, result);
+            return result;
         }
         catch (Exception ex)
         {
-            return (false, ex.Message, 0);
+            var result = (false, ex.Message, 0);
+            _getCache.TryAdd(url, result);
+            return result;
         }
     }
 
     public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
     {
+        if (_getWithHeadersCache.TryGetValue(url, out var cached))
+            return cached;
+
         try
         {
             var response = await _client.GetAsync(url);
             var content = await response.Content.ReadAsStringAsync();
             var contentType = response.Content.Headers.ContentType?.MediaType;
-            return (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
+            var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
+            _getWithHeadersCache.TryAdd(url, result);
+            return result;
         }
         catch (Exception ex)
         {
-            return (false, ex.Message, 0, null);
+            var result = (false, ex.Message, 0, (string?)null);
+            _getWithHeadersCache.TryAdd(url, result);
+            return result;
         }
     }
 }

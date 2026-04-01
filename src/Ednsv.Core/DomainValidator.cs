@@ -12,11 +12,22 @@ public class DomainValidator
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
 
-    public DomainValidator()
+    /// <summary>
+    /// Creates a new validator with fresh (non-shared) services.
+    /// </summary>
+    public DomainValidator() : this(new DnsResolverService(), new SmtpProbeService(), new HttpProbeService()) { }
+
+    /// <summary>
+    /// Creates a new validator using shared services whose caches persist
+    /// across multiple <see cref="ValidateAsync"/> calls. This avoids
+    /// repeating expensive DNS, SMTP, and HTTP lookups when checking
+    /// multiple domains that share infrastructure.
+    /// </summary>
+    public DomainValidator(DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http)
     {
-        _dns = new DnsResolverService();
-        _smtp = new SmtpProbeService();
-        _http = new HttpProbeService();
+        _dns = dns;
+        _smtp = smtp;
+        _http = http;
 
         _checks = new List<ICheck>
         {
@@ -187,6 +198,9 @@ public class DomainValidator
     {
         var report = new ValidationReport { Domain = domain };
         var sw = Stopwatch.StartNew();
+
+        // Reset per-validation state while keeping shared caches
+        _dns.ResetErrors();
 
         var context = new CheckContext
         {
