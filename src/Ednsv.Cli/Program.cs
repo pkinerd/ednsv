@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Web;
@@ -31,6 +32,8 @@ var dkimSelectorsOption = new Option<string[]>(
 {
     AllowMultipleArgumentsPerToken = true
 };
+var dnsServerOption = new Option<string?>("--dns-server", "DNS server to use for lookups (IP address; default: Google Public DNS). Use comma-separated for multiple");
+dnsServerOption.AddAlias("-s");
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index file after each domain completes (use with --output-dir)");
@@ -47,6 +50,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     openResolverOption,
     openResolverDomainOption,
     dkimSelectorsOption,
+    dnsServerOption,
     listChecksOption,
     verboseOption,
     liveIndexOption
@@ -120,6 +124,24 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
     // Resolve options that exceed SetHandler's 8-param limit
     var enableOpenResolver = parseResult.GetValueForOption(openResolverOption);
     var resolverTestDomain = parseResult.GetValueForOption(openResolverDomainOption);
+    var dnsServerRaw = parseResult.GetValueForOption(dnsServerOption);
+
+    // Parse custom DNS server(s)
+    List<IPAddress>? dnsServers = null;
+    if (!string.IsNullOrEmpty(dnsServerRaw))
+    {
+        dnsServers = new List<IPAddress>();
+        foreach (var part in dnsServerRaw.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = part.Trim();
+            if (!IPAddress.TryParse(trimmed, out var addr))
+            {
+                Console.Error.WriteLine($"Error: Invalid DNS server IP address: {trimmed}");
+                return;
+            }
+            dnsServers.Add(addr);
+        }
+    }
 
     var options = new ValidationOptions
     {
@@ -157,7 +179,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
         var liveIndex = parseResult.GetValueForOption(liveIndexOption);
         Directory.CreateDirectory(outputDir);
-        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers);
         return;
     }
 
@@ -182,17 +204,17 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
         switch (fmt)
         {
             case "json":
-                await RunJsonAsync(domains, options, writer, showProgress, verbose);
+                await RunJsonAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers);
                 break;
             case "html":
-                await RunHtmlAsync(domains, options, writer, showProgress, verbose);
+                await RunHtmlAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers);
                 break;
             case "markdown":
             case "md":
-                await RunMarkdownAsync(domains, options, writer, showProgress, verbose);
+                await RunMarkdownAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers);
                 break;
             default:
-                await RunInteractiveAsync(domains, options, verbose);
+                await RunInteractiveAsync(domains, options, verbose, dnsServers);
                 break;
         }
     }
@@ -209,11 +231,11 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
 return await rootCommand.InvokeAsync(args);
 
-static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false)
+static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
-    var dns = new DnsResolverService();
+    var dns = new DnsResolverService(dnsServers);
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
@@ -233,6 +255,8 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         AnsiConsole.Write(new Rule($"[bold blue]ednsv - Email DNS Validation[/]").RuleStyle("blue"));
         AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
         AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+        if (dnsServers?.Count > 0)
+            AnsiConsole.MarkupLine($"[grey]DNS server: {Markup.Escape(string.Join(", ", dnsServers))}[/]");
         if (!options.EnableAxfr)
             AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
         if (verbose)
@@ -411,11 +435,11 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 /// category headers, details, warnings, and errors. When false, shows
 /// a compact one-line-per-check view.
 /// </summary>
-static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false)
+static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false, List<IPAddress>? dnsServers = null)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
-    var dns = new DnsResolverService();
+    var dns = new DnsResolverService(dnsServers);
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
@@ -580,13 +604,13 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 /// with progressive console output, then generates an index file with
 /// the summary and links to each domain report.
 /// </summary>
-static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false)
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null)
 {
     var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
     var reports = new List<ValidationReport>();
 
     // Share services across domains so cached lookups are reused
-    var dns = new DnsResolverService();
+    var dns = new DnsResolverService(dnsServers);
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
@@ -931,9 +955,9 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     writer.Write(sb.ToString());
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -961,9 +985,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers);
 
     var sb = new StringBuilder();
 
@@ -1104,9 +1128,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);

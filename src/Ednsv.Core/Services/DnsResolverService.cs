@@ -19,9 +19,19 @@ public class DnsResolverService
     private readonly ConcurrentDictionary<(string domain, QueryType type), int> _queryFailCounts = new();
     private readonly ConcurrentDictionary<string, int> _ptrFailCounts = new();
 
-    public DnsResolverService()
+    public DnsResolverService() : this(null) { }
+
+    /// <summary>
+    /// Creates a resolver using the specified DNS server(s).
+    /// Pass null or empty to use Google Public DNS (default).
+    /// </summary>
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers)
     {
-        var options = new LookupClientOptions(NameServer.GooglePublicDns, NameServer.GooglePublicDns2)
+        var endpoints = nameservers?.Count > 0
+            ? nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray()
+            : new[] { NameServer.GooglePublicDns, NameServer.GooglePublicDns2 };
+
+        var options = new LookupClientOptions(endpoints)
         {
             UseCache = true,
             Timeout = TimeSpan.FromSeconds(3),
