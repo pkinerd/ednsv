@@ -370,7 +370,6 @@ h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
 .check-name { font-weight: 600; }
 .check-summary { color: var(--muted); font-size: 0.9rem; margin-top: 0.25rem; }
 details { margin-top: 0.5rem; }
-summary { cursor: pointer; font-size: 0.8rem; color: var(--muted); }
 .detail-list, .warning-list, .error-list { list-style: none; padding: 0; margin-top: 0.375rem; font-size: 0.825rem; }
 .detail-list li { color: var(--muted); padding: 0.125rem 0; padding-left: 1rem; text-indent: -0.6rem; }
 .detail-list li::before { content: '·'; margin-right: 0.4rem; }
@@ -433,11 +432,10 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
 
             if (check.Details.Any())
             {
-                sb.AppendLine($"    <details><summary>Details ({check.Details.Count})</summary>");
                 sb.AppendLine($"    <ul class=\"detail-list\">");
                 foreach (var detail in check.Details)
                     sb.AppendLine($"      <li>{e(detail)}</li>");
-                sb.AppendLine($"    </ul></details>");
+                sb.AppendLine($"    </ul>");
             }
 
             if (check.Warnings.Any())
