@@ -258,44 +258,37 @@ static async Task RunMarkdownAsync(string domain, ValidationOptions options)
         {
             var icon = check.Severity switch
             {
-                CheckSeverity.Pass => "\u2705",     // green check
-                CheckSeverity.Info => "\u2139\uFE0F", // info
-                CheckSeverity.Warning => "\u26A0\uFE0F", // warning
-                CheckSeverity.Error => "\u274C",     // red X
-                CheckSeverity.Critical => "\uD83D\uDED1", // stop sign
+                CheckSeverity.Pass => "\u2705",
+                CheckSeverity.Info => "\u2139\uFE0F",
+                CheckSeverity.Warning => "\u26A0\uFE0F",
+                CheckSeverity.Error => "\u274C",
+                CheckSeverity.Critical => "\uD83D\uDED1",
                 _ => "\u2753"
             };
 
-            sb.AppendLine($"#### {icon} {check.CheckName} — {SeverityLabel(check.Severity)}");
+            sb.AppendLine($"**{icon} {check.CheckName}** — {SeverityLabel(check.Severity)}");
             sb.AppendLine();
-            sb.AppendLine($"> {EscapeMarkdown(check.Summary)}");
+            sb.AppendLine($"> {MdText(check.Summary)}");
             sb.AppendLine();
 
             if (check.Details.Any())
             {
-                sb.AppendLine("<details>");
-                sb.AppendLine($"<summary>Details ({check.Details.Count})</summary>");
-                sb.AppendLine();
                 foreach (var detail in check.Details)
-                    sb.AppendLine($"- {EscapeMarkdown(detail)}");
-                sb.AppendLine();
-                sb.AppendLine("</details>");
+                    sb.AppendLine($"- `{detail}`");
                 sb.AppendLine();
             }
 
             if (check.Warnings.Any())
             {
-                sb.AppendLine($"**Warnings:**");
                 foreach (var warning in check.Warnings)
-                    sb.AppendLine($"- \u26A0\uFE0F {EscapeMarkdown(warning)}");
+                    sb.AppendLine($"- \u26A0\uFE0F {MdText(warning)}");
                 sb.AppendLine();
             }
 
             if (check.Errors.Any())
             {
-                sb.AppendLine($"**Errors:**");
                 foreach (var error in check.Errors)
-                    sb.AppendLine($"- \u274C {EscapeMarkdown(error)}");
+                    sb.AppendLine($"- \u274C {MdText(error)}");
                 sb.AppendLine();
             }
         }
@@ -511,16 +504,14 @@ static string SeverityLabel(CheckSeverity severity) => severity switch
     _ => "Unknown"
 };
 
-static string EscapeMarkdown(string text)
+/// <summary>
+/// Light escaping for Markdown text: only escapes characters that would
+/// break rendering in list items and blockquotes. Domain names, selectors,
+/// and record values are left intact for readability.
+/// </summary>
+static string MdText(string text)
 {
-    // Escape characters that have special meaning in Markdown
     return text
-        .Replace("\\", "\\\\")
-        .Replace("`", "\\`")
-        .Replace("*", "\\*")
-        .Replace("_", "\\_")
-        .Replace("[", "\\[")
-        .Replace("]", "\\]")
         .Replace("<", "&lt;")
         .Replace(">", "&gt;")
         .Replace("|", "\\|");
