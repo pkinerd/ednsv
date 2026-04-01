@@ -355,15 +355,21 @@ public class OpenRecursiveResolverCheck : ICheck
     public string Name => "Open Recursive Resolver Detection";
     public CheckCategory Category => CheckCategory.NS;
 
-    // Use a well-known domain that should resolve if recursion is enabled
-    private const string TestDomain = "www.google.com";
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
+        if (!ctx.Options.EnableOpenResolver)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Open resolver check skipped (use --open-resolver to enable)";
+            return new List<CheckResult> { result };
+        }
+
         try
         {
+            var testDomain = ctx.Options.OpenResolverTestDomain;
+
             if (!ctx.NsHosts.Any())
             {
                 result.Severity = CheckSeverity.Info;
@@ -384,12 +390,12 @@ public class OpenRecursiveResolverCheck : ICheck
                     checkedCount++;
                     try
                     {
-                        var resp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), TestDomain, QueryType.A);
+                        var resp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), testDomain, QueryType.A);
                         var aRecords = resp.Answers.ARecords().ToList();
                         if (aRecords.Any())
                         {
                             openCount++;
-                            result.Errors.Add($"{nsHost} ({ip}): Resolved external domain '{TestDomain}' — open recursive resolver");
+                            result.Errors.Add($"{nsHost} ({ip}): Resolved external domain '{testDomain}' — open recursive resolver");
                         }
                         else
                         {

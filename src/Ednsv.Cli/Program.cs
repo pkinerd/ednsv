@@ -15,6 +15,8 @@ outputOption.AddAlias("-o");
 var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
 var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
 var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
+var openResolverOption = new Option<bool>("--open-resolver", "Enable open recursive resolver detection (probes NS servers with external domain)");
+var openResolverDomainOption = new Option<string?>("--resolver-test-domain", "Domain to use for open resolver test (default: www.google.com)");
 var dkimSelectorsOption = new Option<string[]>(
     "--dkim-selectors",
     "DKIM selectors to probe instead of defaults (comma-separated or repeated; combined with any discovered via AXFR)")
@@ -31,6 +33,8 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     noAxfrOption,
     catchAllOption,
     openRelayOption,
+    openResolverOption,
+    openResolverDomainOption,
     dkimSelectorsOption,
     listChecksOption,
     verboseOption
@@ -70,11 +74,18 @@ rootCommand.SetHandler(async (string domain, string format, bool noAxfr, bool ca
         }
     }
 
+    // Resolve options that exceed SetHandler's 8-param limit
+    var parseResult = rootCommand.Parse(args);
+    var enableOpenResolver = parseResult.GetValueForOption(openResolverOption);
+    var resolverTestDomain = parseResult.GetValueForOption(openResolverDomainOption);
+
     var options = new ValidationOptions
     {
         EnableAxfr = !noAxfr,
         EnableCatchAll = catchAll,
         EnableOpenRelay = openRelay,
+        EnableOpenResolver = enableOpenResolver,
+        OpenResolverTestDomain = resolverTestDomain ?? "www.google.com",
         AdditionalDkimSelectors = parsedSelectors
     };
 
@@ -84,7 +95,7 @@ rootCommand.SetHandler(async (string domain, string format, bool noAxfr, bool ca
         Console.OutputEncoding = Encoding.UTF8;
 
     // Resolve -o / --output: write to file or stdout
-    var outputPath = rootCommand.Parse(args).GetValueForOption(outputOption);
+    var outputPath = parseResult.GetValueForOption(outputOption);
     TextWriter writer;
     StreamWriter? fileWriter = null;
     if (!string.IsNullOrEmpty(outputPath))
