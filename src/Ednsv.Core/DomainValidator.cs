@@ -27,6 +27,7 @@ public class DomainValidator
 
             // SOA (4)
             new SoaRecordCheck(),
+            new SoaSerialConsistencyCheck(),
 
             // Glue records
             new NsGlueRecordCheck(),
@@ -37,6 +38,7 @@ public class DomainValidator
             new NsLameDelegationCheck(),
             new NsNetworkDiversityCheck(),
             new DuplicateNsIpCheck(),
+            new OpenRecursiveResolverCheck(),
 
             // CNAME (9)
             new CnameChainCheck(),
@@ -93,6 +95,7 @@ public class DomainValidator
             new IpBlocklistCheck(),
             new ExtendedDnsblCheck(),
             new DomainBlocklistCheck(),
+            new MxHostnameBlocklistCheck(),
 
             // DNSSEC (33)
             new DnssecCheck(),
@@ -119,6 +122,8 @@ public class DomainValidator
             new SmtpSizeCheck(),
             new SmtpRequireTlsCheck(),
             new SmtpStarttlsEnforcementCheck(),
+            new SmtpBannerRdnsMatchCheck(),
+            new SmtpTransactionTimingCheck(),
             new SubmissionPortsCheck(),
 
             // SRV (44)

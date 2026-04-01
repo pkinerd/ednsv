@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Ednsv.Core.Models;
+using Ednsv.Core.Services;
 
 namespace Ednsv.Core.Checks;
 
@@ -265,6 +266,230 @@ public class SmtpBannerCheck : ICheck
         {
             result.Severity = CheckSeverity.Error;
             result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+/// <summary>
+/// Cross-checks reverse DNS (PTR) of MX server IPs against SMTP banner hostname.
+/// MXToolbox flags mismatches as a deliverability concern.
+/// </summary>
+public class SmtpBannerRdnsMatchCheck : ICheck
+{
+    public string Name => "SMTP Banner vs Reverse DNS";
+    public CheckCategory Category => CheckCategory.SMTP;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to check banner/rDNS match";
+                return new List<CheckResult> { result };
+            }
+
+            int matched = 0, mismatched = 0, skipped = 0;
+
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                if (!ctx.MxHostIps.TryGetValue(mxHost, out var ips) || !ips.Any())
+                {
+                    skipped++;
+                    continue;
+                }
+
+                // Get banner hostname
+                SmtpProbeResult probe;
+                if (ctx.SmtpProbeCache.TryGetValue(mxHost, out var cached))
+                    probe = cached;
+                else
+                {
+                    probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                    ctx.SmtpProbeCache[mxHost] = probe;
+                }
+
+                if (!probe.Connected || string.IsNullOrEmpty(probe.Banner))
+                {
+                    result.Details.Add($"{mxHost}: Could not connect or no banner");
+                    skipped++;
+                    continue;
+                }
+
+                // Extract banner hostname (format: "220 hostname ...")
+                string? bannerHost = null;
+                if (probe.Banner.StartsWith("220") && probe.Banner.Length > 4)
+                    bannerHost = probe.Banner.Substring(4).Trim().Split(' ')[0].TrimEnd('.');
+
+                if (string.IsNullOrEmpty(bannerHost))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                foreach (var ip in ips)
+                {
+                    var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
+                    if (!ptrs.Any())
+                    {
+                        result.Warnings.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");
+                        mismatched++;
+                        continue;
+                    }
+
+                    var ptrMatch = ptrs.Any(p =>
+                        p.TrimEnd('.').Equals(bannerHost, StringComparison.OrdinalIgnoreCase));
+
+                    if (ptrMatch)
+                    {
+                        matched++;
+                        result.Details.Add($"{mxHost} ({ip}): PTR matches banner hostname '{bannerHost}'");
+                    }
+                    else
+                    {
+                        mismatched++;
+                        result.Warnings.Add(
+                            $"{mxHost} ({ip}): PTR [{string.Join(", ", ptrs.Select(p => p.TrimEnd('.')))}] " +
+                            $"does not match banner hostname '{bannerHost}'");
+                    }
+                }
+            }
+
+            if (mismatched > 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"{mismatched} MX IP(s) have rDNS/banner hostname mismatch";
+                result.Warnings.Add("Reverse DNS should match the SMTP banner hostname for best deliverability");
+            }
+            else if (matched > 0)
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"All {matched} MX IP(s) have matching rDNS and banner hostname";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "Could not compare rDNS and banner (no data)";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+            result.Summary = "Banner/rDNS match check failed";
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
+/// <summary>
+/// Reports SMTP connection and transaction timing — slow response times indicate
+/// server issues and can cause delivery timeouts. Similar to MXToolbox SMTP timing.
+/// </summary>
+public class SmtpTransactionTimingCheck : ICheck
+{
+    public string Name => "SMTP Transaction Timing";
+    public CheckCategory Category => CheckCategory.SMTP;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No MX hosts to measure timing";
+                return new List<CheckResult> { result };
+            }
+
+            bool anySlow = false;
+
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                SmtpProbeResult probe;
+                if (ctx.SmtpProbeCache.TryGetValue(mxHost, out var cached))
+                    probe = cached;
+                else
+                {
+                    probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                    ctx.SmtpProbeCache[mxHost] = probe;
+                }
+
+                if (!probe.Connected)
+                {
+                    result.Details.Add($"{mxHost}: Could not connect ({probe.Error ?? "timeout"})");
+                    continue;
+                }
+
+                var parts = new List<string>();
+
+                if (probe.ConnectTimeMs > 0)
+                {
+                    parts.Add($"Connect: {probe.ConnectTimeMs}ms");
+                    if (probe.ConnectTimeMs > 5000)
+                    {
+                        anySlow = true;
+                        result.Warnings.Add($"{mxHost}: Slow connection ({probe.ConnectTimeMs}ms > 5000ms)");
+                    }
+                }
+
+                if (probe.BannerTimeMs > 0)
+                {
+                    parts.Add($"Banner: {probe.BannerTimeMs}ms");
+                    if (probe.BannerTimeMs > 5000)
+                    {
+                        anySlow = true;
+                        result.Warnings.Add($"{mxHost}: Slow banner response ({probe.BannerTimeMs}ms > 5000ms)");
+                    }
+                }
+
+                if (probe.EhloTimeMs > 0)
+                {
+                    parts.Add($"EHLO: {probe.EhloTimeMs}ms");
+                    if (probe.EhloTimeMs > 5000)
+                    {
+                        anySlow = true;
+                        result.Warnings.Add($"{mxHost}: Slow EHLO response ({probe.EhloTimeMs}ms > 5000ms)");
+                    }
+                }
+
+                if (probe.TlsTimeMs > 0)
+                    parts.Add($"TLS: {probe.TlsTimeMs}ms");
+
+                long total = probe.ConnectTimeMs + probe.BannerTimeMs + probe.EhloTimeMs + probe.TlsTimeMs;
+                if (total > 0)
+                {
+                    result.Details.Add($"{mxHost}: {string.Join(", ", parts)} (Total: {total}ms)");
+                    if (total > 15000)
+                    {
+                        anySlow = true;
+                        result.Warnings.Add($"{mxHost}: Total SMTP transaction time {total}ms exceeds 15s");
+                    }
+                }
+                else
+                {
+                    result.Details.Add($"{mxHost}: Timing data not available");
+                }
+            }
+
+            result.Severity = anySlow ? CheckSeverity.Warning : CheckSeverity.Pass;
+            result.Summary = anySlow
+                ? "Slow SMTP response times detected"
+                : $"SMTP timing acceptable for {ctx.MxHosts.Count} MX host(s)";
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+            result.Summary = "SMTP timing check failed";
         }
 
         return new List<CheckResult> { result };

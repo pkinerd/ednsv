@@ -450,11 +450,42 @@ public class ExtendedDnsblCheck : ICheck
 
     private static readonly (string zone, string name)[] Blocklists =
     {
+        // Tier 1: Widely used
         ("all.s5h.net", "S5H"),
-        ("dnsbl.sorbs.net", "SORBS"),
+        ("dnsbl.sorbs.net", "SORBS Combined"),
         ("spam.dnsbl.sorbs.net", "SORBS Spam"),
         ("bl.mailspike.net", "Mailspike"),
         ("dnsbl-1.uceprotect.net", "UCEProtect L1"),
+
+        // Tier 2: Additional well-known lists
+        ("dnsbl-2.uceprotect.net", "UCEProtect L2"),
+        ("dnsbl-3.uceprotect.net", "UCEProtect L3"),
+        ("psbl.surriel.com", "PSBL"),
+        ("dyna.spamrats.com", "SpamRATS Dyna"),
+        ("noptr.spamrats.com", "SpamRATS NoPtr"),
+        ("spam.spamrats.com", "SpamRATS Spam"),
+        ("cbl.abuseat.org", "CBL"),
+        ("dnsbl.dronebl.org", "DroneBL"),
+        ("db.wpbl.info", "WPBL"),
+        ("bl.spamcannibal.org", "SpamCannibal"),
+        ("access.redhawk.org", "Redhawk"),
+        ("rbl.interserver.net", "InterServer"),
+        ("bogons.cymru.com", "Cymru Bogons"),
+        ("bl.blocklist.de", "Blocklist.de"),
+        ("bl.nordspam.com", "NordSpam BL"),
+        ("combined.abuse.ch", "abuse.ch Combined"),
+        ("dnsbl.inps.de", "INPS"),
+        ("ix.dnsbl.manitu.net", "NiX Spam"),
+        ("rbl.abuse.net", "abuse.net"),
+        ("truncate.gbudb.net", "Truncate/GBUdb"),
+
+        // Tier 3: Specialized lists
+        ("spambot.bls.digibase.ca", "Digibase SpamBot"),
+        ("z.mailspike.net", "Mailspike Z"),
+        ("singular.ttk.pte.hu", "Singular"),
+        ("uribl.swinog.ch", "SwiNOG URIBL"),
+        ("bl.fmb.la", "FMB"),
+        ("dnsbl.rv-soft.info", "RV-Soft"),
     };
 
     // Same false-positive set as IpBlocklistCheck
