@@ -18,6 +18,8 @@ var formatOption = new Option<string>("--format", () => "text", "Output format: 
 formatOption.AddAlias("-f");
 var outputOption = new Option<string?>("--output", "Write output to file instead of stdout");
 outputOption.AddAlias("-o");
+var outputDirOption = new Option<string?>("--output-dir", "Write each domain report to a separate file in this directory, plus an index");
+outputDirOption.AddAlias("-D");
 var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
 var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
 var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
@@ -37,6 +39,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     domainsFileOption,
     formatOption,
     outputOption,
+    outputDirOption,
     noAxfrOption,
     catchAllOption,
     openRelayOption,
@@ -131,8 +134,31 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
     if (fmt is "json" or "html" or "markdown" or "md")
         Console.OutputEncoding = Encoding.UTF8;
 
-    // Resolve -o / --output: write to file or stdout
+    // Resolve -o / --output and -D / --output-dir
     var outputPath = parseResult.GetValueForOption(outputOption);
+    var outputDir = parseResult.GetValueForOption(outputDirOption);
+
+    if (!string.IsNullOrEmpty(outputPath) && !string.IsNullOrEmpty(outputDir))
+    {
+        Console.Error.WriteLine("Error: --output and --output-dir are mutually exclusive.");
+        return;
+    }
+
+    // --output-dir mode: write each domain to a separate file + index
+    if (!string.IsNullOrEmpty(outputDir))
+    {
+        if (fmt is "text" or "")
+        {
+            Console.Error.WriteLine("Error: --output-dir requires --format (json, html, or markdown).");
+            return;
+        }
+
+        Directory.CreateDirectory(outputDir);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose);
+        return;
+    }
+
+    // Single-file or stdout mode
     TextWriter writer;
     StreamWriter? fileWriter = null;
     if (!string.IsNullOrEmpty(outputPath))
@@ -546,9 +572,354 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     return reports;
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
+/// <summary>
+/// Writes each domain report to a separate file in the output directory,
+/// with progressive console output, then generates an index file with
+/// the summary and links to each domain report.
+/// </summary>
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
+    var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
+    var reports = new List<ValidationReport>();
+
+    // Share services across domains so cached lookups are reused
+    var dns = new DnsResolverService();
+    var smtp = new SmtpProbeService();
+    var http = new HttpProbeService();
+
+    for (int i = 0; i < domains.Count; i++)
+    {
+        var domain = domains[i];
+        var validator = new DomainValidator(dns, smtp, http);
+
+        // Progressive console output
+        if (i > 0)
+        {
+            AnsiConsole.WriteLine();
+            if (verbose) AnsiConsole.WriteLine();
+        }
+
+        if (domains.Count > 1)
+        {
+            if (verbose)
+                AnsiConsole.Write(new Rule($"[bold cyan]Domain {i + 1} of {domains.Count}[/]").RuleStyle("cyan"));
+            else
+                AnsiConsole.MarkupLine($"[bold cyan]Domain {i + 1} of {domains.Count}:[/] [bold]{Markup.Escape(domain)}[/]");
+        }
+
+        if (verbose)
+        {
+            AnsiConsole.Write(new Rule($"[bold blue]ednsv - Email DNS Validation[/]").RuleStyle("blue"));
+            AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
+            AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            if (!options.EnableAxfr)
+                AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
+            AnsiConsole.WriteLine();
+        }
+        else if (domains.Count <= 1)
+        {
+            AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
+        }
+
+        var showingRunningLine = false;
+        CheckCategory? currentCategory = null;
+        var shownDescriptions = new HashSet<string>();
+
+        validator.OnCheckStarted += name =>
+        {
+            AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
+            showingRunningLine = true;
+        };
+
+        validator.OnCheckCompleted += (name, check) =>
+        {
+            if (showingRunningLine) { AnsiConsole.Write("\x1b[1A\x1b[2K"); showingRunningLine = false; }
+
+            if (verbose)
+            {
+                if (check.Category != currentCategory)
+                {
+                    if (currentCategory != null) AnsiConsole.WriteLine();
+                    currentCategory = check.Category;
+                    AnsiConsole.Write(new Rule($"[bold]{check.Category}[/]").RuleStyle("grey"));
+                    var catDesc = CheckDescriptions.GetForCategory(check.Category);
+                    if (catDesc != null && shownDescriptions.Add(catDesc.Name))
+                    {
+                        AnsiConsole.MarkupLine($"  [dim]{Markup.Escape(catDesc.Description)}[/]");
+                        AnsiConsole.WriteLine();
+                    }
+                }
+            }
+
+            var icon = check.Severity switch
+            {
+                CheckSeverity.Pass => "[green]PASS[/]",
+                CheckSeverity.Info => "[blue]INFO[/]",
+                CheckSeverity.Warning => "[yellow]WARN[/]",
+                CheckSeverity.Error => "[red]FAIL[/]",
+                CheckSeverity.Critical => "[red bold]CRIT[/]",
+                _ => "[grey]????[/]"
+            };
+            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+
+            if (verbose)
+            {
+                foreach (var detail in check.Details) AnsiConsole.MarkupLine($"       [grey]{Markup.Escape(detail)}[/]");
+                foreach (var warning in check.Warnings) AnsiConsole.MarkupLine($"       [yellow]⚠ {Markup.Escape(warning)}[/]");
+                foreach (var error in check.Errors) AnsiConsole.MarkupLine($"       [red]✗ {Markup.Escape(error)}[/]");
+            }
+        };
+
+        var report = await validator.ValidateAsync(domain, options);
+        reports.Add(report);
+
+        // Write individual domain file immediately
+        var filename = $"{SanitizeFilename(domain)}.{ext}";
+        var filepath = Path.Combine(outputDir, filename);
+        await using (var fw = new StreamWriter(filepath, false, new UTF8Encoding(false)))
+        {
+            switch (fmt)
+            {
+                case "json":
+                    await RunJsonAsync(new List<string> { domain }, options, fw, reports: new List<ValidationReport> { report });
+                    break;
+                case "html":
+                    await RunHtmlAsync(new List<string> { domain }, options, fw, reports: new List<ValidationReport> { report });
+                    break;
+                case "markdown":
+                case "md":
+                    await RunMarkdownAsync(new List<string> { domain }, options, fw, reports: new List<ValidationReport> { report });
+                    break;
+            }
+        }
+
+        // Show per-domain verdict + file written
+        if (verbose)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(new Rule("[bold]Summary[/]").RuleStyle("grey"));
+            var summaryTable = new Table().Border(TableBorder.Rounded).AddColumn("Metric").AddColumn("Count");
+            summaryTable.AddRow("[green]Pass[/]", report.PassCount.ToString());
+            summaryTable.AddRow("[yellow]Warning[/]", report.WarningCount.ToString());
+            summaryTable.AddRow("[red]Error[/]", report.ErrorCount.ToString());
+            summaryTable.AddRow("[red bold]Critical[/]", report.CriticalCount.ToString());
+            summaryTable.AddRow("[blue]Total Checks[/]", report.Results.Count.ToString());
+            summaryTable.AddRow("[grey]Duration[/]", $"{report.Duration.TotalSeconds:F1}s");
+            AnsiConsole.Write(summaryTable);
+        }
+        else
+        {
+            var verdict = report.CriticalCount > 0 ? "[red bold]CRITICAL[/]" :
+                          report.ErrorCount > 0 ? "[red]ERRORS[/]" :
+                          report.WarningCount > 0 ? "[yellow]WARNINGS[/]" :
+                          "[green]PASS[/]";
+            AnsiConsole.MarkupLine($"  → {verdict} ({report.PassCount} pass, {report.WarningCount} warn, {report.ErrorCount} err, {report.CriticalCount} crit) in {report.Duration.TotalSeconds:F1}s");
+        }
+
+        AnsiConsole.MarkupLine($"  [grey]Wrote {Markup.Escape(filepath)}[/]");
+    }
+
+    // Write index file
+    var indexPath = Path.Combine(outputDir, $"index.{ext}");
+    await using (var fw = new StreamWriter(indexPath, false, new UTF8Encoding(false)))
+    {
+        switch (fmt)
+        {
+            case "json":
+                await WriteJsonIndexAsync(reports, fw);
+                break;
+            case "html":
+                WriteHtmlIndex(reports, ext, fw);
+                break;
+            case "markdown":
+            case "md":
+                WriteMdIndex(reports, ext, fw);
+                break;
+        }
+    }
+
+    AnsiConsole.WriteLine();
+    AnsiConsole.MarkupLine($"[bold green]Index written to {Markup.Escape(indexPath)}[/]");
+    Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext})");
+}
+
+static string SanitizeFilename(string domain)
+{
+    // Replace characters that are invalid in filenames
+    var invalid = Path.GetInvalidFileNameChars();
+    var sb = new StringBuilder(domain.Length);
+    foreach (var c in domain)
+        sb.Append(invalid.Contains(c) ? '_' : c);
+    return sb.ToString();
+}
+
+static async Task WriteJsonIndexAsync(List<ValidationReport> reports, TextWriter writer)
+{
+    var jsonOptions = new JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    var index = new
+    {
+        TotalDomains = reports.Count,
+        TotalPass = reports.Sum(r => r.PassCount),
+        TotalWarning = reports.Sum(r => r.WarningCount),
+        TotalError = reports.Sum(r => r.ErrorCount),
+        TotalCritical = reports.Sum(r => r.CriticalCount),
+        Timestamp = DateTime.UtcNow,
+        Domains = reports.Select(r => new
+        {
+            r.Domain,
+            File = $"{SanitizeFilename(r.Domain)}.json",
+            r.PassCount,
+            r.WarningCount,
+            r.ErrorCount,
+            r.CriticalCount,
+            TotalChecks = r.Results.Count,
+            DurationSeconds = Math.Round(r.Duration.TotalSeconds, 1),
+            Verdict = r.CriticalCount > 0 ? "CRITICAL" :
+                      r.ErrorCount > 0 ? "ERRORS" :
+                      r.WarningCount > 0 ? "WARNINGS" : "PASS"
+        })
+    };
+
+    await writer.WriteLineAsync(JsonSerializer.Serialize(index, jsonOptions));
+}
+
+static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter writer)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("# ednsv — Email DNS Validation Summary");
+    sb.AppendLine();
+    sb.AppendLine($"**Domains checked:** {reports.Count}");
+    sb.AppendLine($"**Date:** {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine();
+
+    sb.AppendLine("## Results");
+    sb.AppendLine();
+    sb.AppendLine("| Domain | Pass | Warn | Error | Crit | Total | Duration | Verdict | Report |");
+    sb.AppendLine("|--------|-----:|-----:|------:|-----:|------:|---------:|---------|--------|");
+
+    foreach (var r in reports)
+    {
+        var verdict = r.CriticalCount > 0 ? "\uD83D\uDED1 CRITICAL" :
+                      r.ErrorCount > 0 ? "\u274C ERRORS" :
+                      r.WarningCount > 0 ? "\u26A0\uFE0F WARNINGS" :
+                      "\u2705 PASS";
+        var file = $"{SanitizeFilename(r.Domain)}.{ext}";
+        sb.AppendLine($"| `{r.Domain}` | {r.PassCount} | {r.WarningCount} | {r.ErrorCount} | {r.CriticalCount} | {r.Results.Count} | {r.Duration.TotalSeconds:F1}s | {verdict} | [{file}]({file}) |");
+    }
+
+    var totalDuration = reports.Aggregate(TimeSpan.Zero, (acc, r) => acc + r.Duration);
+    sb.AppendLine($"| **Total** | **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | | |");
+    sb.AppendLine();
+    sb.AppendLine("---");
+    sb.AppendLine($"*Generated by [ednsv](https://github.com/pkinerd/ednsv) on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC*");
+
+    writer.Write(sb.ToString());
+}
+
+static void WriteHtmlIndex(List<ValidationReport> reports, string ext, TextWriter writer)
+{
+    var sb = new StringBuilder();
+    var e = (string s) => HttpUtility.HtmlEncode(s);
+
+    sb.AppendLine("<!DOCTYPE html>");
+    sb.AppendLine("<html lang=\"en\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("<meta charset=\"UTF-8\">");
+    sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+    sb.AppendLine($"<title>ednsv — Summary ({reports.Count} Domains)</title>");
+    sb.AppendLine("<style>");
+    sb.AppendLine(@"
+:root {
+  --pass: #16a34a; --pass-bg: #f0fdf4;
+  --warn: #ca8a04; --warn-bg: #fefce8;
+  --error: #dc2626; --error-bg: #fef2f2;
+  --crit: #991b1b; --crit-bg: #fef2f2;
+  --info: #2563eb; --info-bg: #eff6ff;
+  --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0;
+  --text: #1e293b; --muted: #64748b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem; max-width: 960px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+.meta { color: var(--muted); font-size: 0.875rem; margin-bottom: 1.5rem; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 2rem; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
+.stat .value { font-size: 1.75rem; font-weight: 700; }
+.stat .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.stat.pass .value { color: var(--pass); }
+.stat.warn .value { color: var(--warn); }
+.stat.error .value { color: var(--error); }
+.stat.crit .value { color: var(--crit); }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 2rem; }
+th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+th { background: var(--bg); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr:last-child td { border-bottom: none; font-weight: 600; }
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.verdict-pass { color: var(--pass); }
+.verdict-warn { color: var(--warn); }
+.verdict-error { color: var(--error); }
+.verdict-crit { color: var(--crit); font-weight: 700; }
+footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--muted); }
+");
+    sb.AppendLine("</style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body>");
+
+    sb.AppendLine("<h1>ednsv &mdash; Email DNS Validation Summary</h1>");
+    sb.AppendLine($"<div class=\"meta\">{reports.Count} domains &middot; {e(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))} UTC</div>");
+
+    // Aggregate stat cards
+    int totalPass = reports.Sum(r => r.PassCount), totalWarn = reports.Sum(r => r.WarningCount);
+    int totalError = reports.Sum(r => r.ErrorCount), totalCrit = reports.Sum(r => r.CriticalCount);
+    int totalChecks = reports.Sum(r => r.Results.Count);
+
+    sb.AppendLine("<div class=\"summary\">");
+    sb.AppendLine($"  <div class=\"stat pass\"><div class=\"value\">{totalPass}</div><div class=\"label\">Pass</div></div>");
+    sb.AppendLine($"  <div class=\"stat warn\"><div class=\"value\">{totalWarn}</div><div class=\"label\">Warning</div></div>");
+    sb.AppendLine($"  <div class=\"stat error\"><div class=\"value\">{totalError}</div><div class=\"label\">Error</div></div>");
+    sb.AppendLine($"  <div class=\"stat crit\"><div class=\"value\">{totalCrit}</div><div class=\"label\">Critical</div></div>");
+    sb.AppendLine($"  <div class=\"stat\"><div class=\"value\">{totalChecks}</div><div class=\"label\">Total</div></div>");
+    sb.AppendLine("</div>");
+
+    // Domain table with links
+    sb.AppendLine("<table>");
+    sb.AppendLine("<thead><tr><th>Domain</th><th>Pass</th><th>Warn</th><th>Error</th><th>Crit</th><th>Total</th><th>Duration</th><th>Verdict</th></tr></thead>");
+    sb.AppendLine("<tbody>");
+
+    var totalDuration = TimeSpan.Zero;
+    foreach (var r in reports)
+    {
+        string verdictClass, verdictLabel;
+        if (r.CriticalCount > 0) { verdictClass = "verdict-crit"; verdictLabel = "CRITICAL"; }
+        else if (r.ErrorCount > 0) { verdictClass = "verdict-error"; verdictLabel = "ERRORS"; }
+        else if (r.WarningCount > 0) { verdictClass = "verdict-warn"; verdictLabel = "WARNINGS"; }
+        else { verdictClass = "verdict-pass"; verdictLabel = "PASS"; }
+
+        var file = $"{SanitizeFilename(r.Domain)}.{ext}";
+        sb.AppendLine($"<tr><td><a href=\"{e(file)}\">{e(r.Domain)}</a></td><td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td></tr>");
+        totalDuration += r.Duration;
+    }
+
+    sb.AppendLine($"<tr><td><strong>Total</strong></td><td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td></tr>");
+    sb.AppendLine("</tbody></table>");
+
+    sb.AppendLine($"<footer>Generated by ednsv on {e(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))} UTC</footer>");
+    sb.AppendLine("</body>");
+    sb.AppendLine("</html>");
+
+    writer.Write(sb.ToString());
+}
+
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
+{
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -576,9 +947,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var sb = new StringBuilder();
 
@@ -719,9 +1090,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null)
 {
-    var reports = await ValidateAllAsync(domains, options, showProgress, verbose);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
