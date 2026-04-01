@@ -146,17 +146,20 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
     try
     {
+        // Show progressive console output when writing formatted results to a file
+        var showProgress = fileWriter != null;
+
         switch (fmt)
         {
             case "json":
-                await RunJsonAsync(domains, options, writer);
+                await RunJsonAsync(domains, options, writer, showProgress);
                 break;
             case "html":
-                await RunHtmlAsync(domains, options, writer);
+                await RunHtmlAsync(domains, options, writer, showProgress);
                 break;
             case "markdown":
             case "md":
-                await RunMarkdownAsync(domains, options, writer);
+                await RunMarkdownAsync(domains, options, writer, showProgress);
                 break;
             default:
                 await RunInteractiveAsync(domains, options, verbose);
@@ -366,15 +369,85 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     }
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer)
+/// <summary>
+/// Validates all domains, optionally showing progressive console output.
+/// Used by non-text formatters when writing to a file so the user can
+/// monitor progress while the formatted report is being built.
+/// </summary>
+static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress)
 {
     var reports = new List<ValidationReport>();
-    foreach (var domain in domains)
+
+    for (int i = 0; i < domains.Count; i++)
     {
+        var domain = domains[i];
         var validator = new DomainValidator();
+
+        if (showProgress)
+        {
+            if (i > 0)
+                AnsiConsole.WriteLine();
+
+            if (domains.Count > 1)
+                AnsiConsole.MarkupLine($"[bold cyan]Domain {i + 1} of {domains.Count}:[/] [bold]{Markup.Escape(domain)}[/]");
+            else
+                AnsiConsole.MarkupLine($"[bold]Domain:[/] {Markup.Escape(domain)}");
+
+            var showingRunningLine = false;
+
+            validator.OnCheckStarted += name =>
+            {
+                AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
+                showingRunningLine = true;
+            };
+
+            validator.OnCheckCompleted += (name, check) =>
+            {
+                if (showingRunningLine)
+                {
+                    AnsiConsole.Write("\x1b[1A\x1b[2K");
+                    showingRunningLine = false;
+                }
+
+                var icon = check.Severity switch
+                {
+                    CheckSeverity.Pass => "[green]PASS[/]",
+                    CheckSeverity.Info => "[blue]INFO[/]",
+                    CheckSeverity.Warning => "[yellow]WARN[/]",
+                    CheckSeverity.Error => "[red]FAIL[/]",
+                    CheckSeverity.Critical => "[red bold]CRIT[/]",
+                    _ => "[grey]????[/]"
+                };
+
+                AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+            };
+        }
+
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
+
+        if (showProgress)
+        {
+            var verdict = report.CriticalCount > 0 ? "[red bold]CRITICAL[/]" :
+                          report.ErrorCount > 0 ? "[red]ERRORS[/]" :
+                          report.WarningCount > 0 ? "[yellow]WARNINGS[/]" :
+                          "[green]PASS[/]";
+            AnsiConsole.MarkupLine($"  → {verdict} ({report.PassCount} pass, {report.WarningCount} warn, {report.ErrorCount} err, {report.CriticalCount} crit) in {report.Duration.TotalSeconds:F1}s");
+        }
     }
+
+    if (showProgress && domains.Count > 1)
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[bold]{reports.Count}[/] domains validated.");
+    }
+
+    return reports;
+}
+
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
+{
+    var reports = await ValidateAllAsync(domains, options, showProgress);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -402,15 +475,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
 {
-    var reports = new List<ValidationReport>();
-    foreach (var domain in domains)
-    {
-        var validator = new DomainValidator();
-        var report = await validator.ValidateAsync(domain, options);
-        reports.Add(report);
-    }
+    var reports = await ValidateAllAsync(domains, options, showProgress);
 
     var sb = new StringBuilder();
 
@@ -551,15 +618,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false)
 {
-    var reports = new List<ValidationReport>();
-    foreach (var domain in domains)
-    {
-        var validator = new DomainValidator();
-        var report = await validator.ValidateAsync(domain, options);
-        reports.Add(report);
-    }
+    var reports = await ValidateAllAsync(domains, options, showProgress);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
