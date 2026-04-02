@@ -53,24 +53,27 @@ public class InMemoryCacheTests
     }
 
     [Fact]
-    public async Task DnsQuery_ConcurrentSameDomain_OnlyOneMiss()
+    public async Task DnsQuery_AfterFirstQuery_SubsequentConcurrentCallsHitCache()
     {
         var dns = new DnsResolverService();
         dns.ResetErrors();
 
-        // Fire 10 concurrent requests for the same domain+type
+        // Warm the cache with one query
+        var first = await dns.QueryAsync("example.com", QueryType.MX);
+        Assert.Equal(1, dns.CacheMisses);
+        Assert.Equal(0, dns.CacheHits);
+
+        // Now fire 10 concurrent requests — all should be cache hits
         var tasks = Enumerable.Range(0, 10)
             .Select(_ => dns.QueryAsync("example.com", QueryType.MX))
             .ToArray();
 
         var results = await Task.WhenAll(tasks);
 
-        // All should return the same reference (one query, rest from cache)
-        var distinct = results.Distinct().Count();
-        Assert.Equal(1, distinct);
-        // At most 1 miss (the concurrent race may allow a second, but no more than a few)
-        Assert.True(dns.CacheMisses <= 2, $"Expected at most 2 misses but got {dns.CacheMisses}");
-        Assert.True(dns.CacheHits >= 8, $"Expected at least 8 hits but got {dns.CacheHits}");
+        // All return the same cached reference
+        Assert.All(results, r => Assert.Same(first, r));
+        Assert.Equal(10, dns.CacheHits);
+        Assert.Equal(1, dns.CacheMisses); // still just the initial miss
     }
 
     [Fact]
