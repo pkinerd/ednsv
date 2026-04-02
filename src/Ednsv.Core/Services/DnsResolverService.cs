@@ -47,13 +47,14 @@ public class DnsResolverService
         };
         _client = new LookupClient(options);
 
-        // Fast client for DNSBL lookups — responsive blocklists answer in <200ms;
-        // anything over 2s is likely dead/unresponsive. No retries to avoid wasting time.
+        // DNSBL client — most responsive blocklists answer in <500ms. 3s timeout
+        // with 1 retry gives slow-but-alive lists a fair chance without wasting time
+        // on dead ones. Failures cached after 2 attempts (not 3).
         var dnsblOptions = new LookupClientOptions(endpoints)
         {
             UseCache = true,
-            Timeout = TimeSpan.FromSeconds(2),
-            Retries = 0,
+            Timeout = TimeSpan.FromSeconds(3),
+            Retries = 1,
             ThrowDnsErrors = false
         };
         _dnsblClient = new LookupClient(dnsblOptions);
@@ -132,9 +133,10 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// Fast DNSBL query with 2s timeout and no retries. Uses the shared query cache
-    /// so results are reused across domains. Failures are silently treated as "not listed"
-    /// rather than logged as DNS errors (many DNSBLs are simply unresponsive).
+    /// DNSBL query with 3s timeout and 1 retry. Uses the shared query cache so results
+    /// are reused across domains. Failures cached after 2 attempts — gives slow-but-alive
+    /// lists a second chance without wasting time on dead ones. Timeouts don't pollute
+    /// the DNS error log (many obscure DNSBLs are simply unresponsive).
     /// </summary>
     public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
     {
@@ -148,18 +150,23 @@ public class DnsResolverService
             if (!result.HasError)
             {
                 _queryCache.TryAdd(key, result);
+                _queryFailCounts.TryRemove(key, out _);
             }
             else
             {
-                // DNSBL errors: cache immediately — no point retrying unresponsive lists
-                _queryCache.TryAdd(key, result);
+                // Cache DNSBL errors after 2 attempts (less patient than standard queries)
+                var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+                if (attempts >= 2)
+                    _queryCache.TryAdd(key, result);
             }
             return result;
         }
         catch
         {
-            // Silently cache as empty — don't pollute QueryErrors with DNSBL timeouts
-            _queryCache.TryAdd(key, EmptyResponse.Instance);
+            // Silently cache after 2 attempts — don't pollute QueryErrors with DNSBL timeouts
+            var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+            if (attempts >= 2)
+                _queryCache.TryAdd(key, EmptyResponse.Instance);
             return EmptyResponse.Instance;
         }
     }
