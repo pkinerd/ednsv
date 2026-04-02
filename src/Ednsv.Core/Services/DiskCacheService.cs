@@ -38,7 +38,10 @@ public class DiskCacheService
         };
 
         var json = JsonSerializer.Serialize(data, JsonOptions);
-        await File.WriteAllTextAsync(path, json);
+        // Write to a temp file first, then rename — atomic on most filesystems
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, json);
+        File.Move(tmp, path, overwrite: true);
     }
 
     /// <summary>
@@ -200,4 +203,66 @@ public class HttpGetWithHeadersCacheEntry
     public string Content { get; set; } = "";
     public int StatusCode { get; set; }
     public string? ContentType { get; set; }
+}
+
+/// <summary>
+/// Periodically flushes service caches to disk in the background.
+/// Also exposes FlushAsync for explicit saves (e.g. after each domain).
+/// Dispose to stop the background timer and perform a final save.
+/// </summary>
+public sealed class BackgroundCacheFlusher : IAsyncDisposable
+{
+    private readonly string _path;
+    private readonly SmtpProbeService _smtp;
+    private readonly HttpProbeService _http;
+    private readonly DnsResolverService _dns;
+    private readonly Timer _timer;
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    private bool _disposed;
+
+    public BackgroundCacheFlusher(string path, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, TimeSpan interval)
+    {
+        _path = path;
+        _smtp = smtp;
+        _http = http;
+        _dns = dns;
+        _timer = new Timer(_ => _ = FlushInBackground(), null, interval, interval);
+    }
+
+    private async Task FlushInBackground()
+    {
+        try { await FlushAsync(); }
+        catch { /* best-effort background flush */ }
+    }
+
+    public async Task FlushAsync()
+    {
+        if (_disposed) return;
+        if (!_lock.Wait(0)) return; // skip if a flush is already in progress
+        try
+        {
+            await DiskCacheService.SaveAsync(_path, _smtp, _http, _dns);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        await _timer.DisposeAsync();
+        // Final flush
+        await _lock.WaitAsync();
+        try
+        {
+            await DiskCacheService.SaveAsync(_path, _smtp, _http, _dns);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 }

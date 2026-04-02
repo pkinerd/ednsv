@@ -434,6 +434,11 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
+    // Periodic background flush (every 60s) + final save on dispose
+    await using var cacheFlusher = cachePath != null
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60))
+        : null;
+
     for (int i = 0; i < domains.Count; i++)
     {
         var domain = domains[i];
@@ -550,6 +555,10 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
+        // Flush cache to disk after each domain
+        if (cacheFlusher != null)
+            await cacheFlusher.FlushAsync();
+
         // Per-domain summary
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Rule("[bold]Summary[/]").RuleStyle("grey"));
@@ -660,9 +669,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         AnsiConsole.MarkupLine($"[bold]{reports.Count}[/] domains checked.");
     }
 
-    // Save disk cache
-    if (cachePath != null)
-        await DiskCacheService.SaveAsync(cachePath, smtp, http, dns);
+    // Final cache save handled by cacheFlusher.DisposeAsync()
 }
 
 /// <summary>
@@ -688,6 +695,11 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         if (cacheResult != null && showProgress)
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
+
+    // Periodic background flush (every 60s) + final save on dispose
+    await using var cacheFlusher = cachePath != null
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60))
+        : null;
 
     for (int i = 0; i < domains.Count; i++)
     {
@@ -809,6 +821,10 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
+        // Flush cache to disk after each domain
+        if (cacheFlusher != null)
+            await cacheFlusher.FlushAsync();
+
         if (showProgress)
         {
             if (verbose)
@@ -863,10 +879,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         AnsiConsole.MarkupLine($"[bold]{reports.Count}[/] domains validated.");
     }
 
-    // Save disk cache
-    if (cachePath != null)
-        await DiskCacheService.SaveAsync(cachePath, smtp, http, dns);
-
+    // Final cache save handled by cacheFlusher.DisposeAsync()
     return reports;
 }
 
@@ -892,6 +905,11 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         if (cacheResult != null)
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
+
+    // Background cache flusher — periodically saves caches to disk and does a final save on dispose
+    await using var cacheFlusher = cachePath != null
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(30))
+        : null;
 
     for (int i = 0; i < domains.Count; i++)
     {
@@ -999,6 +1017,9 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
+        // Flush cache to disk after each domain
+        if (cacheFlusher != null) await cacheFlusher.FlushAsync();
+
         // Write individual domain file immediately
         var filename = $"{SanitizeFilename(domain)}.{ext}";
         var filepath = Path.Combine(outputDir, filename);
@@ -1063,9 +1084,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     AnsiConsole.MarkupLine($"[bold green]Issues written to {Markup.Escape(Path.Combine(outputDir, $"issues.{ext}"))}[/]");
     Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext} + issues.{ext})");
 
-    // Save disk cache
-    if (cachePath != null)
-        await DiskCacheService.SaveAsync(cachePath, smtp, http, dns);
+    // Final disk cache save handled by cacheFlusher.DisposeAsync() at end of scope
 }
 
 static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir, Dictionary<string, DomainMeta>? meta = null, List<string>? extraCols = null, string? volCol = null)
