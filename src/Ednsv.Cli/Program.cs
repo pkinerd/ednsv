@@ -39,6 +39,7 @@ var cacheOption = new Option<string?>("--cache", "Persist probe cache to disk be
 cacheOption.AddAlias("-c");
 var cacheTtlOption = new Option<int>("--cache-ttl", () => 24, "Cache time-to-live in hours (default: 24)");
 var retryOption = new Option<bool>("--retry", "Double retry counts for more persistent probing (useful for unreliable networks)");
+var retryErrorsOption = new Option<bool>("--retry-errors", "When using --cache, retry checks that previously resulted in errors or warnings while keeping successful cached results");
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
@@ -60,6 +61,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     cacheOption,
     cacheTtlOption,
     retryOption,
+    retryErrorsOption,
     listChecksOption,
     verboseOption,
     liveIndexOption
@@ -199,6 +201,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
     string? cachePath = null;
     if (parseResult.FindResultFor(cacheOption) is not null)
         cachePath = string.IsNullOrEmpty(cacheRaw) ? ".ednsv-cache.json" : cacheRaw;
+    var retryErrors = parseResult.GetValueForOption(retryErrorsOption);
 
     // For non-text formats, ensure UTF-8 output encoding (fixes piping/redirect)
     var fmt = format.ToLowerInvariant();
@@ -226,7 +229,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
         var liveIndex = parseResult.GetValueForOption(liveIndexOption);
         Directory.CreateDirectory(outputDir);
-        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn, cachePath, cacheTtlHours);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn, cachePath, cacheTtlHours, retryErrors);
         return;
     }
 
@@ -251,17 +254,17 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
         switch (fmt)
         {
             case "json":
-                await RunJsonAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours);
+                await RunJsonAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors);
                 break;
             case "html":
-                await RunHtmlAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours);
+                await RunHtmlAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors);
                 break;
             case "markdown":
             case "md":
-                await RunMarkdownAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours);
+                await RunMarkdownAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors);
                 break;
             default:
-                await RunInteractiveAsync(domains, options, verbose, dnsServers, cachePath, cacheTtlHours);
+                await RunInteractiveAsync(domains, options, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors);
                 break;
         }
     }
@@ -415,7 +418,7 @@ static List<string> CsvSplitLine(string line)
     return fields;
 }
 
-static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
@@ -426,7 +429,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns);
+        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (loaded)
             AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
     }
@@ -631,7 +634,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 /// category headers, details, warnings, and errors. When false, shows
 /// a compact one-line-per-check view.
 /// </summary>
-static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
@@ -642,7 +645,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns);
+        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (loaded && showProgress)
             AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
     }
@@ -812,7 +815,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 /// with progressive console output, then generates an index file with
 /// the summary and links to each domain report.
 /// </summary>
-static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null, Dictionary<string, DomainMeta>? domainMeta = null, List<string>? csvExtraColumns = null, string? csvVolumeColumn = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null, Dictionary<string, DomainMeta>? domainMeta = null, List<string>? csvExtraColumns = null, string? csvVolumeColumn = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
     var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
     var reports = new List<ValidationReport>();
@@ -825,7 +828,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns);
+        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (loaded)
             AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
     }
@@ -1562,9 +1565,9 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     writer.Write(sb.ToString());
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -1592,9 +1595,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors);
 
     var sb = new StringBuilder();
 
@@ -1735,9 +1738,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);

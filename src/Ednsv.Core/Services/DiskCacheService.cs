@@ -44,7 +44,7 @@ public class DiskCacheService
     /// Loads caches from disk and primes the services. Returns false if the file
     /// doesn't exist or has expired.
     /// </summary>
-    public static async Task<bool> LoadAsync(string path, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns)
+    public static async Task<bool> LoadAsync(string path, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, bool retryErrors = false)
     {
         if (!File.Exists(path))
             return false;
@@ -59,6 +59,43 @@ public class DiskCacheService
             // Check TTL
             if (DateTime.UtcNow - data.CreatedUtc > ttl)
                 return false;
+
+            if (retryErrors)
+            {
+                // Filter out failed entries so they get retried
+                if (data.SmtpProbes != null)
+                    data.SmtpProbes = data.SmtpProbes
+                        .Where(kvp => kvp.Value.Error == null && kvp.Value.Connected)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                if (data.PortProbes != null)
+                    data.PortProbes = data.PortProbes
+                        .Where(kvp => kvp.Value)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                if (data.HttpGet != null)
+                    data.HttpGet = data.HttpGet
+                        .Where(kvp => kvp.Value.Success)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                if (data.HttpGetWithHeaders != null)
+                    data.HttpGetWithHeaders = data.HttpGetWithHeaders
+                        .Where(kvp => kvp.Value.Success)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                // Don't import unreachable server tracking — let them be retried
+                data.UnreachableServers = null;
+
+                if (data.DnsQueries != null)
+                    data.DnsQueries = data.DnsQueries
+                        .Where(kvp => !kvp.Value.HasError)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+                if (data.DnsServerQueries != null)
+                    data.DnsServerQueries = data.DnsServerQueries
+                        .Where(kvp => !kvp.Value.HasError)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            }
 
             if (data.SmtpProbes != null) smtp.ImportProbeCache(data.SmtpProbes);
             if (data.PortProbes != null) smtp.ImportPortCache(data.PortProbes);
