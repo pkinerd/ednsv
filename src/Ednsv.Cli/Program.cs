@@ -1255,25 +1255,32 @@ static async Task WriteJsonIndexAsync(List<ValidationReport> reports, TextWriter
         ? reports.OrderByDescending(r => meta!.TryGetValue(r.Domain, out var m) ? m.Volume : 0).ToList()
         : reports;
 
+    var displayCols = (extraCols ?? new List<string>()).Where(c => !string.Equals(c, volCol, StringComparison.OrdinalIgnoreCase)).ToList();
+
     var domains = sorted.Select(r =>
     {
         var entry = new Dictionary<string, object>
         {
             ["domain"] = r.Domain,
-            ["file"] = $"{SanitizeFilename(r.Domain)}.json",
-            ["passCount"] = r.PassCount,
-            ["warningCount"] = r.WarningCount,
-            ["errorCount"] = r.ErrorCount,
-            ["criticalCount"] = r.CriticalCount,
-            ["totalChecks"] = r.Results.Count,
-            ["durationSeconds"] = Math.Round(r.Duration.TotalSeconds, 1),
-            ["verdict"] = r.CriticalCount > 0 ? "CRITICAL" :
-                          r.ErrorCount > 0 ? "ERRORS" :
-                          r.WarningCount > 0 ? "WARNINGS" : "PASS"
+            ["file"] = $"{SanitizeFilename(r.Domain)}.json"
         };
+        // Volume column right after domain
+        if (hasVolume && meta != null && meta.TryGetValue(r.Domain, out var dmVol))
+            entry[jsonOptions.PropertyNamingPolicy?.ConvertName(volCol ?? "TotalMessages") ?? "totalMessages"] = dmVol.Volume;
+        // Tool-generated columns
+        entry["passCount"] = r.PassCount;
+        entry["warningCount"] = r.WarningCount;
+        entry["errorCount"] = r.ErrorCount;
+        entry["criticalCount"] = r.CriticalCount;
+        entry["totalChecks"] = r.Results.Count;
+        entry["durationSeconds"] = Math.Round(r.Duration.TotalSeconds, 1);
+        entry["verdict"] = r.CriticalCount > 0 ? "CRITICAL" :
+                      r.ErrorCount > 0 ? "ERRORS" :
+                      r.WarningCount > 0 ? "WARNINGS" : "PASS";
+        // Extra CSV columns at end
         if (meta != null && meta.TryGetValue(r.Domain, out var dm))
         {
-            foreach (var col in extraCols ?? Enumerable.Empty<string>())
+            foreach (var col in displayCols)
             {
                 if (dm.Columns.TryGetValue(col, out var val))
                     entry[jsonOptions.PropertyNamingPolicy?.ConvertName(col) ?? col] = val;
@@ -1314,13 +1321,13 @@ static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter 
     sb.AppendLine("## Results");
     sb.AppendLine();
 
-    // Build header
-    var extraHeaders = string.Join("", displayCols.Select(c => $" {MdText(c)} |"));
+    // Build header: Domain | Volume | tool cols | extra CSV cols | Report
     var volHeader = hasVolume ? $" {MdText(volCol ?? "Messages")} |" : "";
-    sb.AppendLine($"| Domain |{extraHeaders}{volHeader} Pass | Warn | Error | Crit | Total | Duration | Verdict | Report |");
-    var extraSeps = string.Join("", displayCols.Select(_ => "--------|"));
+    var extraHeaders = string.Join("", displayCols.Select(c => $" {MdText(c)} |"));
+    sb.AppendLine($"| Domain |{volHeader} Pass | Warn | Error | Crit | Total | Duration | Verdict |{extraHeaders} Report |");
     var volSep = hasVolume ? " --------:|" : "";
-    sb.AppendLine($"|--------|{extraSeps}{volSep}-----:|-----:|------:|-----:|------:|---------:|---------|--------|");
+    var extraSeps = string.Join("", displayCols.Select(_ => "--------|"));
+    sb.AppendLine($"|--------|{volSep}-----:|-----:|------:|-----:|------:|---------:|---------|{extraSeps}--------|");
 
     foreach (var r in sorted)
     {
@@ -1330,26 +1337,26 @@ static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter 
                       "\u2705 PASS";
         var file = $"{SanitizeFilename(r.Domain)}.{ext}";
 
-        var extraVals = "";
         var volVal = "";
+        var extraVals = "";
         if (meta != null && meta.TryGetValue(r.Domain, out var dm))
         {
-            extraVals = string.Join("", displayCols.Select(c => $" {MdText(dm.Columns.GetValueOrDefault(c, ""))} |"));
             if (hasVolume) volVal = $" {dm.Volume:N0} |";
+            extraVals = string.Join("", displayCols.Select(c => $" {MdText(dm.Columns.GetValueOrDefault(c, ""))} |"));
         }
         else
         {
-            extraVals = string.Join("", displayCols.Select(_ => " |"));
             if (hasVolume) volVal = " |";
+            extraVals = string.Join("", displayCols.Select(_ => " |"));
         }
 
-        sb.AppendLine($"| `{r.Domain}` |{extraVals}{volVal} {r.PassCount} | {r.WarningCount} | {r.ErrorCount} | {r.CriticalCount} | {r.Results.Count} | {r.Duration.TotalSeconds:F1}s | {verdict} | [{file}]({file}) |");
+        sb.AppendLine($"| `{r.Domain}` |{volVal} {r.PassCount} | {r.WarningCount} | {r.ErrorCount} | {r.CriticalCount} | {r.Results.Count} | {r.Duration.TotalSeconds:F1}s | {verdict} |{extraVals} [{file}]({file}) |");
     }
 
     var totalDuration = reports.Aggregate(TimeSpan.Zero, (acc, r) => acc + r.Duration);
-    var extraTotals = string.Join("", displayCols.Select(_ => " |"));
     var volTotal = hasVolume ? $" **{meta!.Values.Sum(m => m.Volume):N0}** |" : "";
-    sb.AppendLine($"| **Total** |{extraTotals}{volTotal} **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | | |");
+    var extraTotals = string.Join("", displayCols.Select(_ => " |"));
+    sb.AppendLine($"| **Total** |{volTotal} **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | |{extraTotals} |");
     sb.AppendLine();
     sb.AppendLine($"[View cross-domain issues](issues.{ext})");
     sb.AppendLine();
@@ -1432,14 +1439,15 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     sb.AppendLine($"  <div class=\"stat\"><div class=\"value\">{totalChecks}</div><div class=\"label\">Total</div></div>");
     sb.AppendLine("</div>");
 
-    // Domain table with links — build header dynamically
+    // Domain table: Domain | Volume | tool cols | extra CSV cols
     sb.AppendLine("<table>");
     sb.Append("<thead><tr><th>Domain</th>");
-    foreach (var col in displayCols)
-        sb.Append($"<th>{e(col)}</th>");
     if (hasVolume)
         sb.Append($"<th>{e(volCol ?? "Messages")}</th>");
-    sb.AppendLine("<th>Pass</th><th>Warn</th><th>Error</th><th>Crit</th><th>Total</th><th>Duration</th><th>Verdict</th></tr></thead>");
+    sb.Append("<th>Pass</th><th>Warn</th><th>Error</th><th>Crit</th><th>Total</th><th>Duration</th><th>Verdict</th>");
+    foreach (var col in displayCols)
+        sb.Append($"<th>{e(col)}</th>");
+    sb.AppendLine("</tr></thead>");
     sb.AppendLine("<tbody>");
 
     var totalDuration = TimeSpan.Zero;
@@ -1456,29 +1464,32 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
 
         if (meta != null && meta.TryGetValue(r.Domain, out var dm))
         {
-            foreach (var col in displayCols)
-                sb.Append($"<td>{e(dm.Columns.GetValueOrDefault(col, ""))}</td>");
             if (hasVolume)
                 sb.Append($"<td class=\"num\">{dm.Volume:N0}</td>");
+            sb.Append($"<td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td>");
+            foreach (var col in displayCols)
+                sb.Append($"<td>{e(dm.Columns.GetValueOrDefault(col, ""))}</td>");
         }
         else
         {
-            foreach (var _ in displayCols)
-                sb.Append("<td></td>");
             if (hasVolume)
                 sb.Append("<td class=\"num\"></td>");
+            sb.Append($"<td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td>");
+            foreach (var _ in displayCols)
+                sb.Append("<td></td>");
         }
 
-        sb.AppendLine($"<td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td></tr>");
+        sb.AppendLine("</tr>");
         totalDuration += r.Duration;
     }
 
     sb.Append($"<tr><td><strong>Total</strong></td>");
-    foreach (var _ in displayCols)
-        sb.Append("<td></td>");
     if (hasVolume)
         sb.Append($"<td class=\"num\">{meta!.Values.Sum(m => m.Volume):N0}</td>");
-    sb.AppendLine($"<td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td></tr>");
+    sb.Append($"<td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td>");
+    foreach (var _ in displayCols)
+        sb.Append("<td></td>");
+    sb.AppendLine("</tr>");
     sb.AppendLine("</tbody></table>");
 
     sb.AppendLine($"<p style=\"margin-top:1rem;font-size:0.9rem;\"><a href=\"issues.{ext}\">View cross-domain issues &rarr;</a></p>");
