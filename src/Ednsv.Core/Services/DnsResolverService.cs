@@ -16,12 +16,8 @@ public class DnsResolverService
     // Application-level cache for DNS queries (survives across domains)
     private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
     private readonly ConcurrentDictionary<string, List<string>> _ptrCache = new();
-    // Track failed keys and their attempt counts — only cache after MaxRetries
-    private readonly ConcurrentDictionary<(string domain, QueryType type), int> _queryFailCounts = new();
-    private readonly ConcurrentDictionary<string, int> _ptrFailCounts = new();
     // Cache for direct server queries (keyed by server+domain+type)
     private readonly ConcurrentDictionary<(string server, string domain, QueryType type), IDnsQueryResponse> _serverQueryCache = new();
-    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), int> _serverQueryFailCounts = new();
     // Tracks servers that are completely unreachable (network/timeout failures).
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
@@ -105,21 +101,8 @@ public class DnsResolverService
         try
         {
             var result = await _client.QueryAsync(domain, type);
-            // Only cache successful responses (no error, or NXDOMAIN/empty which are
-            // legitimate "no records" answers — HasError covers SERVFAIL etc.)
-            if (!result.HasError)
-            {
-                _queryCache.TryAdd(key, result);
-                _queryFailCounts.TryRemove(key, out _);
-            }
-            else
-            {
-                // Server returned an error (SERVFAIL, REFUSED, etc.) — treat as
-                // a potentially transient failure; cache only after max retries
-                var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-                if (attempts >= MaxRetries)
-                    _queryCache.TryAdd(key, result);
-            }
+            // Always cache — errors are filtered out by --retry-errors on load
+            _queryCache.TryAdd(key, result);
             return result;
         }
         catch (DnsResponseException ex)
@@ -163,35 +146,19 @@ public class DnsResolverService
         try
         {
             var result = await _dnsblClient.QueryAsync(query, type);
-            if (!result.HasError)
-            {
-                _queryCache.TryAdd(key, result);
-                _queryFailCounts.TryRemove(key, out _);
-            }
-            else
-            {
-                // Cache DNSBL errors after 2 attempts (less patient than standard queries)
-                var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-                if (attempts >= 2)
-                    _queryCache.TryAdd(key, result);
-            }
+            _queryCache.TryAdd(key, result);
             return result;
         }
         catch
         {
-            // Silently cache after 2 attempts — don't pollute QueryErrors with DNSBL timeouts
-            var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-            if (attempts >= 2)
-                _queryCache.TryAdd(key, EmptyResponse.Instance);
+            _queryCache.TryAdd(key, EmptyResponse.Instance);
             return EmptyResponse.Instance;
         }
     }
 
     private void CacheFailureIfExhausted((string domain, QueryType type) key)
     {
-        var attempts = _queryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-        if (attempts >= MaxRetries)
-            _queryCache.TryAdd(key, EmptyResponse.Instance);
+        _queryCache.TryAdd(key, EmptyResponse.Instance);
     }
 
     public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type)
@@ -220,27 +187,18 @@ public class DnsResolverService
             };
             var client = new LookupClient(opts);
             var result = await client.QueryAsync(domain, type);
+            _serverQueryCache.TryAdd(key, result);
             if (!result.HasError)
             {
-                _serverQueryCache.TryAdd(key, result);
-                _serverQueryFailCounts.TryRemove(key, out _);
                 // Server responded — clear unreachable tracking
                 _unreachableServerCounts.TryRemove(serverStr, out _);
-            }
-            else
-            {
-                var attempts = _serverQueryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-                if (attempts >= MaxRetries)
-                    _serverQueryCache.TryAdd(key, result);
             }
             return result;
         }
         catch (Exception ex)
         {
             QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
-            var attempts = _serverQueryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
-            if (attempts >= MaxRetries)
-                _serverQueryCache.TryAdd(key, EmptyResponse.Instance);
+            _serverQueryCache.TryAdd(key, EmptyResponse.Instance);
             // Track server-level unreachability
             _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
             return EmptyResponse.Instance;
@@ -268,17 +226,12 @@ public class DnsResolverService
         {
             var result = await _client.QueryReverseAsync(IPAddress.Parse(ip));
             var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
-            // Always cache successful PTR lookups (empty list = no PTR record, which is valid)
             _ptrCache.TryAdd(ip, ptrs);
-            _ptrFailCounts.TryRemove(ip, out _);
             return ptrs;
         }
         catch
         {
-            // Network/timeout failure — only cache after max retries
-            var attempts = _ptrFailCounts.AddOrUpdate(ip, 1, (_, c) => c + 1);
-            if (attempts >= MaxRetries)
-                _ptrCache.TryAdd(ip, new List<string>());
+            _ptrCache.TryAdd(ip, new List<string>());
             return new List<string>();
         }
     }
