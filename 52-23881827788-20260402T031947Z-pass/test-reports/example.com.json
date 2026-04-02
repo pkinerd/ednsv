@@ -1,7 +1,7 @@
 {
   "domain": "example.com",
-  "timestamp": "2026-03-31T01:31:03.5344166Z",
-  "duration": "00:00:12.0421023",
+  "timestamp": "2026-04-02T03:13:12.7582792Z",
+  "duration": "00:01:14.5609605",
   "results": [
     {
       "checkName": "Delegation Chain",
@@ -9,8 +9,8 @@
       "severity": 1,
       "summary": "Delegation chain walked through 2 levels",
       "details": [
-        "Zone [com] NS: g.gtld-servers.net, f.gtld-servers.net, j.gtld-servers.net, k.gtld-servers.net, b.gtld-servers.net, h.gtld-servers.net, a.gtld-servers.net, m.gtld-servers.net, c.gtld-servers.net, e.gtld-servers.net, d.gtld-servers.net, l.gtld-servers.net, i.gtld-servers.net",
-        "Zone [example.com] NS: elliott.ns.cloudflare.com, hera.ns.cloudflare.com"
+        "Zone [com] NS: b.gtld-servers.net, l.gtld-servers.net, m.gtld-servers.net, c.gtld-servers.net, j.gtld-servers.net, h.gtld-servers.net, k.gtld-servers.net, g.gtld-servers.net, d.gtld-servers.net, f.gtld-servers.net, i.gtld-servers.net, e.gtld-servers.net, a.gtld-servers.net",
+        "Zone [example.com] NS: hera.ns.cloudflare.com, elliott.ns.cloudflare.com"
       ],
       "warnings": [],
       "errors": []
@@ -21,12 +21,18 @@
       "severity": 1,
       "summary": "Found 2 authoritative nameservers",
       "details": [
-        "NS: elliott.ns.cloudflare.com -\u003E 172.64.35.228 (PTR: elliott.ns.cloudflare.com)",
-        "NS: elliott.ns.cloudflare.com -\u003E 162.159.44.228 (PTR: elliott.ns.cloudflare.com)",
-        "NS: elliott.ns.cloudflare.com -\u003E 108.162.195.228 (PTR: elliott.ns.cloudflare.com)",
         "NS: hera.ns.cloudflare.com -\u003E 173.245.58.162 (PTR: hera.ns.cloudflare.com)",
         "NS: hera.ns.cloudflare.com -\u003E 108.162.192.162 (PTR: hera.ns.cloudflare.com)",
-        "NS: hera.ns.cloudflare.com -\u003E 172.64.32.162 (PTR: hera.ns.cloudflare.com)"
+        "NS: hera.ns.cloudflare.com -\u003E 172.64.32.162 (PTR: hera.ns.cloudflare.com)",
+        "NS: hera.ns.cloudflare.com -\u003E 2606:4700:50::adf5:3aa2 (PTR: hera.ns.cloudflare.com)",
+        "NS: hera.ns.cloudflare.com -\u003E 2803:f800:50::6ca2:c0a2 (PTR: hera.ns.cloudflare.com)",
+        "NS: hera.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:20a2 (PTR: hera.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 172.64.35.228 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 108.162.195.228 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 162.159.44.228 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:23e4 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 2606:4700:58::a29f:2ce4 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 2803:f800:50::6ca2:c3e4 (PTR: elliott.ns.cloudflare.com)"
       ],
       "warnings": [],
       "errors": []
@@ -39,7 +45,7 @@
       "details": [
         "Parent and child NS sets are consistent",
         "Parent NS set: hera.ns.cloudflare.com, elliott.ns.cloudflare.com",
-        "Child NS set: elliott.ns.cloudflare.com, hera.ns.cloudflare.com"
+        "Child NS set: hera.ns.cloudflare.com, elliott.ns.cloudflare.com"
       ],
       "warnings": [],
       "errors": []
@@ -64,6 +70,28 @@
       "errors": []
     },
     {
+      "checkName": "SOA Serial Consistency",
+      "category": 1,
+      "severity": 1,
+      "summary": "All 6 nameservers agree on SOA serial 2399341694",
+      "details": [
+        "hera.ns.cloudflare.com (173.245.58.162): Serial 2399341694",
+        "hera.ns.cloudflare.com (108.162.192.162): Serial 2399341694",
+        "hera.ns.cloudflare.com (172.64.32.162): Serial 2399341694",
+        "elliott.ns.cloudflare.com (172.64.35.228): Serial 2399341694",
+        "elliott.ns.cloudflare.com (108.162.195.228): Serial 2399341694",
+        "elliott.ns.cloudflare.com (162.159.44.228): Serial 2399341694",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): No SOA in response",
+        "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): No SOA in response",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): No SOA in response",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): No SOA in response",
+        "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): No SOA in response",
+        "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): No SOA in response"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "NS Glue Records",
       "category": 0,
       "severity": 1,
@@ -80,8 +108,8 @@
       "severity": 1,
       "summary": "2 NS records found",
       "details": [
-        "NS: elliott.ns.cloudflare.com (TTL: 21600s)",
-        "NS: hera.ns.cloudflare.com (TTL: 21600s)"
+        "NS: hera.ns.cloudflare.com (TTL: 21598s)",
+        "NS: elliott.ns.cloudflare.com (TTL: 21598s)"
       ],
       "warnings": [],
       "errors": []
@@ -98,15 +126,21 @@
     {
       "checkName": "NS Lame Delegation",
       "category": 2,
-      "severity": 1,
-      "summary": "All 6 nameservers are authoritative",
+      "severity": 2,
+      "summary": "6/12 nameservers unreachable (none confirmed lame)",
       "details": [
-        "elliott.ns.cloudflare.com (172.64.35.228): Authoritative (SOA present)",
-        "elliott.ns.cloudflare.com (162.159.44.228): Authoritative (SOA present)",
-        "elliott.ns.cloudflare.com (108.162.195.228): Authoritative (SOA present)",
         "hera.ns.cloudflare.com (173.245.58.162): Authoritative (SOA present)",
         "hera.ns.cloudflare.com (108.162.192.162): Authoritative (SOA present)",
-        "hera.ns.cloudflare.com (172.64.32.162): Authoritative (SOA present)"
+        "hera.ns.cloudflare.com (172.64.32.162): Authoritative (SOA present)",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Unreachable (query failed)",
+        "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): Unreachable (query failed)",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Unreachable (query failed)",
+        "elliott.ns.cloudflare.com (172.64.35.228): Authoritative (SOA present)",
+        "elliott.ns.cloudflare.com (108.162.195.228): Authoritative (SOA present)",
+        "elliott.ns.cloudflare.com (162.159.44.228): Authoritative (SOA present)",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Unreachable (query failed)",
+        "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): Unreachable (query failed)",
+        "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): Unreachable (query failed)"
       ],
       "warnings": [],
       "errors": []
@@ -117,12 +151,18 @@
       "severity": 1,
       "summary": "NS IPs span 6 different /24 subnets",
       "details": [
-        "elliott.ns.cloudflare.com: 172.64.35.228",
-        "elliott.ns.cloudflare.com: 162.159.44.228",
-        "elliott.ns.cloudflare.com: 108.162.195.228",
         "hera.ns.cloudflare.com: 173.245.58.162",
         "hera.ns.cloudflare.com: 108.162.192.162",
-        "hera.ns.cloudflare.com: 172.64.32.162"
+        "hera.ns.cloudflare.com: 172.64.32.162",
+        "hera.ns.cloudflare.com: 2606:4700:50::adf5:3aa2",
+        "hera.ns.cloudflare.com: 2803:f800:50::6ca2:c0a2",
+        "hera.ns.cloudflare.com: 2a06:98c1:50::ac40:20a2",
+        "elliott.ns.cloudflare.com: 172.64.35.228",
+        "elliott.ns.cloudflare.com: 108.162.195.228",
+        "elliott.ns.cloudflare.com: 162.159.44.228",
+        "elliott.ns.cloudflare.com: 2a06:98c1:50::ac40:23e4",
+        "elliott.ns.cloudflare.com: 2606:4700:58::a29f:2ce4",
+        "elliott.ns.cloudflare.com: 2803:f800:50::6ca2:c3e4"
       ],
       "warnings": [],
       "errors": []
@@ -132,6 +172,15 @@
       "category": 2,
       "severity": 1,
       "summary": "No duplicate NS IPs found",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Open Recursive Resolver Detection",
+      "category": 2,
+      "severity": 0,
+      "summary": "Open resolver check skipped (use --open-resolver to enable)",
       "details": [],
       "warnings": [],
       "errors": []
@@ -163,8 +212,8 @@
       "severity": 1,
       "summary": "2 AAAA record(s) found",
       "details": [
-        "2606:4700::6812:1a78 (TTL: 300s)",
-        "2606:4700::6812:1b78 (TTL: 300s)"
+        "2606:4700::6812:1b78 (TTL: 300s)",
+        "2606:4700::6812:1a78 (TTL: 300s)"
       ],
       "warnings": [],
       "errors": []
@@ -271,7 +320,8 @@
       "details": [
         "Total DNS lookups: 0",
         "Void lookups: 0",
-        "Max nesting depth: 0"
+        "Max nesting depth: 0",
+        "-all"
       ],
       "warnings": [],
       "errors": []
@@ -344,6 +394,15 @@
       "category": 7,
       "severity": 1,
       "summary": "All MX IPs covered by SPF",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Subdomain SPF Coverage",
+      "category": 7,
+      "severity": 0,
+      "summary": "No common mail-sending subdomains found",
       "details": [],
       "warnings": [],
       "errors": []
@@ -426,130 +485,33 @@
       "errors": []
     },
     {
-      "checkName": "DKIM Selectors",
-      "category": 9,
+      "checkName": "DMARC Subdomain Policy Analysis",
+      "category": 8,
       "severity": 2,
-      "summary": "Found 39 DKIM selector(s) but all have revoked keys",
+      "summary": "Subdomain policy: reject (2 issue(s))",
       "details": [
-        "Selector: default",
-        "  Record: v=DKIM1; p=",
-        "Selector: google",
-        "  Record: v=DKIM1; p=",
-        "Selector: selector1",
-        "  Record: v=DKIM1; p=",
-        "Selector: selector2",
-        "  Record: v=DKIM1; p=",
-        "Selector: k1",
-        "  Record: v=DKIM1; p=",
-        "Selector: k2",
-        "  Record: v=DKIM1; p=",
-        "Selector: k3",
-        "  Record: v=DKIM1; p=",
-        "Selector: s1",
-        "  Record: v=DKIM1; p=",
-        "Selector: s2",
-        "  Record: v=DKIM1; p=",
-        "Selector: s3",
-        "  Record: v=DKIM1; p=",
-        "Selector: dkim",
-        "  Record: v=DKIM1; p=",
-        "Selector: mail",
-        "  Record: v=DKIM1; p=",
-        "Selector: email",
-        "  Record: v=DKIM1; p=",
-        "Selector: smtp",
-        "  Record: v=DKIM1; p=",
-        "Selector: google2048",
-        "  Record: v=DKIM1; p=",
-        "Selector: everlytickey1",
-        "  Record: v=DKIM1; p=",
-        "Selector: everlytickey2",
-        "  Record: v=DKIM1; p=",
-        "Selector: mandrill",
-        "  Record: v=DKIM1; p=",
-        "Selector: amazonses",
-        "  Record: v=DKIM1; p=",
-        "Selector: postmark",
-        "  Record: v=DKIM1; p=",
-        "Selector: sendgrid",
-        "  Record: v=DKIM1; p=",
-        "Selector: cm",
-        "  Record: v=DKIM1; p=",
-        "Selector: mxvault",
-        "  Record: v=DKIM1; p=",
-        "Selector: protonmail",
-        "  Record: v=DKIM1; p=",
-        "Selector: protonmail2",
-        "  Record: v=DKIM1; p=",
-        "Selector: protonmail3",
-        "  Record: v=DKIM1; p=",
-        "Selector: fm1",
-        "  Record: v=DKIM1; p=",
-        "Selector: fm2",
-        "  Record: v=DKIM1; p=",
-        "Selector: fm3",
-        "  Record: v=DKIM1; p=",
-        "Selector: pic",
-        "  Record: v=DKIM1; p=",
-        "Selector: mailjet",
-        "  Record: v=DKIM1; p=",
-        "Selector: zoho",
-        "  Record: v=DKIM1; p=",
-        "Selector: turbo-smtp",
-        "  Record: v=DKIM1; p=",
-        "Selector: sig1",
-        "  Record: v=DKIM1; p=",
-        "Selector: smtpapi",
-        "  Record: v=DKIM1; p=",
-        "Selector: hs1",
-        "  Record: v=DKIM1; p=",
-        "Selector: hs2",
-        "  Record: v=DKIM1; p=",
-        "Selector: m1",
-        "  Record: v=DKIM1; p=",
-        "Selector: m2",
-        "  Record: v=DKIM1; p="
+        "Parent policy (p): reject",
+        "Subdomain policy (sp): reject",
+        "Effective subdomain policy: reject",
+        "DKIM alignment (adkim): s",
+        "  Strict DKIM alignment: subdomain mail must be signed with exact domain match",
+        "SPF alignment (aspf): s",
+        "  Strict SPF alignment: RFC5321.MailFrom must exactly match RFC5322.From domain"
       ],
       "warnings": [
-        "Selector default: Empty public key (revoked)",
-        "Selector google: Empty public key (revoked)",
-        "Selector selector1: Empty public key (revoked)",
-        "Selector selector2: Empty public key (revoked)",
-        "Selector k1: Empty public key (revoked)",
-        "Selector k2: Empty public key (revoked)",
-        "Selector k3: Empty public key (revoked)",
-        "Selector s1: Empty public key (revoked)",
-        "Selector s2: Empty public key (revoked)",
-        "Selector s3: Empty public key (revoked)",
-        "Selector dkim: Empty public key (revoked)",
-        "Selector mail: Empty public key (revoked)",
-        "Selector email: Empty public key (revoked)",
-        "Selector smtp: Empty public key (revoked)",
-        "Selector google2048: Empty public key (revoked)",
-        "Selector everlytickey1: Empty public key (revoked)",
-        "Selector everlytickey2: Empty public key (revoked)",
-        "Selector mandrill: Empty public key (revoked)",
-        "Selector amazonses: Empty public key (revoked)",
-        "Selector postmark: Empty public key (revoked)",
-        "Selector sendgrid: Empty public key (revoked)",
-        "Selector cm: Empty public key (revoked)",
-        "Selector mxvault: Empty public key (revoked)",
-        "Selector protonmail: Empty public key (revoked)",
-        "Selector protonmail2: Empty public key (revoked)",
-        "Selector protonmail3: Empty public key (revoked)",
-        "Selector fm1: Empty public key (revoked)",
-        "Selector fm2: Empty public key (revoked)",
-        "Selector fm3: Empty public key (revoked)",
-        "Selector pic: Empty public key (revoked)",
-        "Selector mailjet: Empty public key (revoked)",
-        "Selector zoho: Empty public key (revoked)",
-        "Selector turbo-smtp: Empty public key (revoked)",
-        "Selector sig1: Empty public key (revoked)",
-        "Selector smtpapi: Empty public key (revoked)",
-        "Selector hs1: Empty public key (revoked)",
-        "Selector hs2: Empty public key (revoked)",
-        "Selector m1: Empty public key (revoked)",
-        "Selector m2: Empty public key (revoked)"
+        "adkim=s (strict) inherited by subdomains \u2014 subdomain mail must use exact-match DKIM signing (d=sub.domain, not d=domain)",
+        "aspf=s (strict) inherited by subdomains \u2014 subdomain mail must have exact SPF domain match in envelope"
+      ],
+      "errors": []
+    },
+    {
+      "checkName": "DMARC Report URI Validation",
+      "category": 8,
+      "severity": 2,
+      "summary": "No DMARC report URIs configured \u2014 no visibility into authentication failures",
+      "details": [],
+      "warnings": [
+        "Without rua/ruf, you won\u0027t receive DMARC aggregate or forensic reports"
       ],
       "errors": []
     },
@@ -567,7 +529,15 @@
         "ARC/DKIM key at selector2._domainkey.example.com",
         "ARC/DKIM key at default._domainkey.example.com"
       ],
-      "warnings": [],
+      "warnings": [
+        "ARC selector arc: Empty public key (revoked)",
+        "ARC selector s1: Empty public key (revoked)",
+        "ARC selector s2: Empty public key (revoked)",
+        "ARC selector google: Empty public key (revoked)",
+        "ARC selector selector1: Empty public key (revoked)",
+        "ARC selector selector2: Empty public key (revoked)",
+        "ARC selector default: Empty public key (revoked)"
+      ],
       "errors": []
     },
     {
@@ -580,6 +550,15 @@
         "104.18.27.120: No PTR record",
         "104.18.26.120: No PTR record"
       ],
+      "errors": []
+    },
+    {
+      "checkName": "MX Reverse DNS (PTR)",
+      "category": 10,
+      "severity": 1,
+      "summary": "All 0 MX IP(s) have valid reverse DNS",
+      "details": [],
+      "warnings": [],
       "errors": []
     },
     {
@@ -612,13 +591,18 @@
     {
       "checkName": "Domain Blocklist Check",
       "category": 13,
-      "severity": 1,
-      "summary": "Domain not on any blocklists",
-      "details": [
-        "example.com: Not listed on dbl.spamhaus.org",
-        "example.com: Not listed on multi.surbl.org",
-        "example.com: black.uribl.com returned resolver/error code (127.0.0.1) - not a real listing (using public DNS resolver)"
-      ],
+      "severity": 0,
+      "summary": "Skipped \u2014 domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Hostname Blocklist (RHSBL)",
+      "category": 13,
+      "severity": 0,
+      "summary": "Skipped \u2014 MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -632,10 +616,23 @@
         "  DS: KeyTag=2371, Algorithm=ECDSAP256SHA256, DigestType=2",
         "DNSKEY records found: 4",
         "  DNSKEY: Flags=256, Protocol=3, Algorithm=ECDSAP256SHA256",
-        "  DNSKEY: Flags=256, Protocol=3, Algorithm=ECDSAP256SHA256",
         "  DNSKEY: Flags=257, Protocol=3, Algorithm=ECDSAP256SHA256",
-        "  DNSKEY: Flags=256, Protocol=3, Algorithm=ECDSAP256SHA256"
+        "  DNSKEY: Flags=256, Protocol=3, Algorithm=ECDSAP256SHA256",
+        "  DNSKEY: Flags=256, Protocol=3, Algorithm=ECDSAP256SHA256",
+        "RRSIG temporal validity and type coverage should be verified"
       ],
+      "warnings": [
+        "DS digest-to-DNSKEY verification not performed \u2014 verify manually that DS digests match published DNSKEYs",
+        "DNSSEC keys present but no RRSIG records found \u2014 zone may not be properly signed"
+      ],
+      "errors": []
+    },
+    {
+      "checkName": "NSEC/NSEC3 Zone Walk",
+      "category": 14,
+      "severity": 0,
+      "summary": "DNSSEC enabled but NSEC/NSEC3 status undetermined",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -676,7 +673,8 @@
       "severity": 0,
       "summary": "No DANE/TLSA records",
       "details": [
-        "_25._tcp.: No TLSA records"
+        "_25._tcp.: No TLSA records",
+        "DANE checked for port 25 only \u2014 submission ports (587/465) not checked"
       ],
       "warnings": [],
       "errors": []
@@ -726,7 +724,7 @@
     {
       "checkName": "EHLO Capabilities",
       "category": 19,
-      "severity": 0,
+      "severity": 1,
       "summary": "EHLO capabilities retrieved",
       "details": [
         ": Could not retrieve EHLO capabilities"
@@ -752,6 +750,37 @@
       "summary": "REQUIRETLS not supported (optional RFC 8689 extension)",
       "details": [
         ": Could not connect"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "STARTTLS Enforcement",
+      "category": 19,
+      "severity": 1,
+      "summary": "All MX hosts support STARTTLS",
+      "details": [
+        ": Could not connect"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Banner vs Reverse DNS",
+      "category": 19,
+      "severity": 0,
+      "summary": "Could not compare rDNS and banner (no data)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Transaction Timing",
+      "category": 19,
+      "severity": 1,
+      "summary": "SMTP timing acceptable for 1 MX host(s)",
+      "details": [
+        ": Could not connect (The value cannot be an empty string. (Parameter \u0027host\u0027))"
       ],
       "warnings": [],
       "errors": []
@@ -819,15 +848,27 @@
       "errors": []
     },
     {
+      "checkName": "SMTP IPv6 Connectivity",
+      "category": 23,
+      "severity": 0,
+      "summary": "No MX hosts have AAAA records \u2014 IPv6 not applicable",
+      "details": [
+        ": No AAAA records"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "Postmaster Address",
       "category": 24,
       "severity": 2,
-      "summary": "postmaster@ not accepted (RFC 5321 \u00A74.5.1 requires it)",
+      "summary": "postmaster@ not accepted on any MX (RFC 5321 \u00A74.5.1 requires it)",
       "details": [
-        "postmaster@example.com via : Rejected/Unknown"
+        "postmaster@example.com via : Rejected",
+        "  Server response: Error: The value cannot be an empty string. (Parameter \u0027host\u0027)"
       ],
       "warnings": [
-        "postmaster@example.com was not accepted - RFC 5321 requires this address"
+        "postmaster@example.com rejected by  (Error: The value cannot be an empty string. (Parameter \u0027host\u0027))"
       ],
       "errors": []
     },
@@ -835,12 +876,13 @@
       "checkName": "Abuse Address",
       "category": 25,
       "severity": 2,
-      "summary": "abuse@ not accepted (RFC 2142 recommends it)",
+      "summary": "abuse@ not accepted on any MX (RFC 2142 recommends it)",
       "details": [
-        "abuse@example.com via : Rejected/Unknown"
+        "abuse@example.com via : Rejected",
+        "  Server response: Error: The value cannot be an empty string. (Parameter \u0027host\u0027)"
       ],
       "warnings": [
-        "abuse@example.com was not accepted - RFC 2142 recommends this address"
+        "abuse@example.com rejected by  (Error: The value cannot be an empty string. (Parameter \u0027host\u0027))"
       ],
       "errors": []
     },
@@ -858,6 +900,24 @@
       "errors": []
     },
     {
+      "checkName": "Open Relay Test",
+      "category": 19,
+      "severity": 0,
+      "summary": "Open relay test skipped (use --open-relay to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Catch-All Detection",
+      "category": 19,
+      "severity": 0,
+      "summary": "Catch-all test skipped (use --catch-all to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "Wildcard DNS",
       "category": 26,
       "severity": 1,
@@ -869,15 +929,14 @@
     {
       "checkName": "TTL Sanity",
       "category": 27,
-      "severity": 2,
-      "summary": "TTL issues detected",
+      "severity": 1,
+      "summary": "TTLs within reasonable range",
       "details": [
-        "SPF/TXT (example.com): TTL 298s",
-        "DMARC (_dmarc.example.com): TTL 299s"
+        "MX (example.com): TTL 64s",
+        "SPF/TXT (example.com): TTL 233s",
+        "DMARC (_dmarc.example.com): TTL 233s"
       ],
-      "warnings": [
-        "MX (example.com): TTL 4s is very low (\u003C 60s)"
-      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -886,12 +945,18 @@
       "severity": 1,
       "summary": "Zone transfer denied on all nameservers",
       "details": [
-        "elliott.ns.cloudflare.com (172.64.35.228): Zone transfer denied (good)",
-        "elliott.ns.cloudflare.com (162.159.44.228): Zone transfer denied (good)",
-        "elliott.ns.cloudflare.com (108.162.195.228): Zone transfer denied (good)",
         "hera.ns.cloudflare.com (173.245.58.162): Zone transfer denied (good)",
         "hera.ns.cloudflare.com (108.162.192.162): Zone transfer denied (good)",
-        "hera.ns.cloudflare.com (172.64.32.162): Zone transfer denied (good)"
+        "hera.ns.cloudflare.com (172.64.32.162): Zone transfer denied (good)",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Zone transfer denied (good)",
+        "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): Zone transfer denied (good)",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (172.64.35.228): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (108.162.195.228): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (162.159.44.228): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): Zone transfer denied (good)"
       ],
       "warnings": [],
       "errors": []
@@ -918,7 +983,19 @@
       "checkName": "Certificate Transparency",
       "category": 22,
       "severity": 0,
-      "summary": "No CT log entries found (or crt.sh unreachable)",
+      "summary": "~57 certificate(s) in CT logs",
+      "details": [
+        "Certificates found in crt.sh for example.com",
+        "Certificate Authorities: C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA DV E36, C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA DV R36, C=US, O=SSL Corporation, CN=Cloudflare TLS Issuing ECC CA 3, C=US, O=SSL Corporation, CN=Cloudflare TLS Issuing RSA CA 3, C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA OV R36, C=GB, ST=Greater Manchester, L=Salford, O=Sectigo Limited, CN=Sectigo ECC Organization Validation Secure Server CA, C=US, O=DigiCert Inc, CN=DigiCert Global G3 TLS ECC SHA384 2020 CA1, C=GB, ST=Greater Manchester, L=Salford, O=Sectigo Limited, CN=Sectigo RSA Domain Validation Secure Server CA, C=US, O=DigiCert Inc, CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1, C=US, O=DigiCert Inc, CN=DigiCert TLS RSA SHA256 2020 CA1, C=US, O=DigiCert Inc, CN=DigiCert SHA2 Secure Server CA, emailAddress=pki_admin@sungard.com, O=SunGard Availability Services, CN=SAS Public CA v1, C=US, O=\\, C=US, O=Symantec Corporation, OU=Symantec Trust Network, CN=Symantec Class 3 Secure Server CA - G4, C=US, O=DigiCert Inc, OU=www.digicert.com, CN=DigiCert SHA2 High Assurance Server CA, C=GB, ST=Cymru, O=AS207960 Cyfyngedig, OU=AS207960 Department of Random Numbers, CN=AS207960 Test CA, Issuer Not Found"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Duplicate/Conflicting TXT Records",
+      "category": 30,
+      "severity": 1,
+      "summary": "No duplicate or conflicting TXT records",
       "details": [],
       "warnings": [],
       "errors": []
@@ -929,15 +1006,62 @@
       "severity": 0,
       "summary": "2 TXT record(s) found",
       "details": [
-        "TXT: v=spf1 -all",
-        "TXT: _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9"
+        "TXT: _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9",
+        "TXT: v=spf1 -all"
       ],
       "warnings": [],
       "errors": []
+    },
+    {
+      "checkName": "DKIM Selectors",
+      "category": 9,
+      "severity": 0,
+      "summary": "Wildcard DNS at *._domainkey \u2014 not real DKIM selectors",
+      "details": [
+        "AXFR selector discovery: zone transfer denied (probing common selectors only)",
+        "DKIM selectors checked (default list): default, google, selector1, selector2, k1, k2, k3, s1, s2, s3, dkim, mail, email, smtp, google2048, everlytickey1, everlytickey2, mandrill, amazonses, postmark, sendgrid, cm, mxvault, protonmail, protonmail2, protonmail3, fm1, fm2, fm3, pic, mailjet, zoho, turbo-smtp, sig1, smtpapi, hs1, hs2, m1, m2",
+        "All 39 probed selectors returned the identical record (wildcard DNS)",
+        "  Record: v=DKIM1; p=",
+        "Cannot determine actual DKIM selectors via probing when wildcard is present"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "DNS Query Errors",
+      "category": 2,
+      "severity": 2,
+      "summary": "25 DNS query error(s) \u2014 some results may be incomplete",
+      "details": [
+        "...and 5 more"
+      ],
+      "warnings": [
+        "DNS error querying CNAME for mail._domainkey.example.com: Query 33144 =\u003E mail._domainkey.example.com IN CNAME on 8.8.8.8:53 timed out or is a transient error.",
+        "DNS error querying CNAME for k2._domainkey.example.com: Query 44880 =\u003E k2._domainkey.example.com IN CNAME on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS error querying CNAME for everlytickey2._domainkey.example.com: Query 52825 =\u003E everlytickey2._domainkey.example.com IN CNAME on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS error querying TXT for s3._domainkey.example.com: Query 50129 =\u003E s3._domainkey.example.com IN TXT on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS error querying TXT for email._domainkey.example.com: Query 2960 =\u003E email._domainkey.example.com IN TXT on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS query to 2803:f800:50::6ca2:c0a2 failed for SOA example.com: Query 49222 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c0a2]:53 failed with an error.",
+        "DNS error querying CNAME for email._domainkey.example.com: Query 2028 =\u003E email._domainkey.example.com IN CNAME on 8.8.8.8:53 timed out or is a transient error.",
+        "DNS error querying TXT for postmark._domainkey.example.com: Query 57240 =\u003E postmark._domainkey.example.com IN TXT on 8.8.8.8:53 timed out or is a transient error.",
+        "DNS error querying TXT for amazonses._domainkey.example.com: Query 14143 =\u003E amazonses._domainkey.example.com IN TXT on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS error querying CNAME for s2._domainkey.example.com: Query 34960 =\u003E s2._domainkey.example.com IN CNAME on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS error querying TXT for everlytickey2._domainkey.example.com: Query 4273 =\u003E everlytickey2._domainkey.example.com IN TXT on 8.8.8.8:53 timed out or is a transient error.",
+        "DNS error querying TXT for s2._domainkey.example.com: Query 27845 =\u003E s2._domainkey.example.com IN TXT on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS query to 2a06:98c1:50::ac40:23e4 failed for SOA example.com: Query 49161 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:23e4]:53 failed with an error.",
+        "DNS query to 2606:4700:50::adf5:3aa2 failed for SOA example.com: Query 4026 =\u003E example.com IN SOA on [2606:4700:50::adf5:3aa2]:53 failed with an error.",
+        "DNS query to 2a06:98c1:50::ac40:20a2 failed for SOA example.com: Query 42437 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:20a2]:53 failed with an error.",
+        "DNS error querying TXT for mail._domainkey.example.com: Query 48817 =\u003E mail._domainkey.example.com IN TXT on 8.8.8.8:53 timed out or is a transient error.",
+        "DNS error querying TXT for k2._domainkey.example.com: Query 58751 =\u003E k2._domainkey.example.com IN TXT on 8.8.4.4:53 timed out or is a transient error.",
+        "DNS query to 2606:4700:58::a29f:2ce4 failed for SOA example.com: Query 55379 =\u003E example.com IN SOA on [2606:4700:58::a29f:2ce4]:53 failed with an error.",
+        "DNS query to 2803:f800:50::6ca2:c3e4 failed for SOA example.com: Query 48738 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c3e4]:53 failed with an error.",
+        "DNS query to 2803:f800:50::6ca2:c3e4 failed for SOA example.com: Query 37891 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c3e4]:53 failed with an error."
+      ],
+      "errors": []
     }
   ],
-  "passCount": 40,
-  "warningCount": 6,
+  "passCount": 45,
+  "warningCount": 8,
   "errorCount": 0,
   "criticalCount": 0
 }
