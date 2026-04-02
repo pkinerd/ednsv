@@ -75,17 +75,33 @@ public class DnsResolverService
     /// </summary>
     public ConcurrentBag<string> QueryErrors { get; private set; } = new();
 
+    // Cache hit/miss counters for diagnostics (reset per domain)
+    private int _cacheHits;
+    private int _cacheMisses;
+    public int CacheHits => _cacheHits;
+    public int CacheMisses => _cacheMisses;
+    public int CacheSize => _queryCache.Count;
+
     /// <summary>
     /// Clears per-validation error tracking while preserving the shared query cache.
     /// </summary>
-    public void ResetErrors() => QueryErrors = new ConcurrentBag<string>();
+    public void ResetErrors()
+    {
+        QueryErrors = new ConcurrentBag<string>();
+        Interlocked.Exchange(ref _cacheHits, 0);
+        Interlocked.Exchange(ref _cacheMisses, 0);
+    }
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
         var key = (domain.ToLowerInvariant(), type);
         if (_queryCache.TryGetValue(key, out var cached))
+        {
+            Interlocked.Increment(ref _cacheHits);
             return cached;
+        }
 
+        Interlocked.Increment(ref _cacheMisses);
         try
         {
             var result = await _client.QueryAsync(domain, type);
@@ -429,7 +445,7 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 2);
             if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
                 continue;
-            var key = (parts[0], type);
+            var key = (parts[0].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
             _queryCache.TryAdd(key, response);
         }
@@ -461,7 +477,7 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 3);
             if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
                 continue;
-            var key = (parts[0], parts[1], type);
+            var key = (parts[0], parts[1].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
             _serverQueryCache.TryAdd(key, response);
         }

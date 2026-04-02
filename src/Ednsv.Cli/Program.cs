@@ -429,9 +429,9 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
-        if (loaded)
-            AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        if (cacheResult != null)
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)
@@ -462,6 +462,14 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
+        var slowChecks = new List<(string Name, TimeSpan Duration)>();
+
+        // Track per-check timing (visible in verbose mode)
+        validator.OnCheckTiming += (name, elapsed) =>
+        {
+            if (elapsed.TotalSeconds >= 1.0)
+                slowChecks.Add((name, elapsed));
+        };
 
         // Display results progressively as each check completes
         validator.OnCheckStarted += name =>
@@ -541,6 +549,19 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         summaryTable.AddRow("[grey]Duration[/]", $"{report.Duration.TotalSeconds:F1}s");
 
         AnsiConsole.Write(summaryTable);
+
+        // Show cache diagnostics and slow checks in verbose mode
+        if (verbose)
+        {
+            AnsiConsole.MarkupLine($"[dim]DNS cache: {dns.CacheHits} hits, {dns.CacheMisses} misses ({dns.CacheSize} entries)[/]");
+            if (slowChecks.Count > 0)
+            {
+                AnsiConsole.MarkupLine($"[dim]Slow checks (≥1s):[/]");
+                foreach (var (name, duration) in slowChecks.OrderByDescending(x => x.Duration))
+                    AnsiConsole.MarkupLine($"[dim]  {duration.TotalSeconds,5:F1}s  {Markup.Escape(name)}[/]");
+            }
+        }
+
         AnsiConsole.WriteLine();
 
         // Overall verdict
@@ -645,9 +666,9 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
-        if (loaded && showProgress)
-            AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        if (cacheResult != null && showProgress)
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)
@@ -771,6 +792,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
                 summaryTable.AddRow("[red bold]Critical[/]", report.CriticalCount.ToString());
                 summaryTable.AddRow("[blue]Total Checks[/]", report.Results.Count.ToString());
                 summaryTable.AddRow("[grey]Duration[/]", $"{report.Duration.TotalSeconds:F1}s");
+                summaryTable.AddRow("[dim]DNS cache[/]", $"{dns.CacheHits} hits / {dns.CacheMisses} misses");
 
                 AnsiConsole.Write(summaryTable);
                 AnsiConsole.WriteLine();
@@ -793,6 +815,8 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
                               report.WarningCount > 0 ? "[yellow]WARNINGS[/]" :
                               "[green]PASS[/]";
                 AnsiConsole.MarkupLine($"  → {verdict} ({report.PassCount} pass, {report.WarningCount} warn, {report.ErrorCount} err, {report.CriticalCount} crit) in {report.Duration.TotalSeconds:F1}s");
+                if (verbose)
+                    AnsiConsole.MarkupLine($"     [dim]DNS cache: {dns.CacheHits} hits, {dns.CacheMisses} misses[/]");
             }
         }
     }
@@ -828,9 +852,9 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     // Load disk cache if specified
     if (cachePath != null)
     {
-        var loaded = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
-        if (loaded)
-            AnsiConsole.MarkupLine("[dim]Loaded probe cache from disk[/]");
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        if (cacheResult != null)
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)

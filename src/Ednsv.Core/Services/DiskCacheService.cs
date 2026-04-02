@@ -41,24 +41,24 @@ public class DiskCacheService
     }
 
     /// <summary>
-    /// Loads caches from disk and primes the services. Returns false if the file
-    /// doesn't exist or has expired.
+    /// Loads caches from disk and primes the services. Returns null if the file
+    /// doesn't exist, has expired, or is corrupt.
     /// </summary>
-    public static async Task<bool> LoadAsync(string path, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, bool retryErrors = false)
+    public static async Task<CacheLoadResult?> LoadAsync(string path, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, bool retryErrors = false)
     {
         if (!File.Exists(path))
-            return false;
+            return null;
 
         try
         {
             var json = await File.ReadAllTextAsync(path);
             var data = JsonSerializer.Deserialize<CacheData>(json, JsonOptions);
             if (data == null || data.Version != 1)
-                return false;
+                return null;
 
             // Check TTL
             if (DateTime.UtcNow - data.CreatedUtc > ttl)
-                return false;
+                return null;
 
             if (retryErrors)
             {
@@ -106,13 +106,32 @@ public class DiskCacheService
             if (data.DnsQueries != null) dns.ImportQueryCache(data.DnsQueries);
             if (data.DnsServerQueries != null) dns.ImportServerQueryCache(data.DnsServerQueries);
 
-            return true;
+            return new CacheLoadResult
+            {
+                Age = DateTime.UtcNow - data.CreatedUtc,
+                SmtpProbes = data.SmtpProbes?.Count ?? 0,
+                PortProbes = data.PortProbes?.Count ?? 0,
+                HttpRequests = (data.HttpGet?.Count ?? 0) + (data.HttpGetWithHeaders?.Count ?? 0),
+                DnsQueries = (data.DnsQueries?.Count ?? 0) + (data.DnsServerQueries?.Count ?? 0),
+                PtrLookups = data.PtrLookups?.Count ?? 0
+            };
         }
         catch
         {
             // Corrupt cache — ignore
-            return false;
+            return null;
         }
+    }
+
+    public class CacheLoadResult
+    {
+        public TimeSpan Age { get; set; }
+        public int SmtpProbes { get; set; }
+        public int PortProbes { get; set; }
+        public int HttpRequests { get; set; }
+        public int DnsQueries { get; set; }
+        public int PtrLookups { get; set; }
+        public int Total => SmtpProbes + PortProbes + HttpRequests + DnsQueries + PtrLookups;
     }
 
     private class CacheData
