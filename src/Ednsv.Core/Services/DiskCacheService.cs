@@ -5,8 +5,9 @@ using System.Text.Json.Serialization;
 namespace Ednsv.Core.Services;
 
 /// <summary>
-/// Persists probe results (SMTP, HTTP, DNS, ports) to disk so they can be
-/// reused across runs.
+/// Persists probe results (SMTP, HTTP, DNS, ports) to a cache directory so they
+/// can be reused across runs. Each cache type is stored in its own file, and
+/// every entry carries an individual timestamp for per-entry TTL expiry.
 /// </summary>
 public class DiskCacheService
 {
@@ -17,122 +18,197 @@ public class DiskCacheService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    // File names within the cache directory
+    private const string SmtpProbesFile = "smtp-probes.json";
+    private const string PortProbesFile = "port-probes.json";
+    private const string RcptProbesFile = "rcpt-probes.json";
+    private const string HttpGetFile = "http-get.json";
+    private const string HttpGetWithHeadersFile = "http-get-headers.json";
+    private const string UnreachableServersFile = "unreachable-servers.json";
+    private const string PtrLookupsFile = "ptr-lookups.json";
+    private const string DnsQueriesFile = "dns-queries.json";
+    private const string DnsServerQueriesFile = "dns-server-queries.json";
+
     /// <summary>
-    /// Saves current service caches to disk.
+    /// Saves current service caches to disk, merging with any existing entries.
     /// </summary>
-    public static async Task SaveAsync(string path, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns)
+    public static async Task SaveAsync(string cacheDir, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns)
     {
-        var data = new CacheData
+        Directory.CreateDirectory(cacheDir);
+        var now = DateTime.UtcNow;
+
+        // Wrap simple types into ICacheEntry wrappers
+        var portEntries = smtp.ExportPortCache()
+            .ToDictionary(kvp => kvp.Key, kvp => new PortProbeCacheEntry { Open = kvp.Value });
+        var unreachableEntries = dns.ExportUnreachableServers()
+            .ToDictionary(kvp => kvp.Key, kvp => new UnreachableServerCacheEntry { FailCount = kvp.Value });
+        var ptrEntries = dns.ExportPtrCache()
+            .ToDictionary(kvp => kvp.Key, kvp => new PtrCacheEntry { Names = kvp.Value });
+
+        await Task.WhenAll(
+            MergeSaveAsync(cacheDir, SmtpProbesFile, smtp.ExportProbeCache(), now),
+            MergeSaveAsync(cacheDir, PortProbesFile, portEntries, now),
+            MergeSaveAsync(cacheDir, RcptProbesFile, smtp.ExportRcptCache(), now),
+            MergeSaveAsync(cacheDir, HttpGetFile, http.ExportGetCache(), now),
+            MergeSaveAsync(cacheDir, HttpGetWithHeadersFile, http.ExportGetWithHeadersCache(), now),
+            MergeSaveAsync(cacheDir, UnreachableServersFile, unreachableEntries, now),
+            MergeSaveAsync(cacheDir, PtrLookupsFile, ptrEntries, now),
+            MergeSaveAsync(cacheDir, DnsQueriesFile, dns.ExportQueryCache(), now),
+            MergeSaveAsync(cacheDir, DnsServerQueriesFile, dns.ExportServerQueryCache(), now)
+        );
+    }
+
+    /// <summary>
+    /// Loads caches from disk and primes the services. Returns null if the
+    /// directory doesn't exist or contains no usable entries.
+    /// </summary>
+    public static async Task<CacheLoadResult?> LoadAsync(string cacheDir, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, bool retryErrors = false)
+    {
+        if (!Directory.Exists(cacheDir))
+            return null;
+
+        var cutoff = DateTime.UtcNow - ttl;
+
+        var smtpProbes = await LoadFileAsync<SmtpProbeCacheEntry>(cacheDir, SmtpProbesFile, cutoff);
+        var portProbes = await LoadFileAsync<PortProbeCacheEntry>(cacheDir, PortProbesFile, cutoff);
+        var rcptProbes = await LoadFileAsync<RcptCacheEntry>(cacheDir, RcptProbesFile, cutoff);
+        var httpGet = await LoadFileAsync<HttpGetCacheEntry>(cacheDir, HttpGetFile, cutoff);
+        var httpGetHeaders = await LoadFileAsync<HttpGetWithHeadersCacheEntry>(cacheDir, HttpGetWithHeadersFile, cutoff);
+        var unreachable = await LoadFileAsync<UnreachableServerCacheEntry>(cacheDir, UnreachableServersFile, cutoff);
+        var ptr = await LoadFileAsync<PtrCacheEntry>(cacheDir, PtrLookupsFile, cutoff);
+        var dnsQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsQueriesFile, cutoff);
+        var dnsServerQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsServerQueriesFile, cutoff);
+
+        if (retryErrors)
         {
-            Version = 1,
-            CreatedUtc = DateTime.UtcNow,
-            SmtpProbes = smtp.ExportProbeCache(),
-            PortProbes = smtp.ExportPortCache(),
-            RcptProbes = smtp.ExportRcptCache(),
-            HttpGet = http.ExportGetCache(),
-            HttpGetWithHeaders = http.ExportGetWithHeadersCache(),
-            UnreachableServers = dns.ExportUnreachableServers(),
-            PtrLookups = dns.ExportPtrCache(),
-            DnsQueries = dns.ExportQueryCache(),
-            DnsServerQueries = dns.ExportServerQueryCache()
+            smtpProbes = smtpProbes?.Where(kvp => kvp.Value.Error == null && kvp.Value.Connected)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            portProbes = portProbes?.Where(kvp => kvp.Value.Open)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            rcptProbes = rcptProbes?.Where(kvp => kvp.Value.Accepted)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            httpGet = httpGet?.Where(kvp => kvp.Value.Success)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            httpGetHeaders = httpGetHeaders?.Where(kvp => kvp.Value.Success)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            unreachable = null; // let unreachable servers be retried
+            dnsQueries = dnsQueries?.Where(kvp => !kvp.Value.HasError)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            dnsServerQueries = dnsServerQueries?.Where(kvp => !kvp.Value.HasError)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        }
+
+        // Convert new DTO types to the dictionary types the services expect
+        if (smtpProbes?.Count > 0) smtp.ImportProbeCache(smtpProbes.ToDictionary(kvp => kvp.Key, kvp => (SmtpProbeCacheEntry)kvp.Value));
+        if (portProbes?.Count > 0) smtp.ImportPortCache(portProbes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Open));
+        if (rcptProbes?.Count > 0) smtp.ImportRcptCache(rcptProbes.ToDictionary(kvp => kvp.Key, kvp => (RcptCacheEntry)kvp.Value));
+        if (httpGet?.Count > 0) http.ImportGetCache(httpGet.ToDictionary(kvp => kvp.Key, kvp => (HttpGetCacheEntry)kvp.Value));
+        if (httpGetHeaders?.Count > 0) http.ImportGetWithHeadersCache(httpGetHeaders.ToDictionary(kvp => kvp.Key, kvp => (HttpGetWithHeadersCacheEntry)kvp.Value));
+        if (unreachable?.Count > 0) dns.ImportUnreachableServers(unreachable.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.FailCount));
+        if (ptr?.Count > 0) dns.ImportPtrCache(ptr.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Names));
+        if (dnsQueries?.Count > 0) dns.ImportQueryCache(dnsQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
+        if (dnsServerQueries?.Count > 0) dns.ImportServerQueryCache(dnsServerQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
+
+        var result = new CacheLoadResult
+        {
+            SmtpProbes = smtpProbes?.Count ?? 0,
+            PortProbes = portProbes?.Count ?? 0,
+            RcptProbes = rcptProbes?.Count ?? 0,
+            HttpRequests = (httpGet?.Count ?? 0) + (httpGetHeaders?.Count ?? 0),
+            DnsQueries = (dnsQueries?.Count ?? 0) + (dnsServerQueries?.Count ?? 0),
+            PtrLookups = ptr?.Count ?? 0
         };
 
-        var json = JsonSerializer.Serialize(data, JsonOptions);
-        // Write to a temp file first, then rename — atomic on most filesystems
+        // Determine age from the oldest entry across all cache files
+        var allTimestamps = new List<DateTime>();
+        void CollectTimestamps<T>(Dictionary<string, T>? dict) where T : ICacheEntry
+        {
+            if (dict != null)
+                foreach (var entry in dict.Values)
+                    allTimestamps.Add(entry.CachedAtUtc);
+        }
+        CollectTimestamps(smtpProbes);
+        CollectTimestamps(portProbes);
+        CollectTimestamps(rcptProbes);
+        CollectTimestamps(httpGet);
+        CollectTimestamps(httpGetHeaders);
+        CollectTimestamps(unreachable);
+        CollectTimestamps(ptr);
+        CollectTimestamps(dnsQueries);
+        CollectTimestamps(dnsServerQueries);
+
+        if (allTimestamps.Count > 0)
+            result.Age = DateTime.UtcNow - allTimestamps.Min();
+
+        return result.Total > 0 ? result : null;
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reads existing entries from a cache file, merges new entries (newer wins),
+    /// stamps them, and writes back atomically.
+    /// </summary>
+    private static async Task MergeSaveAsync<T>(string cacheDir, string filename, Dictionary<string, T> newEntries, DateTime now) where T : ICacheEntry
+    {
+        if (newEntries.Count == 0) return;
+
+        var path = Path.Combine(cacheDir, filename);
+
+        // Read existing entries
+        Dictionary<string, T>? existing = null;
+        if (File.Exists(path))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(path);
+                existing = JsonSerializer.Deserialize<Dictionary<string, T>>(json, JsonOptions);
+            }
+            catch { /* corrupt file — overwrite */ }
+        }
+
+        // Merge: new entries overwrite existing ones (they're fresher)
+        var merged = existing ?? new Dictionary<string, T>();
+        foreach (var kvp in newEntries)
+        {
+            kvp.Value.CachedAtUtc = now;
+            merged[kvp.Key] = kvp.Value;
+        }
+
+        var output = JsonSerializer.Serialize(merged, JsonOptions);
         var tmp = path + ".tmp";
-        await File.WriteAllTextAsync(tmp, json);
+        await File.WriteAllTextAsync(tmp, output);
         File.Move(tmp, path, overwrite: true);
     }
 
     /// <summary>
-    /// Loads caches from disk and primes the services. Returns null if the file
-    /// doesn't exist, has expired, or is corrupt.
+    /// Loads entries from a cache file, filtering out entries older than cutoff.
     /// </summary>
-    public static async Task<CacheLoadResult?> LoadAsync(string path, TimeSpan ttl, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, bool retryErrors = false)
+    private static async Task<Dictionary<string, T>?> LoadFileAsync<T>(string cacheDir, string filename, DateTime cutoff) where T : ICacheEntry
     {
-        if (!File.Exists(path))
-            return null;
+        var path = Path.Combine(cacheDir, filename);
+        if (!File.Exists(path)) return null;
 
         try
         {
             var json = await File.ReadAllTextAsync(path);
-            var data = JsonSerializer.Deserialize<CacheData>(json, JsonOptions);
-            if (data == null || data.Version != 1)
-                return null;
+            var entries = JsonSerializer.Deserialize<Dictionary<string, T>>(json, JsonOptions);
+            if (entries == null) return null;
 
-            // Check TTL
-            if (DateTime.UtcNow - data.CreatedUtc > ttl)
-                return null;
+            // Filter by per-entry TTL
+            var valid = entries
+                .Where(kvp => kvp.Value.CachedAtUtc >= cutoff)
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
-            if (retryErrors)
-            {
-                // Filter out failed entries so they get retried
-                if (data.SmtpProbes != null)
-                    data.SmtpProbes = data.SmtpProbes
-                        .Where(kvp => kvp.Value.Error == null && kvp.Value.Connected)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (data.PortProbes != null)
-                    data.PortProbes = data.PortProbes
-                        .Where(kvp => kvp.Value)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (data.RcptProbes != null)
-                    data.RcptProbes = data.RcptProbes
-                        .Where(kvp => kvp.Value.Accepted)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (data.HttpGet != null)
-                    data.HttpGet = data.HttpGet
-                        .Where(kvp => kvp.Value.Success)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (data.HttpGetWithHeaders != null)
-                    data.HttpGetWithHeaders = data.HttpGetWithHeaders
-                        .Where(kvp => kvp.Value.Success)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                // Don't import unreachable server tracking — let them be retried
-                data.UnreachableServers = null;
-
-                if (data.DnsQueries != null)
-                    data.DnsQueries = data.DnsQueries
-                        .Where(kvp => !kvp.Value.HasError)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-                if (data.DnsServerQueries != null)
-                    data.DnsServerQueries = data.DnsServerQueries
-                        .Where(kvp => !kvp.Value.HasError)
-                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            }
-
-            if (data.SmtpProbes != null) smtp.ImportProbeCache(data.SmtpProbes);
-            if (data.PortProbes != null) smtp.ImportPortCache(data.PortProbes);
-            if (data.RcptProbes != null) smtp.ImportRcptCache(data.RcptProbes);
-            if (data.HttpGet != null) http.ImportGetCache(data.HttpGet);
-            if (data.HttpGetWithHeaders != null) http.ImportGetWithHeadersCache(data.HttpGetWithHeaders);
-            if (data.UnreachableServers != null) dns.ImportUnreachableServers(data.UnreachableServers);
-            if (data.PtrLookups != null) dns.ImportPtrCache(data.PtrLookups);
-            if (data.DnsQueries != null) dns.ImportQueryCache(data.DnsQueries);
-            if (data.DnsServerQueries != null) dns.ImportServerQueryCache(data.DnsServerQueries);
-
-            return new CacheLoadResult
-            {
-                Age = DateTime.UtcNow - data.CreatedUtc,
-                SmtpProbes = data.SmtpProbes?.Count ?? 0,
-                PortProbes = data.PortProbes?.Count ?? 0,
-                RcptProbes = data.RcptProbes?.Count ?? 0,
-                HttpRequests = (data.HttpGet?.Count ?? 0) + (data.HttpGetWithHeaders?.Count ?? 0),
-                DnsQueries = (data.DnsQueries?.Count ?? 0) + (data.DnsServerQueries?.Count ?? 0),
-                PtrLookups = data.PtrLookups?.Count ?? 0
-            };
+            return valid.Count > 0 ? valid : null;
         }
         catch
         {
-            // Corrupt cache — ignore
-            return null;
+            return null; // corrupt file
         }
     }
+
+    // ── Public result type ───────────────────────────────────────────────
 
     public class CacheLoadResult
     {
@@ -145,26 +221,23 @@ public class DiskCacheService
         public int PtrLookups { get; set; }
         public int Total => SmtpProbes + PortProbes + RcptProbes + HttpRequests + DnsQueries + PtrLookups;
     }
-
-    private class CacheData
-    {
-        public int Version { get; set; }
-        public DateTime CreatedUtc { get; set; }
-        public Dictionary<string, SmtpProbeCacheEntry>? SmtpProbes { get; set; }
-        public Dictionary<string, bool>? PortProbes { get; set; }
-        public Dictionary<string, RcptCacheEntry>? RcptProbes { get; set; }
-        public Dictionary<string, HttpGetCacheEntry>? HttpGet { get; set; }
-        public Dictionary<string, HttpGetWithHeadersCacheEntry>? HttpGetWithHeaders { get; set; }
-        public Dictionary<string, int>? UnreachableServers { get; set; }
-        public Dictionary<string, List<string>>? PtrLookups { get; set; }
-        public Dictionary<string, DnsCacheEntry>? DnsQueries { get; set; }
-        public Dictionary<string, DnsCacheEntry>? DnsServerQueries { get; set; }
-    }
 }
 
-// Serializable DTOs for cache entries
-public class SmtpProbeCacheEntry
+// ── Cache entry interface ────────────────────────────────────────────────
+
+/// <summary>
+/// All cache entries must carry a timestamp for per-entry TTL expiry.
+/// </summary>
+public interface ICacheEntry
 {
+    DateTime CachedAtUtc { get; set; }
+}
+
+// ── Serializable DTOs for cache entries ──────────────────────────────────
+
+public class SmtpProbeCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
     public bool Connected { get; set; }
     public string Banner { get; set; } = "";
     public bool SupportsStartTls { get; set; }
@@ -184,25 +257,46 @@ public class SmtpProbeCacheEntry
     public string? Error { get; set; }
 }
 
-public class HttpGetCacheEntry
+public class PortProbeCacheEntry : ICacheEntry
 {
-    public bool Success { get; set; }
-    public string Content { get; set; } = "";
-    public int StatusCode { get; set; }
+    public DateTime CachedAtUtc { get; set; }
+    public bool Open { get; set; }
 }
 
-public class RcptCacheEntry
+public class RcptCacheEntry : ICacheEntry
 {
+    public DateTime CachedAtUtc { get; set; }
     public bool Accepted { get; set; }
     public string Response { get; set; } = "";
 }
 
-public class HttpGetWithHeadersCacheEntry
+public class HttpGetCacheEntry : ICacheEntry
 {
+    public DateTime CachedAtUtc { get; set; }
+    public bool Success { get; set; }
+    public string Content { get; set; } = "";
+    public int StatusCode { get; set; }
+}
+
+public class HttpGetWithHeadersCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
     public bool Success { get; set; }
     public string Content { get; set; } = "";
     public int StatusCode { get; set; }
     public string? ContentType { get; set; }
+}
+
+public class UnreachableServerCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
+    public int FailCount { get; set; }
+}
+
+public class PtrCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
+    public List<string> Names { get; set; } = new();
 }
 
 /// <summary>
@@ -212,7 +306,7 @@ public class HttpGetWithHeadersCacheEntry
 /// </summary>
 public sealed class BackgroundCacheFlusher : IAsyncDisposable
 {
-    private readonly string _path;
+    private readonly string _cacheDir;
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
     private readonly DnsResolverService _dns;
@@ -220,9 +314,9 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
     private readonly SemaphoreSlim _lock = new(1, 1);
     private bool _disposed;
 
-    public BackgroundCacheFlusher(string path, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, TimeSpan interval)
+    public BackgroundCacheFlusher(string cacheDir, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns, TimeSpan interval)
     {
-        _path = path;
+        _cacheDir = cacheDir;
         _smtp = smtp;
         _http = http;
         _dns = dns;
@@ -241,7 +335,7 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         if (!_lock.Wait(0)) return; // skip if a flush is already in progress
         try
         {
-            await DiskCacheService.SaveAsync(_path, _smtp, _http, _dns);
+            await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
         }
         finally
         {
@@ -258,7 +352,7 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         await _lock.WaitAsync();
         try
         {
-            await DiskCacheService.SaveAsync(_path, _smtp, _http, _dns);
+            await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
         }
         finally
         {

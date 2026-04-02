@@ -97,35 +97,37 @@ jobs:
       - name: Disk cache integration test (cold + warm run)
         if: always()
         run: |
-          CACHE_FILE="test-output/integration-cache.json"
+          CACHE_DIR="test-output/integration-cache"
           DOMAIN="gmail.com"
 
           echo "============================================"
           echo "Cold run: $DOMAIN (no cache, verbose)"
           echo "============================================"
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" --verbose --cache "$CACHE_FILE" \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
             > "test-output/${DOMAIN}-cold.txt" 2>&1 || true
           cat "test-output/${DOMAIN}-cold.txt"
 
           echo ""
           echo "============================================"
-          echo "Cache file contents:"
+          echo "Cache directory contents:"
           echo "============================================"
           python3 -c "
-          import json
-          d = json.load(open('$CACHE_FILE'))
-          for k in ['smtpProbes','portProbes','rcptProbes','httpGet','ptrLookups','dnsQueries','dnsServerQueries']:
-              count = len(d.get(k, {}) or {})
-              if count: print(f'  {k}: {count}')
-          " || echo "  Could not read cache file"
+          import json, os, glob
+          cache_dir = '$CACHE_DIR'
+          for f in sorted(glob.glob(os.path.join(cache_dir, '*.json'))):
+              try:
+                  d = json.load(open(f))
+                  print(f'  {os.path.basename(f)}: {len(d)} entries')
+              except: pass
+          " || echo "  Could not read cache directory"
 
           echo ""
           echo "============================================"
           echo "Warm run: $DOMAIN (from cache, verbose)"
           echo "============================================"
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" --verbose --cache "$CACHE_FILE" \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
             > "test-output/${DOMAIN}-warm.txt" 2>&1 || true
           cat "test-output/${DOMAIN}-warm.txt"
 

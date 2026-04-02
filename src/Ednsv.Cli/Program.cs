@@ -35,7 +35,7 @@ var dkimSelectorsOption = new Option<string[]>(
 var dnsServerOption = new Option<string?>("--dns-server", "DNS server(s) for lookups (IP address, comma-separated for multiple; default: Google Public DNS). Multiple servers are load-balanced via round-robin");
 dnsServerOption.AddAlias("-s");
 var privateDnsblOption = new Option<bool>("--private-dnsbl", "Include blocklists that require a private/registered DNS resolver (Spamhaus, Barracuda, SURBL, URIBL). Off by default as they return false positives via public resolvers");
-var cacheOption = new Option<string?>("--cache", "Persist probe cache to disk between runs. Optionally specify a file path (default: .ednsv-cache.json in current directory)");
+var cacheOption = new Option<string?>("--cache", "Persist probe cache to a directory between runs. Optionally specify a directory path (default: .ednsv-cache/ in current directory)");
 cacheOption.AddAlias("-c");
 var cacheTtlOption = new Option<int>("--cache-ttl", () => 24, "Cache time-to-live in hours (default: 24)");
 var retryOption = new Option<bool>("--retry", "Double retry counts for more persistent probing (useful for unreliable networks)");
@@ -193,14 +193,14 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
     if (enableRetry)
         DnsResolverService.DoubleRetries();
 
-    // --cache: resolve cache file path
+    // --cache: resolve cache directory path
     var cacheRaw = parseResult.GetValueForOption(cacheOption);
     var cacheTtlHours = parseResult.GetValueForOption(cacheTtlOption);
-    // --cache with no value defaults to ".ednsv-cache.json"; --cache <path> uses the given path
+    // --cache with no value defaults to ".ednsv-cache"; --cache <path> uses the given path
     // The option is string? — null means not specified, empty means specified without value
     string? cachePath = null;
     if (parseResult.FindResultFor(cacheOption) is not null)
-        cachePath = string.IsNullOrEmpty(cacheRaw) ? ".ednsv-cache.json" : cacheRaw;
+        cachePath = string.IsNullOrEmpty(cacheRaw) ? ".ednsv-cache" : cacheRaw;
     var retryErrors = parseResult.GetValueForOption(retryErrorsOption);
 
     // For non-text formats, ensure UTF-8 output encoding (fixes piping/redirect)

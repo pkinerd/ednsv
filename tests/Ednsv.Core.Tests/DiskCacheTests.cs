@@ -6,6 +6,7 @@ namespace Ednsv.Core.Tests;
 /// <summary>
 /// Verifies disk cache round-trip: save services to disk, load into fresh
 /// services, and confirm the cached entries are restored and served.
+/// Now uses directory-based cache with per-entry timestamps.
 /// </summary>
 public class DiskCacheTests : IDisposable
 {
@@ -14,7 +15,6 @@ public class DiskCacheTests : IDisposable
     public DiskCacheTests()
     {
         _cacheDir = Path.Combine(Path.GetTempPath(), $"ednsv-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_cacheDir);
     }
 
     public void Dispose()
@@ -22,8 +22,6 @@ public class DiskCacheTests : IDisposable
         if (Directory.Exists(_cacheDir))
             Directory.Delete(_cacheDir, true);
     }
-
-    private string CachePath => Path.Combine(_cacheDir, "cache.json");
 
     // ── Round-trip tests ─────────────────────────────────────────────────
 
@@ -39,8 +37,9 @@ public class DiskCacheTests : IDisposable
         Assert.True(dns1.CacheSize > 0);
 
         // Save to disk
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
-        Assert.True(File.Exists(CachePath));
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
+        Assert.True(Directory.Exists(_cacheDir));
+        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
 
         // Load into fresh services
         var dns2 = new DnsResolverService();
@@ -48,7 +47,7 @@ public class DiskCacheTests : IDisposable
         var http2 = new HttpProbeService();
         dns2.ResetErrors();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.DnsQueries > 0, "Expected DNS entries to be loaded from cache");
 
@@ -68,14 +67,14 @@ public class DiskCacheTests : IDisposable
         // Populate HTTP cache
         var original = await http1.GetAsync("http://example.com");
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         // Load into fresh services
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.HttpRequests > 0);
 
@@ -95,13 +94,13 @@ public class DiskCacheTests : IDisposable
         // Populate SMTP cache (connection failure, fast)
         var original = await smtp1.ProbeSmtpAsync("localhost", 60025);
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.SmtpProbes > 0);
 
@@ -119,13 +118,13 @@ public class DiskCacheTests : IDisposable
 
         await smtp1.ProbePortAsync("localhost", 60025);
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.PortProbes > 0);
     }
@@ -139,13 +138,13 @@ public class DiskCacheTests : IDisposable
 
         await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.RcptProbes > 0);
     }
@@ -159,13 +158,13 @@ public class DiskCacheTests : IDisposable
 
         await dns1.ResolvePtrAsync("8.8.8.8");
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.PtrLookups > 0);
 
@@ -174,36 +173,36 @@ public class DiskCacheTests : IDisposable
         Assert.NotEmpty(ptrs);
     }
 
-    // ── TTL expiry ───────────────────────────────────────────────────────
+    // ── Per-entry TTL expiry ────────────────────────────────────────────
 
     [Fact]
-    public async Task LoadAsync_ExpiredCache_ReturnsNull()
+    public async Task LoadAsync_ExpiredEntries_FilteredOut()
     {
         var dns1 = new DnsResolverService();
         var smtp1 = new SmtpProbeService();
         var http1 = new HttpProbeService();
 
         await dns1.QueryAsync("example.com", QueryType.A);
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        // Load with zero TTL — should be expired
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.Zero, smtp2, http2, dns2);
+        // Load with zero TTL — all entries should be expired
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.Zero, smtp2, http2, dns2);
         Assert.Null(loadResult);
     }
 
     [Fact]
-    public async Task LoadAsync_MissingFile_ReturnsNull()
+    public async Task LoadAsync_MissingDirectory_ReturnsNull()
     {
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();
         var http = new HttpProbeService();
 
         var result = await DiskCacheService.LoadAsync(
-            Path.Combine(_cacheDir, "nonexistent.json"),
+            Path.Combine(_cacheDir, "nonexistent"),
             TimeSpan.FromHours(1), smtp, http, dns);
 
         Assert.Null(result);
@@ -212,14 +211,64 @@ public class DiskCacheTests : IDisposable
     [Fact]
     public async Task LoadAsync_CorruptFile_ReturnsNull()
     {
-        await File.WriteAllTextAsync(CachePath, "this is not valid json {{{");
+        Directory.CreateDirectory(_cacheDir);
+        await File.WriteAllTextAsync(Path.Combine(_cacheDir, "dns-queries.json"), "this is not valid json {{{");
 
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();
         var http = new HttpProbeService();
 
-        var result = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp, http, dns);
+        var result = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp, http, dns);
         Assert.Null(result);
+    }
+
+    // ── Separate files per cache type ────────────────────────────────────
+
+    [Fact]
+    public async Task SaveAsync_CreatesPerTypeFiles()
+    {
+        var dns = new DnsResolverService();
+        var smtp = new SmtpProbeService();
+        var http = new HttpProbeService();
+
+        await dns.QueryAsync("example.com", QueryType.A);
+        await http.GetAsync("http://example.com");
+        await smtp.ProbePortAsync("localhost", 60025);
+
+        await DiskCacheService.SaveAsync(_cacheDir, smtp, http, dns);
+
+        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
+        Assert.True(File.Exists(Path.Combine(_cacheDir, "http-get.json")));
+        Assert.True(File.Exists(Path.Combine(_cacheDir, "port-probes.json")));
+    }
+
+    // ── Merge behavior ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveAsync_MergesWithExistingEntries()
+    {
+        // First save: DNS only
+        var dns1 = new DnsResolverService();
+        var smtp1 = new SmtpProbeService();
+        var http1 = new HttpProbeService();
+        await dns1.QueryAsync("example.com", QueryType.A);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
+
+        // Second save: HTTP only (different service instances)
+        var dns2 = new DnsResolverService();
+        var smtp2 = new SmtpProbeService();
+        var http2 = new HttpProbeService();
+        await http2.GetAsync("http://example.com");
+        await DiskCacheService.SaveAsync(_cacheDir, smtp2, http2, dns2);
+
+        // Load: should have both DNS and HTTP entries
+        var dns3 = new DnsResolverService();
+        var smtp3 = new SmtpProbeService();
+        var http3 = new HttpProbeService();
+        var result = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp3, http3, dns3);
+        Assert.NotNull(result);
+        Assert.True(result!.DnsQueries > 0, "DNS entries from first save should be preserved");
+        Assert.True(result.HttpRequests > 0, "HTTP entries from second save should be present");
     }
 
     // ── --retry-errors filtering ─────────────────────────────────────────
@@ -234,16 +283,16 @@ public class DiskCacheTests : IDisposable
         // This will fail (no SMTP on localhost:60025) — creates a cached error
         await smtp1.ProbeSmtpAsync("localhost", 60025);
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
         // Load with retryErrors=true — failed SMTP probe should be filtered out
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        Assert.NotNull(loadResult);
-        Assert.Equal(0, loadResult!.SmtpProbes);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
+        // May be null if all entries are filtered out, or have 0 SMTP probes
+        Assert.True(loadResult == null || loadResult.SmtpProbes == 0);
     }
 
     [Fact]
@@ -255,15 +304,14 @@ public class DiskCacheTests : IDisposable
 
         await smtp1.ProbePortAsync("localhost", 60025);
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        Assert.NotNull(loadResult);
-        Assert.Equal(0, loadResult!.PortProbes);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
+        Assert.True(loadResult == null || loadResult.PortProbes == 0);
     }
 
     [Fact]
@@ -275,15 +323,14 @@ public class DiskCacheTests : IDisposable
 
         await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        Assert.NotNull(loadResult);
-        Assert.Equal(0, loadResult!.RcptProbes);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
+        Assert.True(loadResult == null || loadResult.RcptProbes == 0);
     }
 
     [Fact]
@@ -301,13 +348,13 @@ public class DiskCacheTests : IDisposable
         var httpResult = await http1.GetAsync("http://example.com");
         Assert.True(httpResult.success);
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var loadResult = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
         Assert.NotNull(loadResult);
         Assert.True(loadResult!.DnsQueries > 0, "Successful DNS entries should survive --retry-errors");
         Assert.True(loadResult!.HttpRequests > 0, "Successful HTTP entries should survive --retry-errors");
@@ -331,13 +378,13 @@ public class DiskCacheTests : IDisposable
         await smtp1.ProbePortAsync("localhost", 60025);
         await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
 
-        await DiskCacheService.SaveAsync(CachePath, smtp1, http1, dns1);
+        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
         var dns2 = new DnsResolverService();
         var smtp2 = new SmtpProbeService();
         var http2 = new HttpProbeService();
 
-        var result = await DiskCacheService.LoadAsync(CachePath, TimeSpan.FromHours(1), smtp2, http2, dns2);
+        var result = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(result);
         Assert.True(result!.DnsQueries >= 2, $"DNS: expected >= 2, got {result.DnsQueries}");
         Assert.True(result.PtrLookups >= 1, $"PTR: expected >= 1, got {result.PtrLookups}");
