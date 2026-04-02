@@ -218,7 +218,7 @@ public class DomainValidator
             {
                 OnCheckStarted?.Invoke(check.Name);
                 var checkTask = check.RunAsync(domain, context);
-                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(30)));
+                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
                 List<CheckResult> results;
                 if (completedTask == checkTask)
                 {
@@ -274,7 +274,7 @@ public class DomainValidator
                             CheckName = check.Name,
                             Category = check.Category,
                             Severity = CheckSeverity.Warning,
-                            Summary = "Check timed out (30s limit)",
+                            Summary = "Check timed out",
                             Warnings = { "Check did not complete within timeout — retried once" }
                         }
                     };

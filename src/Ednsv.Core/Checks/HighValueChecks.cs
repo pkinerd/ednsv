@@ -514,8 +514,10 @@ public class ExtendedDnsblCheck : ICheck
         }
 
         int listed = 0;
-        // Build all query tasks up-front and run in parallel (throttled)
-        var semaphore = new SemaphoreSlim(10);
+        // Build all query tasks up-front and run in parallel (throttled).
+        // High concurrency is fine here — DNSBL queries are lightweight UDP with
+        // short timeouts and the DNS cache deduplicates repeated queries.
+        var semaphore = new SemaphoreSlim(30);
         var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
 
         foreach (var ip in allMxIps)
