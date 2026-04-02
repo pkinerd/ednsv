@@ -567,8 +567,7 @@ public class SubmissionPortsCheck : ICheck
 
         try
         {
-            // Throttle to 2 concurrent probes to avoid looking like a port scan
-            using var semaphore = new SemaphoreSlim(2);
+            // Probe all submission ports in parallel (port probes are cached)
             var probeTasks = new List<(string host, int port, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -576,17 +575,25 @@ public class SubmissionPortsCheck : ICheck
                 {
                     var h = mxHost;
                     var p = port;
-                    var task = Task.Run(async () =>
-                    {
-                        await semaphore.WaitAsync();
-                        try { return await ctx.Smtp.ProbePortAsync(h, p); }
-                        finally { semaphore.Release(); }
-                    });
-                    probeTasks.Add((h, p, task));
+                    probeTasks.Add((h, p, Task.Run(() => ctx.Smtp.ProbePortAsync(h, p))));
                 }
             }
 
             await Task.WhenAll(probeTasks.Select(t => t.task));
+
+            // SMTP probe open 587 ports in parallel for TLS details
+            var smtpProbeTasks = new List<(string host, Task<SmtpProbeResult> task)>();
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var port587 = probeTasks.First(t => t.host == mxHost && t.port == 587).task.Result;
+                if (port587)
+                {
+                    var h = mxHost;
+                    smtpProbeTasks.Add((h, Task.Run(() => ctx.Smtp.ProbeSmtpAsync(h, 587))));
+                }
+            }
+            if (smtpProbeTasks.Count > 0)
+                await Task.WhenAll(smtpProbeTasks.Select(t => t.task));
 
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -600,11 +607,10 @@ public class SubmissionPortsCheck : ICheck
                 if (port465)
                     result.Details.Add($"  Port 465 (implicit TLS) is open — TLS certificate and version details not probed (only port 25/587 STARTTLS is checked)");
 
-                // Probe TLS on open submission ports
                 if (port587)
                 {
-                    var probe587 = await ctx.Smtp.ProbeSmtpAsync(mxHost, 587);
-                    if (probe587.Connected)
+                    var probe587 = smtpProbeTasks.FirstOrDefault(t => t.host == mxHost).task?.Result;
+                    if (probe587?.Connected == true)
                     {
                         if (probe587.SupportsStartTls)
                             result.Details.Add($"  Port 587 TLS: {probe587.TlsProtocol} ({probe587.TlsCipherSuite ?? "unknown cipher"})");
@@ -1103,6 +1109,9 @@ public class SmtpIpv6ConnectivityCheck : ICheck
             int reachable = 0;
             int unreachable = 0;
 
+            // Resolve AAAA records for all MX hosts, then probe all IPv6 addresses
+            // in parallel with a short timeout (3s — if port 25 is open, it responds fast)
+            var probes = new List<(string host, string addr, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
                 var v6Addrs = await ctx.Dns.ResolveAAAAAsync(mxHost);
@@ -1115,27 +1124,39 @@ public class SmtpIpv6ConnectivityCheck : ICheck
                 hasAaaa++;
                 foreach (var addr in v6Addrs)
                 {
-                    try
+                    var a = addr;
+                    probes.Add((mxHost, addr, Task.Run(async () =>
                     {
-                        using var client = new TcpClient(AddressFamily.InterNetworkV6);
-                        var connectTask = client.ConnectAsync(IPAddress.Parse(addr), 25);
-                        if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(5))) == connectTask)
+                        try
                         {
-                            await connectTask;
-                            reachable++;
-                            result.Details.Add($"{mxHost} [{addr}]: Port 25 reachable over IPv6");
+                            using var client = new TcpClient(AddressFamily.InterNetworkV6);
+                            var connectTask = client.ConnectAsync(IPAddress.Parse(a), 25);
+                            if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(3))) == connectTask)
+                            {
+                                await connectTask;
+                                return true;
+                            }
+                            return false;
                         }
-                        else
-                        {
-                            unreachable++;
-                            result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
-                        }
-                    }
-                    catch
-                    {
-                        unreachable++;
-                        result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but IPv6 connection failed");
-                    }
+                        catch { return false; }
+                    })));
+                }
+            }
+
+            if (probes.Count > 0)
+                await Task.WhenAll(probes.Select(p => p.task));
+
+            foreach (var (host, addr, task) in probes)
+            {
+                if (task.Result)
+                {
+                    reachable++;
+                    result.Details.Add($"{host} [{addr}]: Port 25 reachable over IPv6");
+                }
+                else
+                {
+                    unreachable++;
+                    result.Warnings.Add($"{host} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
                 }
             }
 

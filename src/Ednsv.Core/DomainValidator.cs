@@ -408,12 +408,18 @@ public class DomainValidator
                 foreach (var ip in ips)
                     phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
 
+                // Pre-probe SMTP port 25
+                var h = host;
                 phase3Tasks.Add(Task.Run(async () =>
                 {
                     await smtpSemaphore.WaitAsync();
-                    try { await _smtp.ProbeSmtpAsync(host, 25); }
+                    try { await _smtp.ProbeSmtpAsync(h, 25); }
                     finally { smtpSemaphore.Release(); }
                 }));
+
+                // Pre-probe submission ports 587/465 (cached, avoids timeout in SubmissionPortsCheck)
+                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 587)));
+                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 465)));
             }
 
             var domainIps = await aTask;
