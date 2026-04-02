@@ -463,17 +463,26 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
         var slowChecks = new List<(string Name, TimeSpan Duration)>();
+        var checkTimings = new Dictionary<string, TimeSpan>();
+        var checkDnsHitsBefore = 0;
+        var checkDnsMissesBefore = 0;
 
-        // Track per-check timing (visible in verbose mode)
+        // Track per-check timing
         validator.OnCheckTiming += (name, elapsed) =>
         {
-            if (elapsed.TotalSeconds >= 1.0)
+            checkTimings[name] = elapsed;
+            if (name == "Prefetch")
+                AnsiConsole.MarkupLine($"  [dim]Prefetch: {elapsed.TotalSeconds:F1}s (dns:{dns.CacheHits}h/{dns.CacheMisses}m)[/]");
+            else if (elapsed.TotalSeconds >= 1.0)
                 slowChecks.Add((name, elapsed));
         };
 
         // Display results progressively as each check completes
         validator.OnCheckStarted += name =>
         {
+            // Snapshot DNS counters before this check
+            checkDnsHitsBefore = dns.CacheHits;
+            checkDnsMissesBefore = dns.CacheMisses;
             AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
             showingRunningLine = true;
         };
@@ -517,7 +526,16 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
                 _ => "[grey]????[/]"
             };
 
-            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+            // Build timing suffix
+            var timingSuffix = "";
+            if (checkTimings.TryGetValue(name, out var elapsed))
+            {
+                var hits = dns.CacheHits - checkDnsHitsBefore;
+                var misses = dns.CacheMisses - checkDnsMissesBefore;
+                timingSuffix = $" [dim]({elapsed.TotalSeconds:F1}s, dns:{hits}h/{misses}m)[/]";
+            }
+
+            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}{timingSuffix}");
 
             foreach (var detail in check.Details)
                 AnsiConsole.MarkupLine($"       [grey]{Markup.Escape(detail)}[/]");

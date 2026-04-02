@@ -214,7 +214,10 @@ public class DomainValidator
         // ── Prefetch phase: fire common DNS queries and SMTP probes in parallel ──
         // This primes the service caches so sequential checks hit cache instead of
         // waiting on network I/O one-by-one.
+        var prefetchSw = Stopwatch.StartNew();
         await PrefetchAsync(domain, context);
+        prefetchSw.Stop();
+        OnCheckTiming?.Invoke("Prefetch", prefetchSw.Elapsed);
 
         var timedOutChecks = new List<ICheck>();
 
