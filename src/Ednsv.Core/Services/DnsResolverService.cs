@@ -403,6 +403,71 @@ public class DnsResolverService
     }
 
     /// <summary>
+    /// Exports the DNS query cache as serializable DTOs.
+    /// Queries containing unsupported record types (DNSSEC, TLSA, etc.) are skipped.
+    /// </summary>
+    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
+    {
+        var result = new Dictionary<string, DnsCacheEntry>();
+        foreach (var kvp in _queryCache)
+        {
+            var key = $"{kvp.Key.domain}|{kvp.Key.type}";
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            if (entry != null)
+                result[key] = entry;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Imports DNS query cache from serialized DTOs.
+    /// </summary>
+    public void ImportQueryCache(Dictionary<string, DnsCacheEntry> entries)
+    {
+        foreach (var kvp in entries)
+        {
+            var parts = kvp.Key.Split('|', 2);
+            if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
+                continue;
+            var key = (parts[0], type);
+            var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
+            _queryCache.TryAdd(key, response);
+        }
+    }
+
+    /// <summary>
+    /// Exports the per-server DNS query cache as serializable DTOs.
+    /// </summary>
+    public Dictionary<string, DnsCacheEntry> ExportServerQueryCache()
+    {
+        var result = new Dictionary<string, DnsCacheEntry>();
+        foreach (var kvp in _serverQueryCache)
+        {
+            var key = $"{kvp.Key.server}|{kvp.Key.domain}|{kvp.Key.type}";
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            if (entry != null)
+                result[key] = entry;
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Imports per-server DNS query cache from serialized DTOs.
+    /// </summary>
+    public void ImportServerQueryCache(Dictionary<string, DnsCacheEntry> entries)
+    {
+        foreach (var kvp in entries)
+        {
+            var parts = kvp.Key.Split('|', 3);
+            if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
+                continue;
+            var key = (parts[0], parts[1], type);
+            var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
+            _serverQueryCache.TryAdd(key, response);
+        }
+    }
+
+    /// <summary>
     /// Doubles retry counts across all services for more persistent retries.
     /// </summary>
     public static void DoubleRetries()

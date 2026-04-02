@@ -5,8 +5,8 @@ using System.Text.Json.Serialization;
 namespace Ednsv.Core.Services;
 
 /// <summary>
-/// Persists expensive probe results (SMTP, HTTP, ports) to disk so they can be
-/// reused across runs. DNS queries are not cached (they're fast with caching resolvers).
+/// Persists probe results (SMTP, HTTP, DNS, ports) to disk so they can be
+/// reused across runs.
 /// </summary>
 public class DiskCacheService
 {
@@ -31,7 +31,9 @@ public class DiskCacheService
             HttpGet = http.ExportGetCache(),
             HttpGetWithHeaders = http.ExportGetWithHeadersCache(),
             UnreachableServers = dns.ExportUnreachableServers(),
-            PtrLookups = dns.ExportPtrCache()
+            PtrLookups = dns.ExportPtrCache(),
+            DnsQueries = dns.ExportQueryCache(),
+            DnsServerQueries = dns.ExportServerQueryCache()
         };
 
         var json = JsonSerializer.Serialize(data, JsonOptions);
@@ -64,6 +66,8 @@ public class DiskCacheService
             if (data.HttpGetWithHeaders != null) http.ImportGetWithHeadersCache(data.HttpGetWithHeaders);
             if (data.UnreachableServers != null) dns.ImportUnreachableServers(data.UnreachableServers);
             if (data.PtrLookups != null) dns.ImportPtrCache(data.PtrLookups);
+            if (data.DnsQueries != null) dns.ImportQueryCache(data.DnsQueries);
+            if (data.DnsServerQueries != null) dns.ImportServerQueryCache(data.DnsServerQueries);
 
             return true;
         }
@@ -84,6 +88,8 @@ public class DiskCacheService
         public Dictionary<string, HttpGetWithHeadersCacheEntry>? HttpGetWithHeaders { get; set; }
         public Dictionary<string, int>? UnreachableServers { get; set; }
         public Dictionary<string, List<string>>? PtrLookups { get; set; }
+        public Dictionary<string, DnsCacheEntry>? DnsQueries { get; set; }
+        public Dictionary<string, DnsCacheEntry>? DnsServerQueries { get; set; }
     }
 }
 
