@@ -94,6 +94,136 @@ jobs:
             echo ""
           done
 
+      - name: Disk cache integration test (cold + warm run)
+        if: always()
+        run: |
+          CACHE_FILE="test-output/integration-cache.json"
+          DOMAIN="gmail.com"
+
+          echo "============================================"
+          echo "Cold run: $DOMAIN (no cache, verbose)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_FILE" \
+            > "test-output/${DOMAIN}-cold.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-cold.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Cache file contents:"
+          echo "============================================"
+          python3 -c "
+          import json
+          d = json.load(open('$CACHE_FILE'))
+          for k in ['smtpProbes','portProbes','rcptProbes','httpGet','ptrLookups','dnsQueries','dnsServerQueries']:
+              count = len(d.get(k, {}) or {})
+              if count: print(f'  {k}: {count}')
+          " || echo "  Could not read cache file"
+
+          echo ""
+          echo "============================================"
+          echo "Warm run: $DOMAIN (from cache, verbose)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_FILE" \
+            > "test-output/${DOMAIN}-warm.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-warm.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Cache effectiveness comparison:"
+          echo "============================================"
+          python3 -c "
+          import re, sys
+
+          def parse_timing(path):
+              text = open(path).read()
+              times = {}
+              for m in re.finditer(r'^\s+(.+?)\s+(\d+\.\d+)s', text, re.MULTILINE):
+                  times[m.group(1).strip()] = float(m.group(2))
+              # Extract total duration
+              dur = re.search(r'Duration:\s*(\d+\.\d+)s', text)
+              if dur: times['TOTAL'] = float(dur.group(1))
+              # Extract cache load line
+              cache = re.search(r'Loaded cache.*', text)
+              if cache: times['_cache_line'] = cache.group(0)
+              # Extract hit/miss from verbose lines
+              hm = re.findall(r'dns:(\d+)h/(\d+)m', text)
+              if hm:
+                  times['_dns_hits'] = sum(int(h) for h,m in hm)
+                  times['_dns_misses'] = sum(int(m) for h,m in hm)
+              return times
+
+          cold = parse_timing('test-output/${DOMAIN}-cold.txt')
+          warm = parse_timing('test-output/${DOMAIN}-warm.txt')
+
+          if '_cache_line' in warm:
+              print(f'  Cache: {warm[\"_cache_line\"]}')
+          if '_dns_hits' in warm:
+              print(f'  Warm run DNS: {warm[\"_dns_hits\"]} hits, {warm[\"_dns_misses\"]} misses')
+
+          cold_total = cold.get('TOTAL', 0)
+          warm_total = warm.get('TOTAL', 0)
+          if cold_total and warm_total:
+              speedup = cold_total / warm_total if warm_total > 0 else 0
+              print(f'  Cold: {cold_total:.1f}s  Warm: {warm_total:.1f}s  Speedup: {speedup:.1f}x')
+          else:
+              print(f'  Could not extract total durations')
+              print(f'  Cold timings: {cold}')
+              print(f'  Warm timings: {warm}')
+          " || true
+
+      - name: Same-domain duplicate run (in-memory cache reuse)
+        if: always()
+        run: |
+          DOMAIN="cnn.com"
+
+          echo "============================================"
+          echo "Two-domain run: $DOMAIN $DOMAIN (verbose)"
+          echo "============================================"
+          echo "Running same domain twice in one invocation to verify in-memory cache reuse..."
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" "$DOMAIN" --verbose \
+            > "test-output/duplicate-domain.txt" 2>&1 || true
+          cat "test-output/duplicate-domain.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Per-domain timing comparison:"
+          echo "============================================"
+          python3 -c "
+          import re
+
+          text = open('test-output/duplicate-domain.txt').read()
+
+          # Find all domain result blocks with their durations
+          # Pattern: domain header followed by duration
+          blocks = re.split(r'(?=={10,})', text)
+          durations = []
+          for block in blocks:
+              dur = re.search(r'Duration:\s*(\d+\.\d+)s', block)
+              domain = re.search(r'Results for (\S+)', block) or re.search(r'Validating:\s*(\S+)', block)
+              if dur:
+                  d = domain.group(1) if domain else '?'
+                  durations.append((d, float(dur.group(1))))
+
+          # Extract hit/miss per domain block
+          domain_sections = re.split(r'(?:Validating|Results for)[:\s]+\S+', text)
+
+          if len(durations) >= 2:
+              print(f'  1st run ({durations[0][0]}): {durations[0][1]:.1f}s')
+              print(f'  2nd run ({durations[1][0]}): {durations[1][1]:.1f}s')
+              if durations[1][1] > 0:
+                  speedup = durations[0][1] / durations[1][1]
+                  print(f'  Speedup: {speedup:.1f}x (in-memory cache reuse)')
+          else:
+              print(f'  Found {len(durations)} duration(s), expected 2')
+              # Print raw durations found
+              for line in text.split(chr(10)):
+                  if 'uration' in line or 'dns:' in line:
+                      print(f'  {line.strip()}')
+          " || true
+
       - name: Upload test output
         uses: actions/upload-artifact@v4
         if: always()
