@@ -124,11 +124,17 @@ public class IpBlocklistCheck : ICheck
     public string Name => "IP Blocklist Check (DNSBL)";
     public CheckCategory Category => CheckCategory.DNSBL;
 
-    private static readonly string[] Blocklists =
+    // Lists that work reliably via public DNS resolvers
+    private static readonly string[] PublicBlocklists =
+    {
+        "bl.spamcop.net"
+    };
+
+    // Lists that require a private/registered resolver — return false positives via public DNS
+    private static readonly string[] PrivateBlocklists =
     {
         "zen.spamhaus.org",
-        "b.barracudacentral.org",
-        "bl.spamcop.net"
+        "b.barracudacentral.org"
     };
 
     // Well-known DNSBL responses that indicate resolver/query errors, not actual listings
@@ -165,7 +171,10 @@ public class IpBlocklistCheck : ICheck
                 var octets = ip.Split('.').Reverse();
                 var reversed = string.Join('.', octets);
 
-                foreach (var bl in Blocklists)
+                var blocklists = ctx.Options.EnablePrivateDnsbl
+                    ? PublicBlocklists.Concat(PrivateBlocklists)
+                    : PublicBlocklists;
+                foreach (var bl in blocklists)
                 {
                     var capturedIp = ip;
                     var capturedBl = bl;
@@ -226,7 +235,8 @@ public class MxHostnameBlocklistCheck : ICheck
     public string Name => "MX Hostname Blocklist (RHSBL)";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    private static readonly string[] DomainBlocklists =
+    // All RHSBL lists require private/registered resolvers
+    private static readonly string[] PrivateDomainBlocklists =
     {
         "dbl.spamhaus.org",
         "multi.surbl.org",
@@ -241,6 +251,13 @@ public class MxHostnameBlocklistCheck : ICheck
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
+
+        if (!ctx.Options.EnablePrivateDnsbl)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Skipped — MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)";
+            return new List<CheckResult> { result };
+        }
 
         try
         {
@@ -268,7 +285,7 @@ public class MxHostnameBlocklistCheck : ICheck
             int listed = 0;
             foreach (var mxDomain in mxDomains)
             {
-                foreach (var bl in DomainBlocklists)
+                foreach (var bl in PrivateDomainBlocklists)
                 {
                     var query = $"{mxDomain}.{bl}";
                     var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
@@ -315,7 +332,8 @@ public class DomainBlocklistCheck : ICheck
     public string Name => "Domain Blocklist Check";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    private static readonly string[] DomainBlocklists =
+    // All domain blocklists require private/registered resolvers
+    private static readonly string[] PrivateDomainBlocklists =
     {
         "dbl.spamhaus.org",
         "multi.surbl.org",
@@ -336,10 +354,17 @@ public class DomainBlocklistCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
+        if (!ctx.Options.EnablePrivateDnsbl)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Skipped — domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)";
+            return new List<CheckResult> { result };
+        }
+
         try
         {
             int listed = 0;
-            foreach (var bl in DomainBlocklists)
+            foreach (var bl in PrivateDomainBlocklists)
             {
                 var query = $"{domain}.{bl}";
                 var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);

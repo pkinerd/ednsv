@@ -34,6 +34,7 @@ var dkimSelectorsOption = new Option<string[]>(
 };
 var dnsServerOption = new Option<string?>("--dns-server", "DNS server(s) for lookups (IP address, comma-separated for multiple; default: Google Public DNS). Multiple servers are load-balanced via round-robin");
 dnsServerOption.AddAlias("-s");
+var privateDnsblOption = new Option<bool>("--private-dnsbl", "Include blocklists that require a private/registered DNS resolver (Spamhaus, Barracuda, SURBL, URIBL). Off by default as they return false positives via public resolvers");
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
@@ -51,6 +52,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     openResolverDomainOption,
     dkimSelectorsOption,
     dnsServerOption,
+    privateDnsblOption,
     listChecksOption,
     verboseOption,
     liveIndexOption
@@ -146,6 +148,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
     // Resolve options that exceed SetHandler's 8-param limit
     var enableOpenResolver = parseResult.GetValueForOption(openResolverOption);
     var resolverTestDomain = parseResult.GetValueForOption(openResolverDomainOption);
+    var enablePrivateDnsbl = parseResult.GetValueForOption(privateDnsblOption);
     var dnsServerRaw = parseResult.GetValueForOption(dnsServerOption);
 
     // Parse custom DNS server(s)
@@ -172,7 +175,8 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
         EnableOpenRelay = openRelay,
         EnableOpenResolver = enableOpenResolver,
         OpenResolverTestDomain = resolverTestDomain ?? "www.google.com",
-        AdditionalDkimSelectors = parsedSelectors
+        AdditionalDkimSelectors = parsedSelectors,
+        EnablePrivateDnsbl = enablePrivateDnsbl
     };
 
     // For non-text formats, ensure UTF-8 output encoding (fixes piping/redirect)
