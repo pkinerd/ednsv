@@ -431,7 +431,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     {
         var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (cacheResult != null)
-            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)
@@ -686,7 +686,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     {
         var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (cacheResult != null && showProgress)
-            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)
@@ -890,7 +890,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     {
         var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
         if (cacheResult != null)
-            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
+            AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     for (int i = 0; i < domains.Count; i++)

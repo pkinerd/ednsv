@@ -38,6 +38,7 @@ public class SmtpProbeService
     private readonly ConcurrentDictionary<string, int> _probeFailCounts = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
     private readonly ConcurrentDictionary<string, int> _portFailCounts = new();
+    private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
@@ -220,13 +221,21 @@ public class SmtpProbeService
 
     public async Task<(bool accepted, string response)> ProbeRcptDetailedAsync(string host, string address)
     {
+        var cacheKey = $"{host.ToLowerInvariant()}|{address.ToLowerInvariant()}";
+        if (_rcptCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
         TcpClient? client = null;
         try
         {
             client = new TcpClient();
             var connectTask = client.ConnectAsync(host, 25);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
-                return (false, "Connection timed out");
+            {
+                var result = (false, "Connection timed out");
+                _rcptCache.TryAdd(cacheKey, result);
+                return result;
+            }
             await connectTask;
 
             var stream = client.GetStream();
@@ -239,7 +248,12 @@ public class SmtpProbeService
 
             await WriteLineAsync(stream, "MAIL FROM:<>");
             var mailResp = await ReadLineAsync(stream);
-            if (!mailResp.StartsWith("250")) return (false, $"MAIL FROM rejected: {mailResp}");
+            if (!mailResp.StartsWith("250"))
+            {
+                var result = (false, $"MAIL FROM rejected: {mailResp}");
+                _rcptCache.TryAdd(cacheKey, result);
+                return result;
+            }
 
             await WriteLineAsync(stream, $"RCPT TO:<{address}>");
             var rcptResp = await ReadLineAsync(stream);
@@ -247,11 +261,15 @@ public class SmtpProbeService
             await WriteLineAsync(stream, "QUIT");
 
             var accepted = rcptResp.StartsWith("250") || rcptResp.StartsWith("251");
-            return (accepted, rcptResp);
+            var final = (accepted, rcptResp);
+            _rcptCache.TryAdd(cacheKey, final);
+            return final;
         }
         catch (Exception ex)
         {
-            return (false, $"Error: {ex.Message}");
+            var result = (false, $"Error: {ex.Message}");
+            _rcptCache.TryAdd(cacheKey, result);
+            return result;
         }
         finally
         {
@@ -397,5 +415,25 @@ public class SmtpProbeService
     {
         foreach (var kvp in entries)
             _portCache.TryAdd(kvp.Key, kvp.Value);
+    }
+
+    public Dictionary<string, RcptCacheEntry> ExportRcptCache()
+    {
+        var result = new Dictionary<string, RcptCacheEntry>();
+        foreach (var kvp in _rcptCache)
+        {
+            result[kvp.Key] = new RcptCacheEntry
+            {
+                Accepted = kvp.Value.accepted,
+                Response = kvp.Value.response
+            };
+        }
+        return result;
+    }
+
+    public void ImportRcptCache(Dictionary<string, RcptCacheEntry> entries)
+    {
+        foreach (var kvp in entries)
+            _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
     }
 }

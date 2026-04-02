@@ -28,6 +28,7 @@ public class DiskCacheService
             CreatedUtc = DateTime.UtcNow,
             SmtpProbes = smtp.ExportProbeCache(),
             PortProbes = smtp.ExportPortCache(),
+            RcptProbes = smtp.ExportRcptCache(),
             HttpGet = http.ExportGetCache(),
             HttpGetWithHeaders = http.ExportGetWithHeadersCache(),
             UnreachableServers = dns.ExportUnreachableServers(),
@@ -73,6 +74,11 @@ public class DiskCacheService
                         .Where(kvp => kvp.Value)
                         .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
+                if (data.RcptProbes != null)
+                    data.RcptProbes = data.RcptProbes
+                        .Where(kvp => kvp.Value.Accepted)
+                        .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
                 if (data.HttpGet != null)
                     data.HttpGet = data.HttpGet
                         .Where(kvp => kvp.Value.Success)
@@ -99,6 +105,7 @@ public class DiskCacheService
 
             if (data.SmtpProbes != null) smtp.ImportProbeCache(data.SmtpProbes);
             if (data.PortProbes != null) smtp.ImportPortCache(data.PortProbes);
+            if (data.RcptProbes != null) smtp.ImportRcptCache(data.RcptProbes);
             if (data.HttpGet != null) http.ImportGetCache(data.HttpGet);
             if (data.HttpGetWithHeaders != null) http.ImportGetWithHeadersCache(data.HttpGetWithHeaders);
             if (data.UnreachableServers != null) dns.ImportUnreachableServers(data.UnreachableServers);
@@ -111,6 +118,7 @@ public class DiskCacheService
                 Age = DateTime.UtcNow - data.CreatedUtc,
                 SmtpProbes = data.SmtpProbes?.Count ?? 0,
                 PortProbes = data.PortProbes?.Count ?? 0,
+                RcptProbes = data.RcptProbes?.Count ?? 0,
                 HttpRequests = (data.HttpGet?.Count ?? 0) + (data.HttpGetWithHeaders?.Count ?? 0),
                 DnsQueries = (data.DnsQueries?.Count ?? 0) + (data.DnsServerQueries?.Count ?? 0),
                 PtrLookups = data.PtrLookups?.Count ?? 0
@@ -128,10 +136,11 @@ public class DiskCacheService
         public TimeSpan Age { get; set; }
         public int SmtpProbes { get; set; }
         public int PortProbes { get; set; }
+        public int RcptProbes { get; set; }
         public int HttpRequests { get; set; }
         public int DnsQueries { get; set; }
         public int PtrLookups { get; set; }
-        public int Total => SmtpProbes + PortProbes + HttpRequests + DnsQueries + PtrLookups;
+        public int Total => SmtpProbes + PortProbes + RcptProbes + HttpRequests + DnsQueries + PtrLookups;
     }
 
     private class CacheData
@@ -140,6 +149,7 @@ public class DiskCacheService
         public DateTime CreatedUtc { get; set; }
         public Dictionary<string, SmtpProbeCacheEntry>? SmtpProbes { get; set; }
         public Dictionary<string, bool>? PortProbes { get; set; }
+        public Dictionary<string, RcptCacheEntry>? RcptProbes { get; set; }
         public Dictionary<string, HttpGetCacheEntry>? HttpGet { get; set; }
         public Dictionary<string, HttpGetWithHeadersCacheEntry>? HttpGetWithHeaders { get; set; }
         public Dictionary<string, int>? UnreachableServers { get; set; }
@@ -176,6 +186,12 @@ public class HttpGetCacheEntry
     public bool Success { get; set; }
     public string Content { get; set; } = "";
     public int StatusCode { get; set; }
+}
+
+public class RcptCacheEntry
+{
+    public bool Accepted { get; set; }
+    public string Response { get; set; } = "";
 }
 
 public class HttpGetWithHeadersCacheEntry
