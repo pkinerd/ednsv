@@ -136,17 +136,24 @@ jobs:
           python3 -c "
           import re, sys
 
+          def parse_timespan(ts):
+              # Parse Duration: HH:MM:SS.ticks or H:MM:SS.ticks
+              m = re.match(r'(\d+):(\d+):(\d+)\.?(\d*)', ts)
+              if m:
+                  return int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3)) + float('0.'+m.group(4)) if m.group(4) else 0
+              return 0
+
           def parse_timing(path):
-              text = open(path).read()
+              # Strip ANSI escape codes for reliable parsing
+              raw = open(path).read()
+              text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
               times = {}
-              for m in re.finditer(r'^\s+(.+?)\s+(\d+\.\d+)s', text, re.MULTILINE):
-                  times[m.group(1).strip()] = float(m.group(2))
-              # Extract total duration
-              dur = re.search(r'Duration:\s*(\d+\.\d+)s', text)
-              if dur: times['TOTAL'] = float(dur.group(1))
+              # Extract total duration (TimeSpan format: HH:MM:SS.ticks)
+              dur = re.search(r'Duration:\s*(\d+:\d+:\d+\.\d+)', text)
+              if dur: times['TOTAL'] = parse_timespan(dur.group(1))
               # Extract cache load line
-              cache = re.search(r'Loaded cache.*', text)
-              if cache: times['_cache_line'] = cache.group(0)
+              cache = re.search(r'Loaded cache[^\n]*', text)
+              if cache: times['_cache_line'] = cache.group(0).strip()
               # Extract hit/miss from verbose lines
               hm = re.findall(r'dns:(\d+)h/(\d+)m', text)
               if hm:
@@ -161,16 +168,18 @@ jobs:
               print(f'  Cache: {warm[\"_cache_line\"]}')
           if '_dns_hits' in warm:
               print(f'  Warm run DNS: {warm[\"_dns_hits\"]} hits, {warm[\"_dns_misses\"]} misses')
+          if '_dns_hits' in cold:
+              print(f'  Cold run DNS: {cold[\"_dns_hits\"]} hits, {cold[\"_dns_misses\"]} misses')
 
           cold_total = cold.get('TOTAL', 0)
           warm_total = warm.get('TOTAL', 0)
           if cold_total and warm_total:
               speedup = cold_total / warm_total if warm_total > 0 else 0
               print(f'  Cold: {cold_total:.1f}s  Warm: {warm_total:.1f}s  Speedup: {speedup:.1f}x')
+          elif cold_total:
+              print(f'  Cold: {cold_total:.1f}s  Warm: could not parse')
           else:
               print(f'  Could not extract total durations')
-              print(f'  Cold timings: {cold}')
-              print(f'  Warm timings: {warm}')
           " || true
 
       - name: Same-domain duplicate run (in-memory cache reuse)
@@ -194,34 +203,38 @@ jobs:
           python3 -c "
           import re
 
-          text = open('test-output/duplicate-domain.txt').read()
+          def parse_timespan(ts):
+              m = re.match(r'(\d+):(\d+):(\d+)\.?(\d*)', ts)
+              if m:
+                  return int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3)) + float('0.'+m.group(4)) if m.group(4) else 0
+              return 0
 
-          # Find all domain result blocks with their durations
-          # Pattern: domain header followed by duration
-          blocks = re.split(r'(?=={10,})', text)
+          # Strip ANSI escape codes
+          raw = open('test-output/duplicate-domain.txt').read()
+          text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+
+          # Find all Duration: HH:MM:SS.ticks entries
           durations = []
-          for block in blocks:
-              dur = re.search(r'Duration:\s*(\d+\.\d+)s', block)
-              domain = re.search(r'Results for (\S+)', block) or re.search(r'Validating:\s*(\S+)', block)
-              if dur:
-                  d = domain.group(1) if domain else '?'
-                  durations.append((d, float(dur.group(1))))
+          for m in re.finditer(r'Duration:\s*(\d+:\d+:\d+\.\d+)', text):
+              secs = parse_timespan(m.group(1))
+              durations.append(secs)
 
-          # Extract hit/miss per domain block
-          domain_sections = re.split(r'(?:Validating|Results for)[:\s]+\S+', text)
+          # Find DNS hit/miss totals per domain block
+          blocks = re.split(r'Validating:', text)
+          for i, block in enumerate(blocks[1:], 1):
+              hm = re.findall(r'dns:(\d+)h/(\d+)m', block)
+              hits = sum(int(h) for h,_ in hm)
+              misses = sum(int(m) for _,m in hm)
+              print(f'  Domain #{i}: dns:{hits}h/{misses}m')
 
           if len(durations) >= 2:
-              print(f'  1st run ({durations[0][0]}): {durations[0][1]:.1f}s')
-              print(f'  2nd run ({durations[1][0]}): {durations[1][1]:.1f}s')
-              if durations[1][1] > 0:
-                  speedup = durations[0][1] / durations[1][1]
+              print(f'  1st run: {durations[0]:.1f}s')
+              print(f'  2nd run: {durations[1]:.1f}s')
+              if durations[1] > 0:
+                  speedup = durations[0] / durations[1]
                   print(f'  Speedup: {speedup:.1f}x (in-memory cache reuse)')
           else:
               print(f'  Found {len(durations)} duration(s), expected 2')
-              # Print raw durations found
-              for line in text.split(chr(10)):
-                  if 'uration' in line or 'dns:' in line:
-                      print(f'  {line.strip()}')
           " || true
 
       - name: Upload test output
