@@ -745,21 +745,24 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
 
         AnsiConsole.MarkupLine($"  [grey]Wrote {Markup.Escape(filepath)}[/]");
 
-        // Rewrite the index after each domain so it's always up to date
+        // Rewrite the index and issues after each domain so they're always up to date
         if (liveIndex)
         {
             await WriteIndexFileAsync(reports, fmt, ext, outputDir);
-            AnsiConsole.MarkupLine($"  [grey]Updated index ({reports.Count}/{domains.Count} domains)[/]");
+            await WriteIssuesFileAsync(reports, fmt, ext, outputDir);
+            AnsiConsole.MarkupLine($"  [grey]Updated index + issues ({reports.Count}/{domains.Count} domains)[/]");
         }
     }
 
-    // Write final index (always — covers non-live-index mode and ensures
+    // Write final index and issues (always — covers non-live-index mode and ensures
     // the final version includes all domains)
     await WriteIndexFileAsync(reports, fmt, ext, outputDir);
+    await WriteIssuesFileAsync(reports, fmt, ext, outputDir);
 
     AnsiConsole.WriteLine();
     AnsiConsole.MarkupLine($"[bold green]Index written to {Markup.Escape(Path.Combine(outputDir, $"index.{ext}"))}[/]");
-    Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext})");
+    AnsiConsole.MarkupLine($"[bold green]Issues written to {Markup.Escape(Path.Combine(outputDir, $"issues.{ext}"))}[/]");
+    Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext} + issues.{ext})");
 }
 
 static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir)
@@ -779,6 +782,274 @@ static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt
             WriteMdIndex(reports, ext, fw);
             break;
     }
+}
+
+/// <summary>
+/// Extracts unique issues (Warning/Error/Critical) across all reports,
+/// grouped by check name + severity + summary, with the list of affected domains.
+/// </summary>
+static List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> CollectCrossDomainIssues(List<ValidationReport> reports)
+{
+    var issueMap = new Dictionary<(string, CheckSeverity, string), List<string>>();
+
+    foreach (var report in reports)
+    {
+        foreach (var result in report.Results)
+        {
+            if (result.Severity is CheckSeverity.Pass or CheckSeverity.Info)
+                continue;
+
+            var key = (result.CheckName, result.Severity, result.Summary);
+            if (!issueMap.TryGetValue(key, out var domains))
+            {
+                domains = new List<string>();
+                issueMap[key] = domains;
+            }
+            domains.Add(report.Domain);
+        }
+    }
+
+    return issueMap
+        .OrderByDescending(kv => kv.Key.Item2) // Critical first
+        .ThenByDescending(kv => kv.Value.Count) // Most affected domains first
+        .ThenBy(kv => kv.Key.Item1)
+        .Select(kv => (kv.Key.Item1, kv.Key.Item2, kv.Key.Item3, kv.Value))
+        .ToList();
+}
+
+static async Task WriteIssuesFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir)
+{
+    var issuesPath = Path.Combine(outputDir, $"issues.{ext}");
+    await using var fw = new StreamWriter(issuesPath, false, new UTF8Encoding(false));
+    var issues = CollectCrossDomainIssues(reports);
+
+    switch (fmt)
+    {
+        case "json":
+            await WriteJsonIssuesAsync(issues, reports.Count, fw);
+            break;
+        case "html":
+            WriteHtmlIssues(issues, reports.Count, ext, fw);
+            break;
+        case "markdown":
+        case "md":
+            WriteMdIssues(issues, reports.Count, ext, fw);
+            break;
+    }
+}
+
+static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, TextWriter writer)
+{
+    var jsonOptions = new JsonSerializerOptions
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    var obj = new
+    {
+        TotalIssues = issues.Count,
+        TotalDomains = totalDomains,
+        Timestamp = DateTime.UtcNow,
+        Issues = issues.Select(i => new
+        {
+            CheckName = i.CheckName,
+            Severity = i.Severity.ToString(),
+            i.Summary,
+            AffectedDomains = i.Domains.Count,
+            Domains = i.Domains
+        })
+    };
+
+    await writer.WriteLineAsync(JsonSerializer.Serialize(obj, jsonOptions));
+}
+
+static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, string ext, TextWriter writer)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("# ednsv — Cross-Domain Issues");
+    sb.AppendLine();
+    sb.AppendLine($"**Unique issues:** {issues.Count}");
+    sb.AppendLine($"**Domains checked:** {totalDomains}");
+    sb.AppendLine($"**Date:** {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine();
+
+    if (!issues.Any())
+    {
+        sb.AppendLine("No warnings, errors, or critical issues found across any domains.");
+        sb.AppendLine();
+    }
+    else
+    {
+        // Summary table
+        sb.AppendLine("| Severity | Check | Summary | Domains |");
+        sb.AppendLine("|----------|-------|---------|--------:|");
+
+        foreach (var issue in issues)
+        {
+            var icon = issue.Severity switch
+            {
+                CheckSeverity.Warning => "\u26A0\uFE0F",
+                CheckSeverity.Error => "\u274C",
+                CheckSeverity.Critical => "\uD83D\uDED1",
+                _ => "\u2753"
+            };
+
+            var domainList = issue.Domains.Count <= 3
+                ? string.Join(", ", issue.Domains.Select(d => $"`{d}`"))
+                : string.Join(", ", issue.Domains.Take(3).Select(d => $"`{d}`")) + $" +{issue.Domains.Count - 3} more";
+
+            sb.AppendLine($"| {icon} {SeverityLabel(issue.Severity)} | {MdText(issue.CheckName)} | {MdText(issue.Summary)} | {issue.Domains.Count}/{totalDomains} |");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("---");
+        sb.AppendLine();
+
+        // Detailed breakdown
+        sb.AppendLine("## Details");
+        sb.AppendLine();
+
+        foreach (var issue in issues)
+        {
+            var icon = issue.Severity switch
+            {
+                CheckSeverity.Warning => "\u26A0\uFE0F",
+                CheckSeverity.Error => "\u274C",
+                CheckSeverity.Critical => "\uD83D\uDED1",
+                _ => "\u2753"
+            };
+
+            sb.AppendLine($"### {icon} {MdText(issue.CheckName)} — {SeverityLabel(issue.Severity)}");
+            sb.AppendLine();
+            sb.AppendLine($"> {MdText(issue.Summary)}");
+            sb.AppendLine();
+            sb.AppendLine($"**Affected domains ({issue.Domains.Count}/{totalDomains}):**");
+            foreach (var domain in issue.Domains)
+                sb.AppendLine($"- [`{domain}`]({SanitizeFilename(domain)}.{ext})");
+            sb.AppendLine();
+        }
+    }
+
+    sb.AppendLine("---");
+    sb.AppendLine($"*Generated by [ednsv](https://github.com/pkinerd/ednsv) on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC*");
+
+    writer.Write(sb.ToString());
+}
+
+static void WriteHtmlIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, string ext, TextWriter writer)
+{
+    var sb = new StringBuilder();
+    var e = (string s) => HttpUtility.HtmlEncode(s);
+
+    sb.AppendLine("<!DOCTYPE html>");
+    sb.AppendLine("<html lang=\"en\">");
+    sb.AppendLine("<head>");
+    sb.AppendLine("<meta charset=\"UTF-8\">");
+    sb.AppendLine("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
+    sb.AppendLine($"<title>ednsv — Cross-Domain Issues</title>");
+    sb.AppendLine("<style>");
+    sb.AppendLine(@"
+:root {
+  --pass: #16a34a; --pass-bg: #f0fdf4;
+  --warn: #ca8a04; --warn-bg: #fefce8;
+  --error: #dc2626; --error-bg: #fef2f2;
+  --crit: #991b1b; --crit-bg: #fef2f2;
+  --info: #2563eb; --info-bg: #eff6ff;
+  --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0;
+  --text: #1e293b; --muted: #64748b;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; padding: 2rem; max-width: 960px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+h2 { font-size: 1.2rem; margin-top: 2rem; margin-bottom: 0.75rem; }
+.meta { color: var(--muted); font-size: 0.875rem; margin-bottom: 1.5rem; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 2rem; }
+.stat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; text-align: center; }
+.stat .value { font-size: 1.75rem; font-weight: 700; }
+.stat .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.stat.warn .value { color: var(--warn); }
+.stat.error .value { color: var(--error); }
+.stat.crit .value { color: var(--crit); }
+.issue { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem; border-left: 4px solid var(--border); }
+.issue.sev-warning { border-left-color: var(--warn); }
+.issue.sev-error { border-left-color: var(--error); }
+.issue.sev-critical { border-left-color: var(--crit); }
+.issue-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.badge { font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 9999px; text-transform: uppercase; letter-spacing: 0.05em; }
+.badge-warning { background: var(--warn-bg); color: var(--warn); }
+.badge-error { background: var(--error-bg); color: var(--error); }
+.badge-critical { background: var(--crit-bg); color: var(--crit); }
+.issue-name { font-weight: 600; }
+.issue-count { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+.issue-summary { color: var(--muted); font-size: 0.9rem; margin-top: 0.25rem; }
+.domain-chips { display: flex; flex-wrap: wrap; gap: 0.375rem; margin-top: 0.5rem; }
+.domain-chip { display: inline-block; font-size: 0.8rem; padding: 0.15rem 0.5rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--info); text-decoration: none; }
+.domain-chip:hover { background: var(--info-bg); border-color: var(--info); }
+a { color: var(--info); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.empty { text-align: center; padding: 3rem; color: var(--pass); font-size: 1.1rem; }
+footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--muted); }
+");
+    sb.AppendLine("</style>");
+    sb.AppendLine("</head>");
+    sb.AppendLine("<body>");
+
+    sb.AppendLine("<h1>ednsv &mdash; Cross-Domain Issues</h1>");
+    sb.AppendLine($"<div class=\"meta\">{totalDomains} domains checked &middot; {e(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))} UTC &middot; <a href=\"index.{ext}\">Back to index</a></div>");
+
+    // Stat cards
+    int critCount = issues.Count(i => i.Severity == CheckSeverity.Critical);
+    int errorCount = issues.Count(i => i.Severity == CheckSeverity.Error);
+    int warnCount = issues.Count(i => i.Severity == CheckSeverity.Warning);
+
+    sb.AppendLine("<div class=\"summary\">");
+    sb.AppendLine($"  <div class=\"stat crit\"><div class=\"value\">{critCount}</div><div class=\"label\">Critical</div></div>");
+    sb.AppendLine($"  <div class=\"stat error\"><div class=\"value\">{errorCount}</div><div class=\"label\">Error</div></div>");
+    sb.AppendLine($"  <div class=\"stat warn\"><div class=\"value\">{warnCount}</div><div class=\"label\">Warning</div></div>");
+    sb.AppendLine($"  <div class=\"stat\"><div class=\"value\">{issues.Count}</div><div class=\"label\">Unique Issues</div></div>");
+    sb.AppendLine("</div>");
+
+    if (!issues.Any())
+    {
+        sb.AppendLine("<div class=\"empty\">No warnings, errors, or critical issues found across any domains.</div>");
+    }
+    else
+    {
+        foreach (var issue in issues)
+        {
+            var sevClass = issue.Severity.ToString().ToLowerInvariant();
+            var badgeLabel = issue.Severity switch
+            {
+                CheckSeverity.Warning => "WARN",
+                CheckSeverity.Error => "FAIL",
+                CheckSeverity.Critical => "CRIT",
+                _ => "????"
+            };
+
+            sb.AppendLine($"<div class=\"issue sev-{sevClass}\">");
+            sb.AppendLine($"  <div class=\"issue-header\">");
+            sb.AppendLine($"    <span class=\"badge badge-{sevClass}\">{badgeLabel}</span>");
+            sb.AppendLine($"    <span class=\"issue-name\">{e(issue.CheckName)}</span>");
+            sb.AppendLine($"    <span class=\"issue-count\">{issue.Domains.Count}/{totalDomains} domains</span>");
+            sb.AppendLine($"  </div>");
+            sb.AppendLine($"  <div class=\"issue-summary\">{e(issue.Summary)}</div>");
+            sb.AppendLine($"  <div class=\"domain-chips\">");
+            foreach (var domain in issue.Domains)
+            {
+                var file = $"{SanitizeFilename(domain)}.{ext}";
+                sb.AppendLine($"    <a class=\"domain-chip\" href=\"{e(file)}\">{e(domain)}</a>");
+            }
+            sb.AppendLine($"  </div>");
+            sb.AppendLine($"</div>");
+        }
+    }
+
+    sb.AppendLine($"<footer>Generated by ednsv on {e(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))} UTC</footer>");
+    sb.AppendLine("</body>");
+    sb.AppendLine("</html>");
+
+    writer.Write(sb.ToString());
 }
 
 static string SanitizeFilename(string domain)
@@ -852,6 +1123,8 @@ static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter 
 
     var totalDuration = reports.Aggregate(TimeSpan.Zero, (acc, r) => acc + r.Duration);
     sb.AppendLine($"| **Total** | **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | | |");
+    sb.AppendLine();
+    sb.AppendLine($"[View cross-domain issues](issues.{ext})");
     sb.AppendLine();
     sb.AppendLine("---");
     sb.AppendLine($"*Generated by [ednsv](https://github.com/pkinerd/ednsv) on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC*");
@@ -947,6 +1220,8 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
 
     sb.AppendLine($"<tr><td><strong>Total</strong></td><td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td></tr>");
     sb.AppendLine("</tbody></table>");
+
+    sb.AppendLine($"<p style=\"margin-top:1rem;font-size:0.9rem;\"><a href=\"issues.{ext}\">View cross-domain issues &rarr;</a></p>");
 
     sb.AppendLine($"<footer>Generated by ednsv on {e(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss"))} UTC</footer>");
     sb.AppendLine("</body>");
