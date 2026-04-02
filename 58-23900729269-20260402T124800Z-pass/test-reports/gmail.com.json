@@ -1,7 +1,7 @@
 {
   "domain": "gmail.com",
-  "timestamp": "2026-03-31T03:57:27.1814012Z",
-  "duration": "00:01:01.7605139",
+  "timestamp": "2026-04-02T12:39:01.5490424Z",
+  "duration": "00:00:46.8637809",
   "results": [
     {
       "checkName": "Delegation Chain",
@@ -9,8 +9,8 @@
       "severity": 1,
       "summary": "Delegation chain walked through 2 levels",
       "details": [
-        "Zone [com] NS: j.gtld-servers.net, k.gtld-servers.net, f.gtld-servers.net, m.gtld-servers.net, g.gtld-servers.net, l.gtld-servers.net, b.gtld-servers.net, a.gtld-servers.net, e.gtld-servers.net, h.gtld-servers.net, i.gtld-servers.net, d.gtld-servers.net, c.gtld-servers.net",
-        "Zone [gmail.com] NS: ns4.google.com, ns3.google.com, ns1.google.com, ns2.google.com"
+        "Zone [com] NS: j.gtld-servers.net, m.gtld-servers.net, e.gtld-servers.net, k.gtld-servers.net, d.gtld-servers.net, g.gtld-servers.net, h.gtld-servers.net, i.gtld-servers.net, f.gtld-servers.net, l.gtld-servers.net, b.gtld-servers.net, a.gtld-servers.net, c.gtld-servers.net",
+        "Zone [gmail.com] NS: ns1.google.com, ns3.google.com, ns4.google.com, ns2.google.com"
       ],
       "warnings": [],
       "errors": []
@@ -21,10 +21,14 @@
       "severity": 1,
       "summary": "Found 4 authoritative nameservers",
       "details": [
-        "NS: ns4.google.com -\u003E 216.239.38.10 (PTR: ns4.google.com)",
-        "NS: ns3.google.com -\u003E 216.239.36.10 (PTR: ns3.google.com)",
         "NS: ns1.google.com -\u003E 216.239.32.10 (PTR: ns1.google.com)",
-        "NS: ns2.google.com -\u003E 216.239.34.10 (PTR: ns2.google.com)"
+        "NS: ns1.google.com -\u003E 2001:4860:4802:32::a (PTR: ns1.google.com)",
+        "NS: ns3.google.com -\u003E 216.239.36.10 (PTR: ns3.google.com)",
+        "NS: ns3.google.com -\u003E 2001:4860:4802:36::a (PTR: ns3.google.com)",
+        "NS: ns4.google.com -\u003E 216.239.38.10 (PTR: ns4.google.com)",
+        "NS: ns4.google.com -\u003E 2001:4860:4802:38::a (PTR: ns4.google.com)",
+        "NS: ns2.google.com -\u003E 216.239.34.10 (PTR: ns2.google.com)",
+        "NS: ns2.google.com -\u003E 2001:4860:4802:34::a (PTR: ns2.google.com)"
       ],
       "warnings": [],
       "errors": []
@@ -37,7 +41,7 @@
       "details": [
         "Parent and child NS sets are consistent",
         "Parent NS set: ns2.google.com, ns1.google.com, ns3.google.com, ns4.google.com",
-        "Child NS set: ns4.google.com, ns3.google.com, ns1.google.com, ns2.google.com"
+        "Child NS set: ns1.google.com, ns3.google.com, ns4.google.com, ns2.google.com"
       ],
       "warnings": [],
       "errors": []
@@ -50,17 +54,36 @@
       "details": [
         "Primary NS: ns1.google.com",
         "Admin: dns-admin.google.com",
-        "Serial: 891620646",
+        "Serial: 892826286",
         "Refresh: 900s",
         "Retry: 900s",
         "Expire: 1800s",
         "Minimum TTL: 60s"
       ],
       "warnings": [
-        "Serial 891620646 doesn\u0027t follow YYYYMMDDnn convention",
+        "Serial 892826286 doesn\u0027t follow YYYYMMDDnn convention",
         "Refresh interval 900s is low (recommended \u003E= 3600)",
+        "Retry (900s) should be less than Refresh (900s)",
         "Expire interval 1800s is low (recommended \u003E= 604800)"
       ],
+      "errors": []
+    },
+    {
+      "checkName": "SOA Serial Consistency",
+      "category": 1,
+      "severity": 1,
+      "summary": "All 4 nameservers agree on SOA serial 892826286",
+      "details": [
+        "ns1.google.com (216.239.32.10): Serial 892826286",
+        "ns3.google.com (216.239.36.10): Serial 892826286",
+        "ns4.google.com (216.239.38.10): Serial 892826286",
+        "ns2.google.com (216.239.34.10): Serial 892826286",
+        "ns1.google.com (2001:4860:4802:32::a): No SOA in response",
+        "ns3.google.com (2001:4860:4802:36::a): No SOA in response",
+        "ns4.google.com (2001:4860:4802:38::a): No SOA in response",
+        "ns2.google.com (2001:4860:4802:34::a): No SOA in response"
+      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -80,10 +103,10 @@
       "severity": 1,
       "summary": "4 NS records found",
       "details": [
-        "NS: ns4.google.com (TTL: 21600s)",
-        "NS: ns3.google.com (TTL: 21600s)",
-        "NS: ns1.google.com (TTL: 21600s)",
-        "NS: ns2.google.com (TTL: 21600s)"
+        "NS: ns1.google.com (TTL: 21590s)",
+        "NS: ns3.google.com (TTL: 21590s)",
+        "NS: ns4.google.com (TTL: 21590s)",
+        "NS: ns2.google.com (TTL: 21590s)"
       ],
       "warnings": [],
       "errors": []
@@ -100,13 +123,17 @@
     {
       "checkName": "NS Lame Delegation",
       "category": 2,
-      "severity": 1,
-      "summary": "All 4 nameservers are authoritative",
+      "severity": 2,
+      "summary": "4/8 nameservers unreachable (none confirmed lame)",
       "details": [
-        "ns4.google.com (216.239.38.10): Authoritative (SOA present)",
-        "ns3.google.com (216.239.36.10): Authoritative (SOA present)",
         "ns1.google.com (216.239.32.10): Authoritative (SOA present)",
-        "ns2.google.com (216.239.34.10): Authoritative (SOA present)"
+        "ns1.google.com (2001:4860:4802:32::a): Unreachable (query failed)",
+        "ns3.google.com (216.239.36.10): Authoritative (SOA present)",
+        "ns3.google.com (2001:4860:4802:36::a): Unreachable (query failed)",
+        "ns4.google.com (216.239.38.10): Authoritative (SOA present)",
+        "ns4.google.com (2001:4860:4802:38::a): Unreachable (query failed)",
+        "ns2.google.com (216.239.34.10): Authoritative (SOA present)",
+        "ns2.google.com (2001:4860:4802:34::a): Unreachable (query failed)"
       ],
       "warnings": [],
       "errors": []
@@ -117,10 +144,14 @@
       "severity": 1,
       "summary": "NS IPs span 4 different /24 subnets",
       "details": [
-        "ns4.google.com: 216.239.38.10",
-        "ns3.google.com: 216.239.36.10",
         "ns1.google.com: 216.239.32.10",
-        "ns2.google.com: 216.239.34.10"
+        "ns1.google.com: 2001:4860:4802:32::a",
+        "ns3.google.com: 216.239.36.10",
+        "ns3.google.com: 2001:4860:4802:36::a",
+        "ns4.google.com: 216.239.38.10",
+        "ns4.google.com: 2001:4860:4802:38::a",
+        "ns2.google.com: 216.239.34.10",
+        "ns2.google.com: 2001:4860:4802:34::a"
       ],
       "warnings": [],
       "errors": []
@@ -130,6 +161,15 @@
       "category": 2,
       "severity": 1,
       "summary": "No duplicate NS IPs found",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Open Recursive Resolver Detection",
+      "category": 2,
+      "severity": 0,
+      "summary": "Open resolver check skipped (use --open-resolver to enable)",
       "details": [],
       "warnings": [],
       "errors": []
@@ -149,7 +189,7 @@
       "severity": 1,
       "summary": "1 A record(s) found",
       "details": [
-        "142.251.46.229 (TTL: 300s)"
+        "142.251.214.37 (TTL: 290s)"
       ],
       "warnings": [],
       "errors": []
@@ -160,7 +200,7 @@
       "severity": 1,
       "summary": "1 AAAA record(s) found",
       "details": [
-        "2607:f8b0:4005:813::2005 (TTL: 300s)"
+        "2607:f8b0:4005:801::2005 (TTL: 290s)"
       ],
       "warnings": [],
       "errors": []
@@ -171,13 +211,13 @@
       "severity": 1,
       "summary": "5 MX record(s) found",
       "details": [
-        "Priority 5: gmail-smtp-in.l.google.com -\u003E 172.217.78.26 IPv6: 2607:f8b0:4023:1c05::1a",
-        "  172.217.78.26 PTR: yurnoyc-in-f26.1e100.net",
+        "Priority 5: gmail-smtp-in.l.google.com -\u003E 173.194.65.26 IPv6: 2607:f8b0:4023:1c03::1b",
+        "  173.194.65.26 PTR: ro-in-f26.1e100.net",
         "  SMTP: Connected, STARTTLS: Yes",
-        "Priority 10: alt1.gmail-smtp-in.l.google.com -\u003E 192.178.164.27 IPv6: 2607:f8b0:4023:2009::1b",
-        "  192.178.164.27 PTR: yuphxer-in-f27.1e100.net",
+        "Priority 10: alt1.gmail-smtp-in.l.google.com -\u003E 192.178.164.26 IPv6: 2607:f8b0:4023:2009::1a",
+        "  192.178.164.26 PTR: yuphxer-in-f26.1e100.net",
         "  SMTP: Connected, STARTTLS: Yes",
-        "Priority 20: alt2.gmail-smtp-in.l.google.com -\u003E 192.178.128.26 IPv6: 2607:f8b0:4023:2801::1a",
+        "Priority 20: alt2.gmail-smtp-in.l.google.com -\u003E 192.178.128.26 IPv6: 2607:f8b0:4023:2801::1b",
         "  192.178.128.26 PTR: lcausi-in-f26.1e100.net",
         "  SMTP: Connected, STARTTLS: Yes",
         "Priority 30: alt3.gmail-smtp-in.l.google.com -\u003E 172.253.135.27 IPv6: 2607:f8b0:4023:1015::1a",
@@ -258,9 +298,9 @@
       "severity": 0,
       "summary": "3/19 common mail subdomains resolve",
       "details": [
-        "smtp.gmail.com: A -\u003E 172.217.217.109",
-        "pop.gmail.com: A -\u003E 172.217.217.108, 172.217.217.109",
-        "imap.gmail.com: A -\u003E 142.250.101.108, 142.250.101.109"
+        "smtp.gmail.com: A -\u003E 172.217.78.108",
+        "pop.gmail.com: A -\u003E 142.250.142.108, 142.250.142.109",
+        "imap.gmail.com: A -\u003E 74.125.137.108, 74.125.137.109"
       ],
       "warnings": [],
       "errors": []
@@ -268,15 +308,14 @@
     {
       "checkName": "SPF Record",
       "category": 7,
-      "severity": 2,
-      "summary": "SPF record found: no all mechanism",
+      "severity": 1,
+      "summary": "SPF record found: redirect",
       "details": [
         "SPF: v=spf1 redirect=_spf.google.com",
-        "  Mechanism: redirect=_spf.google.com"
+        "  Mechanism: redirect=_spf.google.com",
+        "Policy defined by redirect= target (no local \u0027all\u0027 expected)"
       ],
-      "warnings": [
-        "No \u0027all\u0027 mechanism - implicit ?all (neutral)"
-      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -294,9 +333,10 @@
         "  ip6:2001:4860:4864::/56",
         "  ip6:2404:6800:4864::/56",
         "  ip6:2607:f8b0:4864::/56",
-        "  ip6:2800:3f0:4000::/36",
+        "  ip6:2800:3f0:4864::/56",
         "  ip6:2a00:1450:4000::/36",
-        "  ip6:2c0f:fb50:4000::/36"
+        "  ip6:2c0f:fb50:4000::/36",
+        "  ~all"
       ],
       "warnings": [],
       "errors": []
@@ -370,18 +410,29 @@
       "severity": 0,
       "summary": "10 MX IP(s) not in SPF (normal - SPF covers outbound, MX covers inbound)",
       "details": [
-        "gmail-smtp-in.l.google.com (172.217.78.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "gmail-smtp-in.l.google.com (2607:f8b0:4023:1c05::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "alt1.gmail-smtp-in.l.google.com (192.178.164.27): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "alt1.gmail-smtp-in.l.google.com (2607:f8b0:4023:2009::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "gmail-smtp-in.l.google.com (173.194.65.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "gmail-smtp-in.l.google.com (2607:f8b0:4023:1c03::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "alt1.gmail-smtp-in.l.google.com (192.178.164.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "alt1.gmail-smtp-in.l.google.com (2607:f8b0:4023:2009::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "alt2.gmail-smtp-in.l.google.com (192.178.128.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "alt2.gmail-smtp-in.l.google.com (2607:f8b0:4023:2801::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "alt2.gmail-smtp-in.l.google.com (2607:f8b0:4023:2801::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "alt3.gmail-smtp-in.l.google.com (172.253.135.27): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "alt3.gmail-smtp-in.l.google.com (2607:f8b0:4023:1015::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "alt4.gmail-smtp-in.l.google.com (172.253.145.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "alt4.gmail-smtp-in.l.google.com (2607:f8b0:4023:3003::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)"
       ],
       "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Subdomain SPF Coverage",
+      "category": 7,
+      "severity": 2,
+      "summary": "1 active mail subdomain(s) missing SPF records",
+      "details": [],
+      "warnings": [
+        "smtp.gmail.com: Exists but no SPF \u2014 spoofable if DMARC sp\u2260reject"
+      ],
       "errors": []
     },
     {
@@ -466,11 +517,43 @@
       "errors": []
     },
     {
+      "checkName": "DMARC Subdomain Policy Analysis",
+      "category": 8,
+      "severity": 1,
+      "summary": "Subdomain policy: quarantine \u2014 well configured",
+      "details": [
+        "Parent policy (p): none",
+        "Subdomain policy (sp): quarantine",
+        "Effective subdomain policy: quarantine",
+        "DKIM alignment (adkim): relaxed (default)",
+        "SPF alignment (aspf): relaxed (default)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "DMARC Report URI Validation",
+      "category": 8,
+      "severity": 1,
+      "summary": "Validated 1 DMARC report URI(s)",
+      "details": [
+        "No ruf= (forensic reports) \u2014 optional, many providers don\u0027t send them",
+        "rua: mailto:mailauth-reports@google.com",
+        "  google.com: 1 MX record(s)",
+        "  External authorization: verified at gmail.com._report._dmarc.google.com"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "DKIM Selectors",
       "category": 9,
       "severity": 2,
       "summary": "No DKIM selectors found",
-      "details": [],
+      "details": [
+        "AXFR selector discovery: zone transfer denied (probing common selectors only)",
+        "DKIM selectors checked (default list): default, google, selector1, selector2, k1, k2, k3, s1, s2, s3, dkim, mail, email, smtp, google2048, everlytickey1, everlytickey2, mandrill, amazonses, postmark, sendgrid, cm, mxvault, protonmail, protonmail2, protonmail3, fm1, fm2, fm3, pic, mailjet, zoho, turbo-smtp, sig1, smtpapi, hs1, hs2, m1, m2"
+      ],
       "warnings": [
         "Probed 39 selectors - none found"
       ],
@@ -491,7 +574,27 @@
       "severity": 1,
       "summary": "PTR check: 0/1 IPs have matching reverse DNS",
       "details": [
-        "142.251.46.229 -\u003E sfo03s27-in-f5.1e100.net (no match)"
+        "142.251.214.37 -\u003E pnsfoa-ae-in-f5.1e100.net (no match)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Reverse DNS (PTR)",
+      "category": 10,
+      "severity": 1,
+      "summary": "All 10 MX IP(s) have valid reverse DNS",
+      "details": [
+        "gmail-smtp-in.l.google.com [173.194.65.26]: PTR \u2192 ro-in-f26.1e100.net",
+        "gmail-smtp-in.l.google.com [2607:f8b0:4023:1c03::1b]: PTR \u2192 ro-in-f27.1e100.net",
+        "alt1.gmail-smtp-in.l.google.com [192.178.164.26]: PTR \u2192 yuphxer-in-f26.1e100.net",
+        "alt1.gmail-smtp-in.l.google.com [2607:f8b0:4023:2009::1a]: PTR \u2192 yuphxer-in-f26.1e100.net",
+        "alt2.gmail-smtp-in.l.google.com [192.178.128.26]: PTR \u2192 lcausi-in-f26.1e100.net",
+        "alt2.gmail-smtp-in.l.google.com [2607:f8b0:4023:2801::1b]: PTR \u2192 lcausi-in-f27.1e100.net",
+        "alt3.gmail-smtp-in.l.google.com [172.253.135.27]: PTR \u2192 yudfwta-in-f27.1e100.net",
+        "alt3.gmail-smtp-in.l.google.com [2607:f8b0:4023:1015::1a]: PTR \u2192 yudfwta-in-f26.1e100.net",
+        "alt4.gmail-smtp-in.l.google.com [172.253.145.26]: PTR \u2192 yulnkjt-in-f26.1e100.net",
+        "alt4.gmail-smtp-in.l.google.com [2607:f8b0:4023:3003::1b]: PTR \u2192 yulnkjt-in-f27.1e100.net"
       ],
       "warnings": [],
       "errors": []
@@ -500,13 +603,18 @@
       "checkName": "Forward-Confirmed rDNS (FCrDNS)",
       "category": 11,
       "severity": 1,
-      "summary": "FCrDNS: 5/10 MX IPs confirmed",
+      "summary": "FCrDNS: 10/10 MX IPs confirmed",
       "details": [
-        "172.217.78.26 -\u003E yurnoyc-in-f26.1e100.net -\u003E 172.217.78.26 (FCrDNS confirmed)",
-        "192.178.164.27 -\u003E yuphxer-in-f27.1e100.net -\u003E 192.178.164.27 (FCrDNS confirmed)",
+        "173.194.65.26 -\u003E ro-in-f26.1e100.net -\u003E 173.194.65.26 (FCrDNS confirmed)",
+        "2607:f8b0:4023:1c03::1b -\u003E ro-in-f27.1e100.net -\u003E 2607:f8b0:4023:1c03::1b (FCrDNS confirmed)",
+        "192.178.164.26 -\u003E yuphxer-in-f26.1e100.net -\u003E 192.178.164.26 (FCrDNS confirmed)",
+        "2607:f8b0:4023:2009::1a -\u003E yuphxer-in-f26.1e100.net -\u003E 2607:f8b0:4023:2009::1a (FCrDNS confirmed)",
         "192.178.128.26 -\u003E lcausi-in-f26.1e100.net -\u003E 192.178.128.26 (FCrDNS confirmed)",
+        "2607:f8b0:4023:2801::1b -\u003E lcausi-in-f27.1e100.net -\u003E 2607:f8b0:4023:2801::1b (FCrDNS confirmed)",
         "172.253.135.27 -\u003E yudfwta-in-f27.1e100.net -\u003E 172.253.135.27 (FCrDNS confirmed)",
-        "172.253.145.26 -\u003E yulnkjt-in-f26.1e100.net -\u003E 172.253.145.26 (FCrDNS confirmed)"
+        "2607:f8b0:4023:1015::1a -\u003E yudfwta-in-f26.1e100.net -\u003E 2607:f8b0:4023:1015::1a (FCrDNS confirmed)",
+        "172.253.145.26 -\u003E yulnkjt-in-f26.1e100.net -\u003E 172.253.145.26 (FCrDNS confirmed)",
+        "2607:f8b0:4023:3003::1b -\u003E yulnkjt-in-f27.1e100.net -\u003E 2607:f8b0:4023:3003::1b (FCrDNS confirmed)"
       ],
       "warnings": [],
       "errors": []
@@ -517,20 +625,10 @@
       "severity": 1,
       "summary": "No IP blocklist listings",
       "details": [
-        "172.217.78.26: Not listed on zen.spamhaus.org",
-        "172.217.78.26: Not listed on b.barracudacentral.org",
-        "172.217.78.26: Not listed on bl.spamcop.net",
-        "192.178.164.27: Not listed on zen.spamhaus.org",
-        "192.178.164.27: Not listed on b.barracudacentral.org",
-        "192.178.164.27: Not listed on bl.spamcop.net",
-        "192.178.128.26: Not listed on zen.spamhaus.org",
-        "192.178.128.26: Not listed on b.barracudacentral.org",
+        "173.194.65.26: Not listed on bl.spamcop.net",
+        "192.178.164.26: Not listed on bl.spamcop.net",
         "192.178.128.26: Not listed on bl.spamcop.net",
-        "172.253.135.27: Not listed on zen.spamhaus.org",
-        "172.253.135.27: Not listed on b.barracudacentral.org",
         "172.253.135.27: Not listed on bl.spamcop.net",
-        "172.253.145.26: Not listed on zen.spamhaus.org",
-        "172.253.145.26: Not listed on b.barracudacentral.org",
         "172.253.145.26: Not listed on bl.spamcop.net"
       ],
       "warnings": [],
@@ -542,31 +640,111 @@
       "severity": 1,
       "summary": "Clean on all extended blocklists",
       "details": [
-        "172.217.78.26: Not listed on S5H",
-        "172.217.78.26: Not listed on SORBS",
-        "172.217.78.26: Not listed on SORBS Spam",
-        "172.217.78.26: Not listed on Mailspike",
-        "172.217.78.26: Not listed on UCEProtect L1",
-        "192.178.164.27: Not listed on S5H",
-        "192.178.164.27: Not listed on SORBS",
-        "192.178.164.27: Not listed on SORBS Spam",
-        "192.178.164.27: Not listed on Mailspike",
-        "192.178.164.27: Not listed on UCEProtect L1",
+        "173.194.65.26: Not listed on S5H",
+        "173.194.65.26: Not listed on SORBS Combined",
+        "173.194.65.26: Not listed on SORBS Spam",
+        "173.194.65.26: Not listed on Mailspike",
+        "173.194.65.26: Not listed on UCEProtect L1",
+        "173.194.65.26: Not listed on UCEProtect L2",
+        "173.194.65.26: Not listed on UCEProtect L3",
+        "173.194.65.26: Not listed on PSBL",
+        "173.194.65.26: Not listed on SpamRATS Dyna",
+        "173.194.65.26: Not listed on SpamRATS NoPtr",
+        "173.194.65.26: Not listed on SpamRATS Spam",
+        "173.194.65.26: Not listed on DroneBL",
+        "173.194.65.26: Not listed on InterServer",
+        "173.194.65.26: Not listed on Cymru Bogons",
+        "173.194.65.26: Not listed on Blocklist.de",
+        "173.194.65.26: Not listed on NordSpam BL",
+        "173.194.65.26: Not listed on INPS",
+        "173.194.65.26: Not listed on NiX Spam",
+        "173.194.65.26: Not listed on Truncate/GBUdb",
+        "173.194.65.26: Not listed on Mailspike Z",
+        "173.194.65.26: Not listed on Digibase SpamBot",
+        "192.178.164.26: Not listed on S5H",
+        "192.178.164.26: Not listed on SORBS Combined",
+        "192.178.164.26: Not listed on SORBS Spam",
+        "192.178.164.26: Not listed on Mailspike",
+        "192.178.164.26: Not listed on UCEProtect L1",
+        "192.178.164.26: Not listed on UCEProtect L2",
+        "192.178.164.26: Not listed on UCEProtect L3",
+        "192.178.164.26: Not listed on PSBL",
+        "192.178.164.26: Not listed on SpamRATS Dyna",
+        "192.178.164.26: Not listed on SpamRATS NoPtr",
+        "192.178.164.26: Not listed on SpamRATS Spam",
+        "192.178.164.26: Not listed on DroneBL",
+        "192.178.164.26: Not listed on InterServer",
+        "192.178.164.26: Not listed on Cymru Bogons",
+        "192.178.164.26: Not listed on Blocklist.de",
+        "192.178.164.26: Not listed on NordSpam BL",
+        "192.178.164.26: Not listed on INPS",
+        "192.178.164.26: Not listed on NiX Spam",
+        "192.178.164.26: Not listed on Truncate/GBUdb",
+        "192.178.164.26: Not listed on Mailspike Z",
+        "192.178.164.26: Not listed on Digibase SpamBot",
         "192.178.128.26: Not listed on S5H",
-        "192.178.128.26: Not listed on SORBS",
+        "192.178.128.26: Not listed on SORBS Combined",
         "192.178.128.26: Not listed on SORBS Spam",
         "192.178.128.26: Not listed on Mailspike",
         "192.178.128.26: Not listed on UCEProtect L1",
+        "192.178.128.26: Not listed on UCEProtect L2",
+        "192.178.128.26: Not listed on UCEProtect L3",
+        "192.178.128.26: Not listed on PSBL",
+        "192.178.128.26: Not listed on SpamRATS Dyna",
+        "192.178.128.26: Not listed on SpamRATS NoPtr",
+        "192.178.128.26: Not listed on SpamRATS Spam",
+        "192.178.128.26: Not listed on DroneBL",
+        "192.178.128.26: Not listed on InterServer",
+        "192.178.128.26: Not listed on Cymru Bogons",
+        "192.178.128.26: Not listed on Blocklist.de",
+        "192.178.128.26: Not listed on NordSpam BL",
+        "192.178.128.26: Not listed on INPS",
+        "192.178.128.26: Not listed on NiX Spam",
+        "192.178.128.26: Not listed on Truncate/GBUdb",
+        "192.178.128.26: Not listed on Mailspike Z",
+        "192.178.128.26: Not listed on Digibase SpamBot",
         "172.253.135.27: Not listed on S5H",
-        "172.253.135.27: Not listed on SORBS",
+        "172.253.135.27: Not listed on SORBS Combined",
         "172.253.135.27: Not listed on SORBS Spam",
         "172.253.135.27: Not listed on Mailspike",
         "172.253.135.27: Not listed on UCEProtect L1",
+        "172.253.135.27: Not listed on UCEProtect L2",
+        "172.253.135.27: Not listed on UCEProtect L3",
+        "172.253.135.27: Not listed on PSBL",
+        "172.253.135.27: Not listed on SpamRATS Dyna",
+        "172.253.135.27: Not listed on SpamRATS NoPtr",
+        "172.253.135.27: Not listed on SpamRATS Spam",
+        "172.253.135.27: Not listed on DroneBL",
+        "172.253.135.27: Not listed on InterServer",
+        "172.253.135.27: Not listed on Cymru Bogons",
+        "172.253.135.27: Not listed on Blocklist.de",
+        "172.253.135.27: Not listed on NordSpam BL",
+        "172.253.135.27: Not listed on INPS",
+        "172.253.135.27: Not listed on NiX Spam",
+        "172.253.135.27: Not listed on Truncate/GBUdb",
+        "172.253.135.27: Not listed on Mailspike Z",
+        "172.253.135.27: Not listed on Digibase SpamBot",
         "172.253.145.26: Not listed on S5H",
-        "172.253.145.26: Not listed on SORBS",
+        "172.253.145.26: Not listed on SORBS Combined",
         "172.253.145.26: Not listed on SORBS Spam",
         "172.253.145.26: Not listed on Mailspike",
-        "172.253.145.26: Not listed on UCEProtect L1"
+        "172.253.145.26: Not listed on UCEProtect L1",
+        "172.253.145.26: Not listed on UCEProtect L2",
+        "172.253.145.26: Not listed on UCEProtect L3",
+        "172.253.145.26: Not listed on PSBL",
+        "172.253.145.26: Not listed on SpamRATS Dyna",
+        "172.253.145.26: Not listed on SpamRATS NoPtr",
+        "172.253.145.26: Not listed on SpamRATS Spam",
+        "172.253.145.26: Not listed on DroneBL",
+        "172.253.145.26: Not listed on InterServer",
+        "172.253.145.26: Not listed on Cymru Bogons",
+        "172.253.145.26: Not listed on Blocklist.de",
+        "172.253.145.26: Not listed on NordSpam BL",
+        "172.253.145.26: Not listed on INPS",
+        "172.253.145.26: Not listed on NiX Spam",
+        "172.253.145.26: Not listed on Truncate/GBUdb",
+        "172.253.145.26: Not listed on Mailspike Z",
+        "172.253.145.26: Not listed on Digibase SpamBot"
       ],
       "warnings": [],
       "errors": []
@@ -574,13 +752,18 @@
     {
       "checkName": "Domain Blocklist Check",
       "category": 13,
-      "severity": 1,
-      "summary": "Domain not on any blocklists",
-      "details": [
-        "gmail.com: Not listed on dbl.spamhaus.org",
-        "gmail.com: Not listed on multi.surbl.org",
-        "gmail.com: black.uribl.com returned resolver/error code (127.0.0.1) - not a real listing (using public DNS resolver)"
-      ],
+      "severity": 0,
+      "summary": "Skipped \u2014 domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Hostname Blocklist (RHSBL)",
+      "category": 13,
+      "severity": 0,
+      "summary": "Skipped \u2014 MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -592,6 +775,15 @@
       "details": [
         "No DS or DNSKEY records found"
       ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "NSEC/NSEC3 Zone Walk",
+      "category": 14,
+      "severity": 0,
+      "summary": "DNSSEC not enabled \u2014 NSEC/NSEC3 not applicable",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -622,14 +814,16 @@
     {
       "checkName": "TLS Reporting (TLS-RPT)",
       "category": 16,
-      "severity": 1,
+      "severity": 2,
       "summary": "TLS-RPT configured",
       "details": [
         "TLS-RPT: v=TLSRPTv1;rua=mailto:sts-reports@google.com",
         "  Report URI: mailto:sts-reports@google.com",
         "    Report domain google.com: MX records exist"
       ],
-      "warnings": [],
+      "warnings": [
+        "TLS-RPT rua= sends reports to external domain google.com \u2014 verify external authorization record exists at appropriate location"
+      ],
       "errors": []
     },
     {
@@ -651,7 +845,8 @@
         "_25._tcp.alt1.gmail-smtp-in.l.google.com: No TLSA records",
         "_25._tcp.alt2.gmail-smtp-in.l.google.com: No TLSA records",
         "_25._tcp.alt3.gmail-smtp-in.l.google.com: No TLSA records",
-        "_25._tcp.alt4.gmail-smtp-in.l.google.com: No TLSA records"
+        "_25._tcp.alt4.gmail-smtp-in.l.google.com: No TLSA records",
+        "DANE checked for port 25 only \u2014 submission ports (587/465) not checked"
       ],
       "warnings": [],
       "errors": []
@@ -676,26 +871,31 @@
         "  Issuer: CN=WR2, O=Google Trust Services, C=US",
         "  Expires: 2026-06-01",
         "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com",
+        "  TLS Protocol: Tls13",
         "alt1.gmail-smtp-in.l.google.com:",
         "  Subject: CN=mx.google.com",
         "  Issuer: CN=WE2, O=Google Trust Services, C=US",
-        "  Expires: 2026-06-01",
+        "  Expires: 2026-06-08",
         "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com",
+        "  TLS Protocol: Tls13",
         "alt2.gmail-smtp-in.l.google.com:",
         "  Subject: CN=mx.google.com",
         "  Issuer: CN=WR2, O=Google Trust Services, C=US",
         "  Expires: 2026-06-01",
         "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com",
+        "  TLS Protocol: Tls13",
         "alt3.gmail-smtp-in.l.google.com:",
         "  Subject: CN=mx.google.com",
         "  Issuer: CN=WE2, O=Google Trust Services, C=US",
-        "  Expires: 2026-06-01",
+        "  Expires: 2026-06-08",
         "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com",
+        "  TLS Protocol: Tls13",
         "alt4.gmail-smtp-in.l.google.com:",
         "  Subject: CN=mx.google.com",
         "  Issuer: CN=WE2, O=Google Trust Services, C=US",
-        "  Expires: 2026-06-01",
-        "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com"
+        "  Expires: 2026-06-08",
+        "  SANs: mx.google.com, smtp.google.com, aspmx.l.google.com, alt1.aspmx.l.google.com, alt2.aspmx.l.google.com, alt3.aspmx.l.google.com, alt4.aspmx.l.google.com, gmail-smtp-in.l.google.com, alt1.gmail-smtp-in.l.google.com, alt2.gmail-smtp-in.l.google.com, alt3.gmail-smtp-in.l.google.com, alt4.gmail-smtp-in.l.google.com, gmr-smtp-in.l.google.com, alt1.gmr-smtp-in.l.google.com, alt2.gmr-smtp-in.l.google.com, alt3.gmr-smtp-in.l.google.com, alt4.gmr-smtp-in.l.google.com, mx1.smtp.goog, mx2.smtp.goog, mx3.smtp.goog, mx4.smtp.goog, aspmx2.googlemail.com, aspmx3.googlemail.com, aspmx4.googlemail.com, aspmx5.googlemail.com, gmr-mx.google.com",
+        "  TLS Protocol: Tls13"
       ],
       "warnings": [],
       "errors": []
@@ -726,15 +926,15 @@
       "severity": 1,
       "summary": "Checked SMTP banners for 5 MX host(s)",
       "details": [
-        "gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP a92af1059eb24-12ab97d4e67si23483022c88.10 - gsmtp",
+        "gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP a92af1059eb24-12bedd53450si6453343c88.12 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)",
-        "alt1.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 5a478bee46e88-2c3c7b6c1ffsi35973592eec.67 - gsmtp",
+        "alt1.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 5a478bee46e88-2ca7c6ecb02si10517705eec.42 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)",
-        "alt2.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 46e09a7af769-7da0a3451cdsi7423278a34.22 - gsmtp",
+        "alt2.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 5614622812f47-46d93c8d0dfsi1735183b6e.96 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)",
-        "alt3.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 5614622812f47-46aa049d760si5973694b6e.103 - gsmtp",
+        "alt3.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 586e51a60fabf-422eb263245si2275754fac.136 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)",
-        "alt4.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 586e51a60fabf-41d048b752fsi7987727fac.26 - gsmtp",
+        "alt4.gmail-smtp-in.l.google.com: Banner: 220 mx.google.com ESMTP 5614622812f47-46d93c8f0casi1728976b6e.103 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)"
       ],
       "warnings": [],
@@ -743,11 +943,11 @@
     {
       "checkName": "EHLO Capabilities",
       "category": 19,
-      "severity": 0,
+      "severity": 1,
       "summary": "EHLO capabilities retrieved",
       "details": [
         "gmail-smtp-in.l.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [57.154.172.170]",
+        "  mx.google.com at your service, [172.184.213.250]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
@@ -755,8 +955,9 @@
         "  PIPELINING",
         "  CHUNKING",
         "  SMTPUTF8",
+        "  gmail-smtp-in.l.google.com supports SMTPUTF8 (internationalized email addresses/EAI ready)",
         "alt1.gmail-smtp-in.l.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [57.154.172.170]",
+        "  mx.google.com at your service, [172.184.213.250]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
@@ -764,8 +965,9 @@
         "  PIPELINING",
         "  CHUNKING",
         "  SMTPUTF8",
+        "  alt1.gmail-smtp-in.l.google.com supports SMTPUTF8 (internationalized email addresses/EAI ready)",
         "alt2.gmail-smtp-in.l.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [57.154.172.170]",
+        "  mx.google.com at your service, [172.184.213.250]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
@@ -773,8 +975,9 @@
         "  PIPELINING",
         "  CHUNKING",
         "  SMTPUTF8",
+        "  alt2.gmail-smtp-in.l.google.com supports SMTPUTF8 (internationalized email addresses/EAI ready)",
         "alt3.gmail-smtp-in.l.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [57.154.172.170]",
+        "  mx.google.com at your service, [172.184.213.250]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
@@ -782,15 +985,17 @@
         "  PIPELINING",
         "  CHUNKING",
         "  SMTPUTF8",
+        "  alt3.gmail-smtp-in.l.google.com supports SMTPUTF8 (internationalized email addresses/EAI ready)",
         "alt4.gmail-smtp-in.l.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [57.154.172.170]",
+        "  mx.google.com at your service, [172.184.213.250]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
         "  ENHANCEDSTATUSCODES",
         "  PIPELINING",
         "  CHUNKING",
-        "  SMTPUTF8"
+        "  SMTPUTF8",
+        "  alt4.gmail-smtp-in.l.google.com supports SMTPUTF8 (internationalized email addresses/EAI ready)"
       ],
       "warnings": [],
       "errors": []
@@ -826,14 +1031,79 @@
       "errors": []
     },
     {
-      "checkName": "Submission Ports",
+      "checkName": "STARTTLS Enforcement",
+      "category": 19,
+      "severity": 1,
+      "summary": "All MX hosts support STARTTLS",
+      "details": [
+        "gmail-smtp-in.l.google.com: STARTTLS supported (TLS Tls13)",
+        "alt1.gmail-smtp-in.l.google.com: STARTTLS supported (TLS Tls13)",
+        "alt2.gmail-smtp-in.l.google.com: STARTTLS supported (TLS Tls13)",
+        "alt3.gmail-smtp-in.l.google.com: STARTTLS supported (TLS Tls13)",
+        "alt4.gmail-smtp-in.l.google.com: STARTTLS supported (TLS Tls13)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Banner vs Reverse DNS",
       "category": 19,
       "severity": 2,
-      "summary": "Check timed out (30s limit)",
+      "summary": "10 MX IP(s) have rDNS/banner hostname mismatch",
       "details": [],
       "warnings": [
-        "Check did not complete within timeout"
+        "gmail-smtp-in.l.google.com (173.194.65.26): PTR [ro-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "gmail-smtp-in.l.google.com (2607:f8b0:4023:1c03::1b): PTR [ro-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt1.gmail-smtp-in.l.google.com (192.178.164.26): PTR [yuphxer-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt1.gmail-smtp-in.l.google.com (2607:f8b0:4023:2009::1a): PTR [yuphxer-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt2.gmail-smtp-in.l.google.com (192.178.128.26): PTR [lcausi-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt2.gmail-smtp-in.l.google.com (2607:f8b0:4023:2801::1b): PTR [lcausi-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt3.gmail-smtp-in.l.google.com (172.253.135.27): PTR [yudfwta-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt3.gmail-smtp-in.l.google.com (2607:f8b0:4023:1015::1a): PTR [yudfwta-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt4.gmail-smtp-in.l.google.com (172.253.145.26): PTR [yulnkjt-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "alt4.gmail-smtp-in.l.google.com (2607:f8b0:4023:3003::1b): PTR [yulnkjt-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "Reverse DNS should match the SMTP banner hostname for best deliverability"
       ],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Transaction Timing",
+      "category": 19,
+      "severity": 1,
+      "summary": "SMTP timing acceptable for 5 MX host(s)",
+      "details": [
+        "gmail-smtp-in.l.google.com: Connect: 52ms, Banner: 39ms, EHLO: 172ms, TLS: 164ms (Total: 427ms)",
+        "alt1.gmail-smtp-in.l.google.com: Connect: 41ms, Banner: 28ms, EHLO: 153ms, TLS: 202ms (Total: 424ms)",
+        "alt2.gmail-smtp-in.l.google.com: Connect: 68ms, Banner: 94ms, EHLO: 58ms, TLS: 201ms (Total: 421ms)",
+        "alt3.gmail-smtp-in.l.google.com: Connect: 42ms, Banner: 91ms, EHLO: 52ms, TLS: 98ms (Total: 283ms)",
+        "alt4.gmail-smtp-in.l.google.com: Connect: 48ms, Banner: 58ms, EHLO: 60ms, TLS: 112ms (Total: 278ms)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Submission Ports",
+      "category": 19,
+      "severity": 0,
+      "summary": "Submission port probe completed",
+      "details": [
+        "gmail-smtp-in.l.google.com:",
+        "  Port 587 (submission): Closed/Filtered",
+        "  Port 465 (SMTPS): Closed/Filtered",
+        "alt1.gmail-smtp-in.l.google.com:",
+        "  Port 587 (submission): Closed/Filtered",
+        "  Port 465 (SMTPS): Closed/Filtered",
+        "alt2.gmail-smtp-in.l.google.com:",
+        "  Port 587 (submission): Closed/Filtered",
+        "  Port 465 (SMTPS): Closed/Filtered",
+        "alt3.gmail-smtp-in.l.google.com:",
+        "  Port 587 (submission): Closed/Filtered",
+        "  Port 465 (SMTPS): Closed/Filtered",
+        "alt4.gmail-smtp-in.l.google.com:",
+        "  Port 587 (submission): Closed/Filtered",
+        "  Port 465 (SMTPS): Closed/Filtered"
+      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -880,9 +1150,9 @@
       "severity": 1,
       "summary": "5/5 MX hosts have IPv6",
       "details": [
-        "gmail-smtp-in.l.google.com: 2607:f8b0:4023:1c05::1a",
-        "alt1.gmail-smtp-in.l.google.com: 2607:f8b0:4023:2009::1b",
-        "alt2.gmail-smtp-in.l.google.com: 2607:f8b0:4023:2801::1a",
+        "gmail-smtp-in.l.google.com: 2607:f8b0:4023:1c03::1b",
+        "alt1.gmail-smtp-in.l.google.com: 2607:f8b0:4023:2009::1a",
+        "alt2.gmail-smtp-in.l.google.com: 2607:f8b0:4023:2801::1b",
         "alt3.gmail-smtp-in.l.google.com: 2607:f8b0:4023:1015::1a",
         "alt4.gmail-smtp-in.l.google.com: 2607:f8b0:4023:3003::1b"
       ],
@@ -890,12 +1160,31 @@
       "errors": []
     },
     {
+      "checkName": "SMTP IPv6 Connectivity",
+      "category": 23,
+      "severity": 2,
+      "summary": "5 MX IPv6 address(es) unreachable \u2014 stale AAAA records cause delivery delays",
+      "details": [],
+      "warnings": [
+        "gmail-smtp-in.l.google.com [2607:f8b0:4023:1c03::1b]: AAAA exists but port 25 unreachable over IPv6",
+        "alt1.gmail-smtp-in.l.google.com [2607:f8b0:4023:2009::1a]: AAAA exists but port 25 unreachable over IPv6",
+        "alt2.gmail-smtp-in.l.google.com [2607:f8b0:4023:2801::1b]: AAAA exists but port 25 unreachable over IPv6",
+        "alt3.gmail-smtp-in.l.google.com [2607:f8b0:4023:1015::1a]: AAAA exists but port 25 unreachable over IPv6",
+        "alt4.gmail-smtp-in.l.google.com [2607:f8b0:4023:3003::1b]: AAAA exists but port 25 unreachable over IPv6"
+      ],
+      "errors": []
+    },
+    {
       "checkName": "Postmaster Address",
       "category": 24,
       "severity": 1,
-      "summary": "postmaster@ accepted",
+      "summary": "postmaster@ accepted on all 5 MX hosts",
       "details": [
-        "postmaster@gmail.com via gmail-smtp-in.l.google.com: Accepted"
+        "postmaster@gmail.com via gmail-smtp-in.l.google.com: Accepted",
+        "postmaster@gmail.com via alt1.gmail-smtp-in.l.google.com: Accepted",
+        "postmaster@gmail.com via alt2.gmail-smtp-in.l.google.com: Accepted",
+        "postmaster@gmail.com via alt3.gmail-smtp-in.l.google.com: Accepted",
+        "postmaster@gmail.com via alt4.gmail-smtp-in.l.google.com: Accepted"
       ],
       "warnings": [],
       "errors": []
@@ -904,9 +1193,13 @@
       "checkName": "Abuse Address",
       "category": 25,
       "severity": 1,
-      "summary": "abuse@ accepted",
+      "summary": "abuse@ accepted on all 5 MX hosts",
       "details": [
-        "abuse@gmail.com via gmail-smtp-in.l.google.com: Accepted"
+        "abuse@gmail.com via gmail-smtp-in.l.google.com: Accepted",
+        "abuse@gmail.com via alt1.gmail-smtp-in.l.google.com: Accepted",
+        "abuse@gmail.com via alt2.gmail-smtp-in.l.google.com: Accepted",
+        "abuse@gmail.com via alt3.gmail-smtp-in.l.google.com: Accepted",
+        "abuse@gmail.com via alt4.gmail-smtp-in.l.google.com: Accepted"
       ],
       "warnings": [],
       "errors": []
@@ -917,9 +1210,9 @@
       "severity": 1,
       "summary": "DNS answers consistent across resolvers",
       "details": [
-        "Google (8.8.8.8): A=[142.251.46.229] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
-        "Cloudflare (1.1.1.1): A=[142.251.214.37] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
-        "Quad9 (9.9.9.9): A=[142.251.32.165] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
+        "Google (8.8.8.8): A=[142.251.218.133] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
+        "Cloudflare (1.1.1.1): A=[142.251.218.69] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
+        "Quad9 (9.9.9.9): A=[142.251.45.5] MX=[10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, 30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, 5:gmail-smtp-in.l.google.com]",
         "A record IPs differ across resolvers (normal for anycast/GeoDNS)"
       ],
       "warnings": [],
@@ -958,9 +1251,9 @@
       "severity": 1,
       "summary": "TTLs within reasonable range",
       "details": [
-        "MX (gmail.com): TTL 3297s",
-        "SPF/TXT (gmail.com): TTL 253s",
-        "DMARC (_dmarc.gmail.com): TTL 553s"
+        "MX (gmail.com): TTL 819s",
+        "SPF/TXT (gmail.com): TTL 264s",
+        "DMARC (_dmarc.gmail.com): TTL 564s"
       ],
       "warnings": [],
       "errors": []
@@ -971,10 +1264,14 @@
       "severity": 1,
       "summary": "Zone transfer denied on all nameservers",
       "details": [
-        "ns4.google.com (216.239.38.10): Zone transfer denied (good)",
-        "ns3.google.com (216.239.36.10): Zone transfer denied (good)",
         "ns1.google.com (216.239.32.10): Zone transfer denied (good)",
-        "ns2.google.com (216.239.34.10): Zone transfer denied (good)"
+        "ns1.google.com (2001:4860:4802:32::a): Zone transfer denied (good)",
+        "ns3.google.com (216.239.36.10): Zone transfer denied (good)",
+        "ns3.google.com (2001:4860:4802:36::a): Zone transfer denied (good)",
+        "ns4.google.com (216.239.38.10): Zone transfer denied (good)",
+        "ns4.google.com (2001:4860:4802:38::a): Zone transfer denied (good)",
+        "ns2.google.com (216.239.34.10): Zone transfer denied (good)",
+        "ns2.google.com (2001:4860:4802:34::a): Zone transfer denied (good)"
       ],
       "warnings": [],
       "errors": []
@@ -1007,21 +1304,48 @@
       "errors": []
     },
     {
+      "checkName": "Duplicate/Conflicting TXT Records",
+      "category": 30,
+      "severity": 1,
+      "summary": "No duplicate or conflicting TXT records",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "All TXT Records",
       "category": 30,
       "severity": 0,
       "summary": "3 TXT record(s) found",
       "details": [
-        "TXT: yahoo-verification-key=dKYwfVbaxatmcXiXy6LDAxMRirqpOq5tj98iJv9qWVk=",
+        "TXT: v=spf1 redirect=_spf.google.com",
         "TXT: globalsign-smime-dv=CDYX\u002BXFHUw2wml6/Gb8\u002B59BsH31KzUr6c1l2BPvqKX8=",
-        "TXT: v=spf1 redirect=_spf.google.com"
+        "TXT: yahoo-verification-key=dKYwfVbaxatmcXiXy6LDAxMRirqpOq5tj98iJv9qWVk="
       ],
       "warnings": [],
       "errors": []
+    },
+    {
+      "checkName": "DNS Query Errors",
+      "category": 2,
+      "severity": 2,
+      "summary": "8 DNS query error(s) \u2014 some results may be incomplete",
+      "details": [],
+      "warnings": [
+        "DNS query to 2001:4860:4802:36::a failed for SOA gmail.com: Query 62081 =\u003E gmail.com IN SOA on [2001:4860:4802:36::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:38::a failed for SOA gmail.com: Query 27466 =\u003E gmail.com IN SOA on [2001:4860:4802:38::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:32::a failed for SOA gmail.com: Query 38605 =\u003E gmail.com IN SOA on [2001:4860:4802:32::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:34::a failed for SOA gmail.com: Query 39995 =\u003E gmail.com IN SOA on [2001:4860:4802:34::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:34::a failed for SOA gmail.com: Query 32872 =\u003E gmail.com IN SOA on [2001:4860:4802:34::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:38::a failed for SOA gmail.com: Query 44910 =\u003E gmail.com IN SOA on [2001:4860:4802:38::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:36::a failed for SOA gmail.com: Query 162 =\u003E gmail.com IN SOA on [2001:4860:4802:36::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:32::a failed for SOA gmail.com: Query 22877 =\u003E gmail.com IN SOA on [2001:4860:4802:32::a]:53 failed with an error."
+      ],
+      "errors": []
     }
   ],
-  "passCount": 51,
-  "warningCount": 4,
+  "passCount": 57,
+  "warningCount": 8,
   "errorCount": 0,
   "criticalCount": 0
 }
