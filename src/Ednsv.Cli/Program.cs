@@ -73,9 +73,13 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
             domains.Add(trimmed);
     }
 
-    // Collect domains from --domains-file
+    // Collect domains from --domains-file (plain text or CSV)
     var parseResult = rootCommand.Parse(args);
     var domainsFilePath = parseResult.GetValueForOption(domainsFileOption);
+    Dictionary<string, DomainMeta>? domainMeta = null;
+    List<string>? csvExtraColumns = null;
+    string? csvVolumeColumn = null;
+
     if (!string.IsNullOrEmpty(domainsFilePath))
     {
         if (!File.Exists(domainsFilePath))
@@ -85,15 +89,33 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
         }
 
         var lines = await File.ReadAllLinesAsync(domainsFilePath);
-        foreach (var line in lines)
+
+        if (domainsFilePath.EndsWith(".csv", StringComparison.OrdinalIgnoreCase))
         {
-            // Skip empty lines and comments
-            var trimmed = line.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
-                continue;
-            trimmed = trimmed.TrimEnd('.').ToLowerInvariant();
-            if (!string.IsNullOrWhiteSpace(trimmed))
-                domains.Add(trimmed);
+            // CSV mode: parse header, extract domain column + metadata
+            var (csvDomains, meta, extraCols, volCol) = ParseCsvDomainsFile(lines);
+            if (csvDomains.Count == 0 && lines.Length > 1)
+            {
+                // ParseCsvDomainsFile already printed an error if header was bad
+                return;
+            }
+            domains.AddRange(csvDomains);
+            domainMeta = meta;
+            csvExtraColumns = extraCols;
+            csvVolumeColumn = volCol;
+        }
+        else
+        {
+            // Plain text: one domain per line
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+                if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith('#'))
+                    continue;
+                trimmed = trimmed.TrimEnd('.').ToLowerInvariant();
+                if (!string.IsNullOrWhiteSpace(trimmed))
+                    domains.Add(trimmed);
+            }
         }
     }
 
@@ -179,7 +201,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
         var liveIndex = parseResult.GetValueForOption(liveIndexOption);
         Directory.CreateDirectory(outputDir);
-        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn);
         return;
     }
 
@@ -230,6 +252,143 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 }, domainArg, formatOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption, verboseOption);
 
 return await rootCommand.InvokeAsync(args);
+
+/// <summary>
+/// Parses a CSV file, returning the list of domains plus per-domain metadata.
+/// Looks for a "domain" or "fqdn" column (case-insensitive) for the domain.
+/// Detects a volume column matching "total messages", "totalmessages", "messages", or "total".
+/// </summary>
+static (List<string> domains, Dictionary<string, DomainMeta> meta, List<string> extraColumns, string? volumeColumn)
+    ParseCsvDomainsFile(string[] lines)
+{
+    var domains = new List<string>();
+    var meta = new Dictionary<string, DomainMeta>(StringComparer.OrdinalIgnoreCase);
+
+    if (lines.Length == 0)
+        return (domains, meta, new List<string>(), null);
+
+    // Parse header
+    var headers = CsvSplitLine(lines[0]);
+    int domainCol = -1;
+    int volumeCol = -1;
+    string? volumeHeader = null;
+
+    for (int c = 0; c < headers.Count; c++)
+    {
+        var h = headers[c].Trim();
+        var hLower = h.ToLowerInvariant();
+        if (domainCol < 0 && hLower is "domain" or "fqdn")
+            domainCol = c;
+        if (volumeCol < 0 && hLower is "total messages" or "totalmessages" or "messages" or "total")
+        {
+            volumeCol = c;
+            volumeHeader = h;
+        }
+    }
+
+    if (domainCol < 0)
+    {
+        Console.Error.WriteLine("Error: CSV file must have a 'domain' or 'fqdn' column header.");
+        return (domains, meta, new List<string>(), null);
+    }
+
+    // Build list of extra column headers (everything except the domain column)
+    var extraColumns = new List<string>();
+    for (int c = 0; c < headers.Count; c++)
+    {
+        if (c != domainCol)
+            extraColumns.Add(headers[c].Trim());
+    }
+
+    // Parse data rows
+    for (int i = 1; i < lines.Length; i++)
+    {
+        var line = lines[i].Trim();
+        if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
+            continue;
+
+        var fields = CsvSplitLine(line);
+        if (fields.Count <= domainCol)
+            continue;
+
+        var domain = fields[domainCol].Trim().TrimEnd('.').ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(domain))
+            continue;
+
+        // Collect extra columns
+        var cols = new Dictionary<string, string>();
+        for (int c = 0; c < headers.Count; c++)
+        {
+            if (c == domainCol) continue;
+            var val = c < fields.Count ? fields[c].Trim() : "";
+            cols[headers[c].Trim()] = val;
+        }
+
+        long volume = 0;
+        if (volumeCol >= 0 && volumeCol < fields.Count)
+            long.TryParse(fields[volumeCol].Trim().Replace(",", ""), out volume);
+
+        if (!meta.ContainsKey(domain))
+        {
+            domains.Add(domain);
+            meta[domain] = new DomainMeta(cols, volume);
+        }
+    }
+
+    return (domains, meta, extraColumns, volumeHeader);
+}
+
+/// <summary>
+/// Splits a CSV line respecting quoted fields. Handles double-quote escaping.
+/// </summary>
+static List<string> CsvSplitLine(string line)
+{
+    var fields = new List<string>();
+    var current = new StringBuilder();
+    bool inQuotes = false;
+
+    for (int i = 0; i < line.Length; i++)
+    {
+        var c = line[i];
+        if (inQuotes)
+        {
+            if (c == '"')
+            {
+                if (i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    current.Append('"');
+                    i++; // skip escaped quote
+                }
+                else
+                {
+                    inQuotes = false;
+                }
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+        else
+        {
+            if (c == '"')
+            {
+                inQuotes = true;
+            }
+            else if (c == ',')
+            {
+                fields.Add(current.ToString());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(c);
+            }
+        }
+    }
+    fields.Add(current.ToString());
+    return fields;
+}
 
 static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null)
 {
@@ -604,7 +763,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 /// with progressive console output, then generates an index file with
 /// the summary and links to each domain report.
 /// </summary>
-static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null)
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null, Dictionary<string, DomainMeta>? domainMeta = null, List<string>? csvExtraColumns = null, string? csvVolumeColumn = null)
 {
     var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
     var reports = new List<ValidationReport>();
@@ -748,16 +907,16 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         // Rewrite the index and issues after each domain so they're always up to date
         if (liveIndex)
         {
-            await WriteIndexFileAsync(reports, fmt, ext, outputDir);
-            await WriteIssuesFileAsync(reports, fmt, ext, outputDir);
+            await WriteIndexFileAsync(reports, fmt, ext, outputDir, domainMeta, csvExtraColumns, csvVolumeColumn);
+            await WriteIssuesFileAsync(reports, fmt, ext, outputDir, domainMeta, csvVolumeColumn);
             AnsiConsole.MarkupLine($"  [grey]Updated index + issues ({reports.Count}/{domains.Count} domains)[/]");
         }
     }
 
     // Write final index and issues (always — covers non-live-index mode and ensures
     // the final version includes all domains)
-    await WriteIndexFileAsync(reports, fmt, ext, outputDir);
-    await WriteIssuesFileAsync(reports, fmt, ext, outputDir);
+    await WriteIndexFileAsync(reports, fmt, ext, outputDir, domainMeta, csvExtraColumns, csvVolumeColumn);
+    await WriteIssuesFileAsync(reports, fmt, ext, outputDir, domainMeta, csvVolumeColumn);
 
     AnsiConsole.WriteLine();
     AnsiConsole.MarkupLine($"[bold green]Index written to {Markup.Escape(Path.Combine(outputDir, $"index.{ext}"))}[/]");
@@ -765,21 +924,21 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     Console.Error.WriteLine($"Reports written to {outputDir}/ ({reports.Count} domain files + index.{ext} + issues.{ext})");
 }
 
-static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir)
+static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir, Dictionary<string, DomainMeta>? meta = null, List<string>? extraCols = null, string? volCol = null)
 {
     var indexPath = Path.Combine(outputDir, $"index.{ext}");
     await using var fw = new StreamWriter(indexPath, false, new UTF8Encoding(false));
     switch (fmt)
     {
         case "json":
-            await WriteJsonIndexAsync(reports, fw);
+            await WriteJsonIndexAsync(reports, fw, meta, extraCols, volCol);
             break;
         case "html":
-            WriteHtmlIndex(reports, ext, fw);
+            WriteHtmlIndex(reports, ext, fw, meta, extraCols, volCol);
             break;
         case "markdown":
         case "md":
-            WriteMdIndex(reports, ext, fw);
+            WriteMdIndex(reports, ext, fw, meta, extraCols, volCol);
             break;
     }
 }
@@ -788,7 +947,7 @@ static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt
 /// Extracts unique issues (Warning/Error/Critical) across all reports,
 /// grouped by check name + severity + summary, with the list of affected domains.
 /// </summary>
-static List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> CollectCrossDomainIssues(List<ValidationReport> reports)
+static List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> CollectCrossDomainIssues(List<ValidationReport> reports, Dictionary<string, DomainMeta>? meta = null)
 {
     var issueMap = new Dictionary<(string, CheckSeverity, string), List<string>>();
 
@@ -809,36 +968,47 @@ static List<(string CheckName, CheckSeverity Severity, string Summary, List<stri
         }
     }
 
+    bool hasVolume = meta?.Values.Any(m => m.Volume > 0) == true;
+
     return issueMap
-        .OrderByDescending(kv => kv.Key.Item2) // Critical first
-        .ThenByDescending(kv => kv.Value.Count) // Most affected domains first
-        .ThenBy(kv => kv.Key.Item1)
-        .Select(kv => (kv.Key.Item1, kv.Key.Item2, kv.Key.Item3, kv.Value))
+        .Select(kv =>
+        {
+            long totalVol = 0;
+            if (hasVolume && meta != null)
+                totalVol = kv.Value.Where(d => meta.ContainsKey(d)).Sum(d => meta[d].Volume);
+            return (kv.Key.Item1, kv.Key.Item2, kv.Key.Item3, kv.Value, totalVol);
+        })
+        .OrderByDescending(x => x.Item2) // Critical first
+        .ThenByDescending(x => x.totalVol) // Highest message impact first
+        .ThenByDescending(x => x.Item4.Count) // Most affected domains
+        .ThenBy(x => x.Item1)
         .ToList();
 }
 
-static async Task WriteIssuesFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir)
+static async Task WriteIssuesFileAsync(List<ValidationReport> reports, string fmt, string ext, string outputDir, Dictionary<string, DomainMeta>? meta = null, string? volCol = null)
 {
     var issuesPath = Path.Combine(outputDir, $"issues.{ext}");
     await using var fw = new StreamWriter(issuesPath, false, new UTF8Encoding(false));
-    var issues = CollectCrossDomainIssues(reports);
+    var issues = CollectCrossDomainIssues(reports, meta);
+
+    bool hasVolume = meta?.Values.Any(m => m.Volume > 0) == true;
 
     switch (fmt)
     {
         case "json":
-            await WriteJsonIssuesAsync(issues, reports.Count, fw);
+            await WriteJsonIssuesAsync(issues, reports.Count, fw, hasVolume, volCol);
             break;
         case "html":
-            WriteHtmlIssues(issues, reports.Count, ext, fw);
+            WriteHtmlIssues(issues, reports.Count, ext, fw, hasVolume, volCol);
             break;
         case "markdown":
         case "md":
-            WriteMdIssues(issues, reports.Count, ext, fw);
+            WriteMdIssues(issues, reports.Count, ext, fw, hasVolume, volCol);
             break;
     }
 }
 
-static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, TextWriter writer)
+static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var jsonOptions = new JsonSerializerOptions
     {
@@ -846,25 +1016,33 @@ static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Sev
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    var obj = new
+    var issueEntries = issues.Select(i =>
     {
-        TotalIssues = issues.Count,
-        TotalDomains = totalDomains,
-        Timestamp = DateTime.UtcNow,
-        Issues = issues.Select(i => new
+        var entry = new Dictionary<string, object>
         {
-            CheckName = i.CheckName,
-            Severity = i.Severity.ToString(),
-            i.Summary,
-            AffectedDomains = i.Domains.Count,
-            Domains = i.Domains
-        })
+            ["checkName"] = i.CheckName,
+            ["severity"] = i.Severity.ToString(),
+            ["summary"] = i.Summary,
+            ["affectedDomains"] = i.Domains.Count,
+            ["domains"] = i.Domains
+        };
+        if (hasVolume)
+            entry[jsonOptions.PropertyNamingPolicy?.ConvertName(volCol ?? "TotalMessages") ?? "totalMessages"] = i.TotalVolume;
+        return entry;
+    });
+
+    var obj = new Dictionary<string, object>
+    {
+        ["totalIssues"] = issues.Count,
+        ["totalDomains"] = totalDomains,
+        ["timestamp"] = DateTime.UtcNow,
+        ["issues"] = issueEntries
     };
 
     await writer.WriteLineAsync(JsonSerializer.Serialize(obj, jsonOptions));
 }
 
-static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, string ext, TextWriter writer)
+static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var sb = new StringBuilder();
     sb.AppendLine("# ednsv — Cross-Domain Issues");
@@ -882,8 +1060,10 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
     else
     {
         // Summary table
-        sb.AppendLine("| Severity | Check | Summary | Domains |");
-        sb.AppendLine("|----------|-------|---------|--------:|");
+        var volHeader = hasVolume ? $" {MdText(volCol ?? "Messages")} |" : "";
+        var volSep = hasVolume ? " --------:|" : "";
+        sb.AppendLine($"| Severity | Check | Summary | Domains |{volHeader}");
+        sb.AppendLine($"|----------|-------|---------|--------:|{volSep}");
 
         foreach (var issue in issues)
         {
@@ -895,11 +1075,8 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
                 _ => "\u2753"
             };
 
-            var domainList = issue.Domains.Count <= 3
-                ? string.Join(", ", issue.Domains.Select(d => $"`{d}`"))
-                : string.Join(", ", issue.Domains.Take(3).Select(d => $"`{d}`")) + $" +{issue.Domains.Count - 3} more";
-
-            sb.AppendLine($"| {icon} {SeverityLabel(issue.Severity)} | {MdText(issue.CheckName)} | {MdText(issue.Summary)} | {issue.Domains.Count}/{totalDomains} |");
+            var volCell = hasVolume ? $" {issue.TotalVolume:N0} |" : "";
+            sb.AppendLine($"| {icon} {SeverityLabel(issue.Severity)} | {MdText(issue.CheckName)} | {MdText(issue.Summary)} | {issue.Domains.Count}/{totalDomains} |{volCell}");
         }
 
         sb.AppendLine();
@@ -924,6 +1101,8 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
             sb.AppendLine();
             sb.AppendLine($"> {MdText(issue.Summary)}");
             sb.AppendLine();
+            if (hasVolume && issue.TotalVolume > 0)
+                sb.AppendLine($"**{MdText(volCol ?? "Messages")} impacted:** {issue.TotalVolume:N0}");
             sb.AppendLine($"**Affected domains ({issue.Domains.Count}/{totalDomains}):**");
             foreach (var domain in issue.Domains)
                 sb.AppendLine($"- [`{domain}`]({SanitizeFilename(domain)}.{ext})");
@@ -937,7 +1116,7 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
     writer.Write(sb.ToString());
 }
 
-static void WriteHtmlIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains)> issues, int totalDomains, string ext, TextWriter writer)
+static void WriteHtmlIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
@@ -1031,7 +1210,8 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
             sb.AppendLine($"  <div class=\"issue-header\">");
             sb.AppendLine($"    <span class=\"badge badge-{sevClass}\">{badgeLabel}</span>");
             sb.AppendLine($"    <span class=\"issue-name\">{e(issue.CheckName)}</span>");
-            sb.AppendLine($"    <span class=\"issue-count\">{issue.Domains.Count}/{totalDomains} domains</span>");
+            var volInfo = hasVolume && issue.TotalVolume > 0 ? $" &middot; {issue.TotalVolume:N0} {e(volCol ?? "messages")}" : "";
+            sb.AppendLine($"    <span class=\"issue-count\">{issue.Domains.Count}/{totalDomains} domains{volInfo}</span>");
             sb.AppendLine($"  </div>");
             sb.AppendLine($"  <div class=\"issue-summary\">{e(issue.Summary)}</div>");
             sb.AppendLine($"  <div class=\"domain-chips\">");
@@ -1062,7 +1242,7 @@ static string SanitizeFilename(string domain)
     return sb.ToString();
 }
 
-static async Task WriteJsonIndexAsync(List<ValidationReport> reports, TextWriter writer)
+static async Task WriteJsonIndexAsync(List<ValidationReport> reports, TextWriter writer, Dictionary<string, DomainMeta>? meta = null, List<string>? extraCols = null, string? volCol = null)
 {
     var jsonOptions = new JsonSerializerOptions
     {
@@ -1070,34 +1250,53 @@ static async Task WriteJsonIndexAsync(List<ValidationReport> reports, TextWriter
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    var index = new
+    bool hasVolume = meta?.Values.Any(m => m.Volume > 0) == true;
+    var sorted = hasVolume
+        ? reports.OrderByDescending(r => meta!.TryGetValue(r.Domain, out var m) ? m.Volume : 0).ToList()
+        : reports;
+
+    var domains = sorted.Select(r =>
     {
-        TotalDomains = reports.Count,
-        TotalPass = reports.Sum(r => r.PassCount),
-        TotalWarning = reports.Sum(r => r.WarningCount),
-        TotalError = reports.Sum(r => r.ErrorCount),
-        TotalCritical = reports.Sum(r => r.CriticalCount),
-        Timestamp = DateTime.UtcNow,
-        Domains = reports.Select(r => new
+        var entry = new Dictionary<string, object>
         {
-            r.Domain,
-            File = $"{SanitizeFilename(r.Domain)}.json",
-            r.PassCount,
-            r.WarningCount,
-            r.ErrorCount,
-            r.CriticalCount,
-            TotalChecks = r.Results.Count,
-            DurationSeconds = Math.Round(r.Duration.TotalSeconds, 1),
-            Verdict = r.CriticalCount > 0 ? "CRITICAL" :
-                      r.ErrorCount > 0 ? "ERRORS" :
-                      r.WarningCount > 0 ? "WARNINGS" : "PASS"
-        })
+            ["domain"] = r.Domain,
+            ["file"] = $"{SanitizeFilename(r.Domain)}.json",
+            ["passCount"] = r.PassCount,
+            ["warningCount"] = r.WarningCount,
+            ["errorCount"] = r.ErrorCount,
+            ["criticalCount"] = r.CriticalCount,
+            ["totalChecks"] = r.Results.Count,
+            ["durationSeconds"] = Math.Round(r.Duration.TotalSeconds, 1),
+            ["verdict"] = r.CriticalCount > 0 ? "CRITICAL" :
+                          r.ErrorCount > 0 ? "ERRORS" :
+                          r.WarningCount > 0 ? "WARNINGS" : "PASS"
+        };
+        if (meta != null && meta.TryGetValue(r.Domain, out var dm))
+        {
+            foreach (var col in extraCols ?? Enumerable.Empty<string>())
+            {
+                if (dm.Columns.TryGetValue(col, out var val))
+                    entry[jsonOptions.PropertyNamingPolicy?.ConvertName(col) ?? col] = val;
+            }
+        }
+        return entry;
+    });
+
+    var obj = new Dictionary<string, object>
+    {
+        ["totalDomains"] = reports.Count,
+        ["totalPass"] = reports.Sum(r => r.PassCount),
+        ["totalWarning"] = reports.Sum(r => r.WarningCount),
+        ["totalError"] = reports.Sum(r => r.ErrorCount),
+        ["totalCritical"] = reports.Sum(r => r.CriticalCount),
+        ["timestamp"] = DateTime.UtcNow,
+        ["domains"] = domains
     };
 
-    await writer.WriteLineAsync(JsonSerializer.Serialize(index, jsonOptions));
+    await writer.WriteLineAsync(JsonSerializer.Serialize(obj, jsonOptions));
 }
 
-static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter writer)
+static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter writer, Dictionary<string, DomainMeta>? meta = null, List<string>? extraCols = null, string? volCol = null)
 {
     var sb = new StringBuilder();
     sb.AppendLine("# ednsv — Email DNS Validation Summary");
@@ -1106,23 +1305,51 @@ static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter 
     sb.AppendLine($"**Date:** {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine();
 
+    bool hasVolume = meta?.Values.Any(m => m.Volume > 0) == true;
+    var displayCols = (extraCols ?? new List<string>()).Where(c => !string.Equals(c, volCol, StringComparison.OrdinalIgnoreCase)).ToList();
+    var sorted = hasVolume
+        ? reports.OrderByDescending(r => meta!.TryGetValue(r.Domain, out var m) ? m.Volume : 0).ToList()
+        : reports;
+
     sb.AppendLine("## Results");
     sb.AppendLine();
-    sb.AppendLine("| Domain | Pass | Warn | Error | Crit | Total | Duration | Verdict | Report |");
-    sb.AppendLine("|--------|-----:|-----:|------:|-----:|------:|---------:|---------|--------|");
 
-    foreach (var r in reports)
+    // Build header
+    var extraHeaders = string.Join("", displayCols.Select(c => $" {MdText(c)} |"));
+    var volHeader = hasVolume ? $" {MdText(volCol ?? "Messages")} |" : "";
+    sb.AppendLine($"| Domain |{extraHeaders}{volHeader} Pass | Warn | Error | Crit | Total | Duration | Verdict | Report |");
+    var extraSeps = string.Join("", displayCols.Select(_ => "--------|"));
+    var volSep = hasVolume ? " --------:|" : "";
+    sb.AppendLine($"|--------|{extraSeps}{volSep}-----:|-----:|------:|-----:|------:|---------:|---------|--------|");
+
+    foreach (var r in sorted)
     {
         var verdict = r.CriticalCount > 0 ? "\uD83D\uDED1 CRITICAL" :
                       r.ErrorCount > 0 ? "\u274C ERRORS" :
                       r.WarningCount > 0 ? "\u26A0\uFE0F WARNINGS" :
                       "\u2705 PASS";
         var file = $"{SanitizeFilename(r.Domain)}.{ext}";
-        sb.AppendLine($"| `{r.Domain}` | {r.PassCount} | {r.WarningCount} | {r.ErrorCount} | {r.CriticalCount} | {r.Results.Count} | {r.Duration.TotalSeconds:F1}s | {verdict} | [{file}]({file}) |");
+
+        var extraVals = "";
+        var volVal = "";
+        if (meta != null && meta.TryGetValue(r.Domain, out var dm))
+        {
+            extraVals = string.Join("", displayCols.Select(c => $" {MdText(dm.Columns.GetValueOrDefault(c, ""))} |"));
+            if (hasVolume) volVal = $" {dm.Volume:N0} |";
+        }
+        else
+        {
+            extraVals = string.Join("", displayCols.Select(_ => " |"));
+            if (hasVolume) volVal = " |";
+        }
+
+        sb.AppendLine($"| `{r.Domain}` |{extraVals}{volVal} {r.PassCount} | {r.WarningCount} | {r.ErrorCount} | {r.CriticalCount} | {r.Results.Count} | {r.Duration.TotalSeconds:F1}s | {verdict} | [{file}]({file}) |");
     }
 
     var totalDuration = reports.Aggregate(TimeSpan.Zero, (acc, r) => acc + r.Duration);
-    sb.AppendLine($"| **Total** | **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | | |");
+    var extraTotals = string.Join("", displayCols.Select(_ => " |"));
+    var volTotal = hasVolume ? $" **{meta!.Values.Sum(m => m.Volume):N0}** |" : "";
+    sb.AppendLine($"| **Total** |{extraTotals}{volTotal} **{reports.Sum(r => r.PassCount)}** | **{reports.Sum(r => r.WarningCount)}** | **{reports.Sum(r => r.ErrorCount)}** | **{reports.Sum(r => r.CriticalCount)}** | **{reports.Sum(r => r.Results.Count)}** | **{totalDuration.TotalSeconds:F1}s** | | |");
     sb.AppendLine();
     sb.AppendLine($"[View cross-domain issues](issues.{ext})");
     sb.AppendLine();
@@ -1132,10 +1359,16 @@ static void WriteMdIndex(List<ValidationReport> reports, string ext, TextWriter 
     writer.Write(sb.ToString());
 }
 
-static void WriteHtmlIndex(List<ValidationReport> reports, string ext, TextWriter writer)
+static void WriteHtmlIndex(List<ValidationReport> reports, string ext, TextWriter writer, Dictionary<string, DomainMeta>? meta = null, List<string>? extraCols = null, string? volCol = null)
 {
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
+
+    bool hasVolume = meta?.Values.Any(m => m.Volume > 0) == true;
+    var displayCols = (extraCols ?? new List<string>()).Where(c => !string.Equals(c, volCol, StringComparison.OrdinalIgnoreCase)).ToList();
+    var sorted = hasVolume
+        ? reports.OrderByDescending(r => meta!.TryGetValue(r.Domain, out var m) ? m.Volume : 0).ToList()
+        : reports;
 
     sb.AppendLine("<!DOCTYPE html>");
     sb.AppendLine("<html lang=\"en\">");
@@ -1199,13 +1432,18 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     sb.AppendLine($"  <div class=\"stat\"><div class=\"value\">{totalChecks}</div><div class=\"label\">Total</div></div>");
     sb.AppendLine("</div>");
 
-    // Domain table with links
+    // Domain table with links — build header dynamically
     sb.AppendLine("<table>");
-    sb.AppendLine("<thead><tr><th>Domain</th><th>Pass</th><th>Warn</th><th>Error</th><th>Crit</th><th>Total</th><th>Duration</th><th>Verdict</th></tr></thead>");
+    sb.Append("<thead><tr><th>Domain</th>");
+    foreach (var col in displayCols)
+        sb.Append($"<th>{e(col)}</th>");
+    if (hasVolume)
+        sb.Append($"<th>{e(volCol ?? "Messages")}</th>");
+    sb.AppendLine("<th>Pass</th><th>Warn</th><th>Error</th><th>Crit</th><th>Total</th><th>Duration</th><th>Verdict</th></tr></thead>");
     sb.AppendLine("<tbody>");
 
     var totalDuration = TimeSpan.Zero;
-    foreach (var r in reports)
+    foreach (var r in sorted)
     {
         string verdictClass, verdictLabel;
         if (r.CriticalCount > 0) { verdictClass = "verdict-crit"; verdictLabel = "CRITICAL"; }
@@ -1214,11 +1452,33 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
         else { verdictClass = "verdict-pass"; verdictLabel = "PASS"; }
 
         var file = $"{SanitizeFilename(r.Domain)}.{ext}";
-        sb.AppendLine($"<tr><td><a href=\"{e(file)}\">{e(r.Domain)}</a></td><td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td></tr>");
+        sb.Append($"<tr><td><a href=\"{e(file)}\">{e(r.Domain)}</a></td>");
+
+        if (meta != null && meta.TryGetValue(r.Domain, out var dm))
+        {
+            foreach (var col in displayCols)
+                sb.Append($"<td>{e(dm.Columns.GetValueOrDefault(col, ""))}</td>");
+            if (hasVolume)
+                sb.Append($"<td class=\"num\">{dm.Volume:N0}</td>");
+        }
+        else
+        {
+            foreach (var _ in displayCols)
+                sb.Append("<td></td>");
+            if (hasVolume)
+                sb.Append("<td class=\"num\"></td>");
+        }
+
+        sb.AppendLine($"<td class=\"num\">{r.PassCount}</td><td class=\"num\">{r.WarningCount}</td><td class=\"num\">{r.ErrorCount}</td><td class=\"num\">{r.CriticalCount}</td><td class=\"num\">{r.Results.Count}</td><td class=\"num\">{r.Duration.TotalSeconds:F1}s</td><td class=\"{verdictClass}\">{verdictLabel}</td></tr>");
         totalDuration += r.Duration;
     }
 
-    sb.AppendLine($"<tr><td><strong>Total</strong></td><td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td></tr>");
+    sb.Append($"<tr><td><strong>Total</strong></td>");
+    foreach (var _ in displayCols)
+        sb.Append("<td></td>");
+    if (hasVolume)
+        sb.Append($"<td class=\"num\">{meta!.Values.Sum(m => m.Volume):N0}</td>");
+    sb.AppendLine($"<td class=\"num\">{totalPass}</td><td class=\"num\">{totalWarn}</td><td class=\"num\">{totalError}</td><td class=\"num\">{totalCrit}</td><td class=\"num\">{totalChecks}</td><td class=\"num\">{totalDuration.TotalSeconds:F1}s</td><td></td></tr>");
     sb.AppendLine("</tbody></table>");
 
     sb.AppendLine($"<p style=\"margin-top:1rem;font-size:0.9rem;\"><a href=\"issues.{ext}\">View cross-domain issues &rarr;</a></p>");
@@ -1662,3 +1922,6 @@ static string MdText(string text)
         .Replace(">", "&gt;")
         .Replace("|", "\\|");
 }
+
+// ── Domain metadata from CSV ──────────────────────────────────────────
+record DomainMeta(Dictionary<string, string> Columns, long Volume);
