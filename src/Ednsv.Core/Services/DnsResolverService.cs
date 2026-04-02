@@ -73,12 +73,12 @@ public class DnsResolverService
     /// Tracks DNS query errors that occurred during the current validation.
     /// Reset between domains via <see cref="ResetErrors"/>.
     /// </summary>
-    public List<string> QueryErrors { get; } = new();
+    public ConcurrentBag<string> QueryErrors { get; private set; } = new();
 
     /// <summary>
     /// Clears per-validation error tracking while preserving the shared query cache.
     /// </summary>
-    public void ResetErrors() => QueryErrors.Clear();
+    public void ResetErrors() => QueryErrors = new ConcurrentBag<string>();
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {

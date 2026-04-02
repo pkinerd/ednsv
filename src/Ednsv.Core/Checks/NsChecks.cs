@@ -137,10 +137,10 @@ public class NsLameDelegationCheck : ICheck
                     var capturedIp = ip;
                     tasks.Add(Task.Run(async () =>
                     {
-                        var errorsBefore = ctx.Dns.QueryErrors.Count;
                         var soaResp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(capturedIp), domain, QueryType.SOA);
-                        var errorsAfter = ctx.Dns.QueryErrors.Count;
-                        bool failed = errorsAfter > errorsBefore;
+                        // An empty response with no answers/authorities means the query failed
+                        // (timeout, network error, etc.) — QueryServerAsync returns EmptyResponse on failure
+                        bool failed = !soaResp.Answers.Any() && !soaResp.Authorities.Any() && soaResp.HasError;
                         bool hasSoa = !failed && (soaResp.Answers.SoaRecords().Any() || soaResp.Authorities.SoaRecords().Any());
                         return (capturedHost, capturedIp, failed, hasSoa);
                     }));

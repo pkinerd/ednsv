@@ -450,7 +450,7 @@ public class SpfExpansionCheck : ICheck
 
         if (errorsAfter > errorsBefore)
         {
-            var error = ctx.Dns.QueryErrors[errorsAfter - 1];
+            var error = ctx.Dns.QueryErrors.LastOrDefault() ?? "DNS query failed";
             return (null, error);
         }
 
