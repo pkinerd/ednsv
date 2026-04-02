@@ -45,19 +45,19 @@ public static class DnsCacheSerializer
         {
             var dto = SerializeRecord(record);
             if (dto != null) entry.Answers.Add(dto);
-            else return null; // can't fully serialize — skip this response
+            // Skip unsupported answer record types — don't discard the whole response
         }
         foreach (var record in response.Authorities)
         {
             var dto = SerializeRecord(record);
             if (dto != null) entry.Authorities.Add(dto);
-            else return null;
+            // Authority/Additional often contain OPT, glue, or other records we
+            // don't need — skip silently
         }
         foreach (var record in response.Additionals)
         {
             var dto = SerializeRecord(record);
             if (dto != null) entry.Additionals.Add(dto);
-            else return null;
         }
 
         return entry;
