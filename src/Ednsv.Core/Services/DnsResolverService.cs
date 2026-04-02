@@ -18,6 +18,12 @@ public class DnsResolverService
     // Track failed keys and their attempt counts — only cache after MaxRetries
     private readonly ConcurrentDictionary<(string domain, QueryType type), int> _queryFailCounts = new();
     private readonly ConcurrentDictionary<string, int> _ptrFailCounts = new();
+    // Cache for direct server queries (keyed by server+domain+type)
+    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), IDnsQueryResponse> _serverQueryCache = new();
+    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), int> _serverQueryFailCounts = new();
+    // Tracks servers that are completely unreachable (network/timeout failures).
+    // Once a server fails MaxRetries times (across any domain), skip it immediately.
+    private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
 
     public DnsResolverService() : this(null) { }
 
@@ -122,6 +128,18 @@ public class DnsResolverService
 
     public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type)
     {
+        var serverStr = server.ToString();
+        var key = (serverStr, domain.ToLowerInvariant(), type);
+        if (_serverQueryCache.TryGetValue(key, out var cached))
+            return cached;
+
+        // If this server has been unreachable too many times, skip immediately
+        if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachCount) && unreachCount >= MaxRetries)
+        {
+            QueryErrors.Add($"DNS query to {server} skipped for {type} {domain}: server previously unreachable");
+            return EmptyResponse.Instance;
+        }
+
         try
         {
             var serverEndpoint = new IPEndPoint(server, 53);
@@ -133,11 +151,30 @@ public class DnsResolverService
                 ThrowDnsErrors = false
             };
             var client = new LookupClient(opts);
-            return await client.QueryAsync(domain, type);
+            var result = await client.QueryAsync(domain, type);
+            if (!result.HasError)
+            {
+                _serverQueryCache.TryAdd(key, result);
+                _serverQueryFailCounts.TryRemove(key, out _);
+                // Server responded — clear unreachable tracking
+                _unreachableServerCounts.TryRemove(serverStr, out _);
+            }
+            else
+            {
+                var attempts = _serverQueryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+                if (attempts >= MaxRetries)
+                    _serverQueryCache.TryAdd(key, result);
+            }
+            return result;
         }
         catch (Exception ex)
         {
             QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
+            var attempts = _serverQueryFailCounts.AddOrUpdate(key, 1, (_, c) => c + 1);
+            if (attempts >= MaxRetries)
+                _serverQueryCache.TryAdd(key, EmptyResponse.Instance);
+            // Track server-level unreachability
+            _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
             return EmptyResponse.Instance;
         }
     }
