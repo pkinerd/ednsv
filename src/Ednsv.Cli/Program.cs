@@ -13,13 +13,13 @@ var domainArg = new Argument<string[]>("domain", "One or more domain names to va
 {
     Arity = ArgumentArity.ZeroOrMore
 };
-var domainsFileOption = new Option<string?>("--domains-file", "Read domains from a file (one domain per line)");
+var domainsFileOption = new Option<string?>("--domains-file", "Read domains from a file. Plain text: one domain per line. CSV: uses 'domain' or 'fqdn' column; extra columns are included in the index/summary. A numeric 'total messages' (or 'messages'/'total') column is used for impact-based sorting");
 domainsFileOption.AddAlias("-F");
 var formatOption = new Option<string>("--format", () => "text", "Output format: text, json, html, markdown");
 formatOption.AddAlias("-f");
 var outputOption = new Option<string?>("--output", "Write output to file instead of stdout");
 outputOption.AddAlias("-o");
-var outputDirOption = new Option<string?>("--output-dir", "Write each domain report to a separate file in this directory, plus an index");
+var outputDirOption = new Option<string?>("--output-dir", "Write per-domain reports to separate files in this directory, plus an index and cross-domain issues file");
 outputDirOption.AddAlias("-D");
 var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
 var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
@@ -32,11 +32,11 @@ var dkimSelectorsOption = new Option<string[]>(
 {
     AllowMultipleArgumentsPerToken = true
 };
-var dnsServerOption = new Option<string?>("--dns-server", "DNS server to use for lookups (IP address; default: Google Public DNS). Use comma-separated for multiple");
+var dnsServerOption = new Option<string?>("--dns-server", "DNS server(s) for lookups (IP address, comma-separated for multiple; default: Google Public DNS). Multiple servers are load-balanced via round-robin");
 dnsServerOption.AddAlias("-s");
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
-var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index file after each domain completes (use with --output-dir)");
+var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
