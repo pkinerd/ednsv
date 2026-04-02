@@ -210,12 +210,54 @@ public class DomainValidator
             Options = options ?? new ValidationOptions()
         };
 
+        var timedOutChecks = new List<ICheck>();
+
         foreach (var check in _checks)
         {
             try
             {
                 OnCheckStarted?.Invoke(check.Name);
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var checkTask = check.RunAsync(domain, context);
+                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(30)));
+                List<CheckResult> results;
+                if (completedTask == checkTask)
+                {
+                    results = await checkTask;
+                }
+                else
+                {
+                    // Track for deferred retry instead of immediately reporting timeout
+                    timedOutChecks.Add(check);
+                    continue;
+                }
+                foreach (var r in results)
+                {
+                    report.Results.Add(r);
+                    OnCheckCompleted?.Invoke(check.Name, r);
+                }
+            }
+            catch (Exception ex)
+            {
+                var errorResult = new CheckResult
+                {
+                    CheckName = check.Name,
+                    Category = check.Category,
+                    Severity = CheckSeverity.Error,
+                    Summary = $"Check failed: {ex.Message}",
+                    Errors = { ex.Message }
+                };
+                report.Results.Add(errorResult);
+                OnCheckCompleted?.Invoke(check.Name, errorResult);
+            }
+        }
+
+        // Deferred retry: timed-out checks get a second attempt.
+        // By now, slow DNS responses may have resolved and been cached.
+        foreach (var check in timedOutChecks)
+        {
+            try
+            {
+                OnCheckStarted?.Invoke(check.Name);
                 var checkTask = check.RunAsync(domain, context);
                 var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(30)));
                 List<CheckResult> results;
@@ -233,7 +275,7 @@ public class DomainValidator
                             Category = check.Category,
                             Severity = CheckSeverity.Warning,
                             Summary = "Check timed out (30s limit)",
-                            Warnings = { "Check did not complete within timeout" }
+                            Warnings = { "Check did not complete within timeout — retried once" }
                         }
                     };
                 }

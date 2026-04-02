@@ -158,6 +158,8 @@ public class IpBlocklistCheck : ICheck
             }
 
             int listed = 0;
+            var tasks = new List<Task<(string ip, string bl, List<DnsClient.Protocol.ARecord> aRecs)>>();
+
             foreach (var ip in allMxIps)
             {
                 var octets = ip.Split('.').Reverse();
@@ -165,30 +167,40 @@ public class IpBlocklistCheck : ICheck
 
                 foreach (var bl in Blocklists)
                 {
+                    var capturedIp = ip;
+                    var capturedBl = bl;
                     var query = $"{reversed}.{bl}";
-                    var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
-                    var aRecs = resp.Answers.ARecords().ToList();
-                    if (aRecs.Any())
+                    tasks.Add(Task.Run(async () =>
                     {
-                        var responses = aRecs.Select(a => a.Address.ToString()).ToList();
-                        var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
-                        var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+                        var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                        return (capturedIp, capturedBl, resp.Answers.ARecords().ToList());
+                    }));
+                }
+            }
 
-                        if (realListings.Any())
-                        {
-                            listed++;
-                            result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", realListings)})");
-                        }
+            var results = await Task.WhenAll(tasks);
+            foreach (var (ip, bl, aRecs) in results)
+            {
+                if (aRecs.Any())
+                {
+                    var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                    var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                    var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
 
-                        if (falsePositives.Any())
-                        {
-                            result.Details.Add($"{ip}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
-                        }
-                    }
-                    else
+                    if (realListings.Any())
                     {
-                        result.Details.Add($"{ip}: Not listed on {bl}");
+                        listed++;
+                        result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", realListings)})");
                     }
+
+                    if (falsePositives.Any())
+                    {
+                        result.Details.Add($"{ip}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
+                    }
+                }
+                else
+                {
+                    result.Details.Add($"{ip}: Not listed on {bl}");
                 }
             }
 

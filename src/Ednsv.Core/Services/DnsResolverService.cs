@@ -34,8 +34,8 @@ public class DnsResolverService
         var options = new LookupClientOptions(endpoints)
         {
             UseCache = true,
-            Timeout = TimeSpan.FromSeconds(3),
-            Retries = 1,
+            Timeout = TimeSpan.FromSeconds(5),
+            Retries = 2,
             ThrowDnsErrors = false
         };
         _client = new LookupClient(options);

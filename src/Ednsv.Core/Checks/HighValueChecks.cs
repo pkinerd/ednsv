@@ -510,6 +510,10 @@ public class ExtendedDnsblCheck : ICheck
         }
 
         int listed = 0;
+        // Build all query tasks up-front and run in parallel (throttled)
+        var semaphore = new SemaphoreSlim(10);
+        var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
+
         foreach (var ip in allMxIps)
         {
             var octets = ip.Split('.').Reverse();
@@ -517,27 +521,45 @@ public class ExtendedDnsblCheck : ICheck
 
             foreach (var (zone, name) in Blocklists)
             {
+                var capturedIp = ip;
+                var capturedName = name;
                 var query = $"{reversed}.{zone}";
-                var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
-                var aRecs = resp.Answers.ARecords().ToList();
-                if (aRecs.Any())
+                tasks.Add(Task.Run(async () =>
                 {
-                    var responses = aRecs.Select(a => a.Address.ToString()).ToList();
-                    var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
-                    var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
-
-                    if (realListings.Any())
+                    await semaphore.WaitAsync();
+                    try
                     {
-                        listed++;
-                        result.Errors.Add($"{ip} is LISTED on {name} ({string.Join(", ", realListings)})");
+                        var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                        return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
                     }
-                    if (falsePositives.Any())
-                        result.Details.Add($"{ip}: {name} returned resolver/error code ({string.Join(", ", falsePositives)})");
-                }
-                else
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+        }
+
+        var results = await Task.WhenAll(tasks);
+        foreach (var (ip, name, aRecs) in results)
+        {
+            if (aRecs.Any())
+            {
+                var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+
+                if (realListings.Any())
                 {
-                    result.Details.Add($"{ip}: Not listed on {name}");
+                    listed++;
+                    result.Errors.Add($"{ip} is LISTED on {name} ({string.Join(", ", realListings)})");
                 }
+                if (falsePositives.Any())
+                    result.Details.Add($"{ip}: {name} returned resolver/error code ({string.Join(", ", falsePositives)})");
+            }
+            else
+            {
+                result.Details.Add($"{ip}: Not listed on {name}");
             }
         }
 
