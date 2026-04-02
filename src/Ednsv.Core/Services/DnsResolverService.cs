@@ -11,7 +11,7 @@ public class DnsResolverService
     private readonly LookupClient _client;
     private readonly LookupClient _directClient;
     private readonly LookupClient _dnsblClient;
-    private const int MaxRetries = 3;
+    private static int MaxRetries = 3;
 
     // Application-level cache for DNS queries (survives across domains)
     private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
@@ -382,6 +382,36 @@ public class DnsResolverService
     }
 
     // Minimal empty response implementation
+    // ── Cache export/import for disk persistence ─────────────────────────
+
+    public Dictionary<string, int> ExportUnreachableServers()
+        => _unreachableServerCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+    public void ImportUnreachableServers(Dictionary<string, int> entries)
+    {
+        foreach (var kvp in entries)
+            _unreachableServerCounts.TryAdd(kvp.Key, kvp.Value);
+    }
+
+    public Dictionary<string, List<string>> ExportPtrCache()
+        => _ptrCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+    public void ImportPtrCache(Dictionary<string, List<string>> entries)
+    {
+        foreach (var kvp in entries)
+            _ptrCache.TryAdd(kvp.Key, kvp.Value);
+    }
+
+    /// <summary>
+    /// Doubles retry counts across all services for more persistent retries.
+    /// </summary>
+    public static void DoubleRetries()
+    {
+        MaxRetries = 6;
+        SmtpProbeService.SetMaxRetries(6);
+        HttpProbeService.SetMaxRetries(6);
+    }
+
     private class EmptyResponse : IDnsQueryResponse
     {
         public static readonly EmptyResponse Instance = new();

@@ -32,7 +32,8 @@ public class SmtpProbeResult
 public class SmtpProbeService
 {
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
-    private const int MaxRetries = 3;
+    private static int MaxRetries = 3;
+    public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
     private readonly ConcurrentDictionary<string, int> _probeFailCounts = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
@@ -328,5 +329,73 @@ public class SmtpProbeService
         var data = Encoding.ASCII.GetBytes(line + "\r\n");
         await stream.WriteAsync(data, 0, data.Length);
         await stream.FlushAsync();
+    }
+
+    // ── Cache export/import for disk persistence ─────────────────────────
+
+    public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
+    {
+        var result = new Dictionary<string, SmtpProbeCacheEntry>();
+        foreach (var kvp in _probeCache)
+        {
+            result[kvp.Key] = new SmtpProbeCacheEntry
+            {
+                Connected = kvp.Value.Connected,
+                Banner = kvp.Value.Banner,
+                SupportsStartTls = kvp.Value.SupportsStartTls,
+                EhloCapabilities = kvp.Value.EhloCapabilities,
+                CertSubject = kvp.Value.CertSubject,
+                CertIssuer = kvp.Value.CertIssuer,
+                CertExpiry = kvp.Value.CertExpiry,
+                CertSans = kvp.Value.CertSans,
+                TlsProtocol = kvp.Value.TlsProtocol.ToString(),
+                TlsCipherSuite = kvp.Value.TlsCipherSuite,
+                SmtpMaxSize = kvp.Value.SmtpMaxSize,
+                SupportsRequireTls = kvp.Value.SupportsRequireTls,
+                ConnectTimeMs = kvp.Value.ConnectTimeMs,
+                BannerTimeMs = kvp.Value.BannerTimeMs,
+                EhloTimeMs = kvp.Value.EhloTimeMs,
+                TlsTimeMs = kvp.Value.TlsTimeMs,
+                Error = kvp.Value.Error
+            };
+        }
+        return result;
+    }
+
+    public void ImportProbeCache(Dictionary<string, SmtpProbeCacheEntry> entries)
+    {
+        foreach (var kvp in entries)
+        {
+            Enum.TryParse<System.Security.Authentication.SslProtocols>(kvp.Value.TlsProtocol, out var proto);
+            _probeCache.TryAdd(kvp.Key, new SmtpProbeResult
+            {
+                Connected = kvp.Value.Connected,
+                Banner = kvp.Value.Banner,
+                SupportsStartTls = kvp.Value.SupportsStartTls,
+                EhloCapabilities = kvp.Value.EhloCapabilities,
+                CertSubject = kvp.Value.CertSubject,
+                CertIssuer = kvp.Value.CertIssuer,
+                CertExpiry = kvp.Value.CertExpiry,
+                CertSans = kvp.Value.CertSans,
+                TlsProtocol = proto,
+                TlsCipherSuite = kvp.Value.TlsCipherSuite,
+                SmtpMaxSize = kvp.Value.SmtpMaxSize,
+                SupportsRequireTls = kvp.Value.SupportsRequireTls,
+                ConnectTimeMs = kvp.Value.ConnectTimeMs,
+                BannerTimeMs = kvp.Value.BannerTimeMs,
+                EhloTimeMs = kvp.Value.EhloTimeMs,
+                TlsTimeMs = kvp.Value.TlsTimeMs,
+                Error = kvp.Value.Error
+            });
+        }
+    }
+
+    public Dictionary<string, bool> ExportPortCache()
+        => _portCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+    public void ImportPortCache(Dictionary<string, bool> entries)
+    {
+        foreach (var kvp in entries)
+            _portCache.TryAdd(kvp.Key, kvp.Value);
     }
 }
