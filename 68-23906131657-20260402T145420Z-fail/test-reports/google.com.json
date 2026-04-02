@@ -1,7 +1,7 @@
 {
   "domain": "google.com",
-  "timestamp": "2026-03-31T06:25:18.837547Z",
-  "duration": "00:00:23.2145437",
+  "timestamp": "2026-04-02T14:42:36.4172028Z",
+  "duration": "00:00:49.6452303",
   "results": [
     {
       "checkName": "Delegation Chain",
@@ -9,8 +9,8 @@
       "severity": 1,
       "summary": "Delegation chain walked through 2 levels",
       "details": [
-        "Zone [com] NS: k.gtld-servers.net, m.gtld-servers.net, e.gtld-servers.net, j.gtld-servers.net, g.gtld-servers.net, d.gtld-servers.net, h.gtld-servers.net, c.gtld-servers.net, a.gtld-servers.net, f.gtld-servers.net, i.gtld-servers.net, l.gtld-servers.net, b.gtld-servers.net",
-        "Zone [google.com] NS: ns4.google.com, ns3.google.com, ns2.google.com, ns1.google.com"
+        "Zone [com] NS: d.gtld-servers.net, h.gtld-servers.net, e.gtld-servers.net, b.gtld-servers.net, k.gtld-servers.net, g.gtld-servers.net, j.gtld-servers.net, f.gtld-servers.net, a.gtld-servers.net, i.gtld-servers.net, c.gtld-servers.net, m.gtld-servers.net, l.gtld-servers.net",
+        "Zone [google.com] NS: ns1.google.com, ns3.google.com, ns4.google.com, ns2.google.com"
       ],
       "warnings": [],
       "errors": []
@@ -21,14 +21,14 @@
       "severity": 1,
       "summary": "Found 4 authoritative nameservers",
       "details": [
-        "NS: ns4.google.com -\u003E 216.239.38.10 (PTR: ns4.google.com)",
-        "NS: ns4.google.com -\u003E 2001:4860:4802:38::a (PTR: ns4.google.com)",
+        "NS: ns1.google.com -\u003E 216.239.32.10 (PTR: ns1.google.com)",
+        "NS: ns1.google.com -\u003E 2001:4860:4802:32::a (PTR: ns1.google.com)",
         "NS: ns3.google.com -\u003E 216.239.36.10 (PTR: ns3.google.com)",
         "NS: ns3.google.com -\u003E 2001:4860:4802:36::a (PTR: ns3.google.com)",
+        "NS: ns4.google.com -\u003E 216.239.38.10 (PTR: ns4.google.com)",
+        "NS: ns4.google.com -\u003E 2001:4860:4802:38::a (PTR: ns4.google.com)",
         "NS: ns2.google.com -\u003E 216.239.34.10 (PTR: ns2.google.com)",
-        "NS: ns2.google.com -\u003E 2001:4860:4802:34::a (PTR: ns2.google.com)",
-        "NS: ns1.google.com -\u003E 216.239.32.10 (PTR: ns1.google.com)",
-        "NS: ns1.google.com -\u003E 2001:4860:4802:32::a (PTR: ns1.google.com)"
+        "NS: ns2.google.com -\u003E 2001:4860:4802:34::a (PTR: ns2.google.com)"
       ],
       "warnings": [],
       "errors": []
@@ -41,7 +41,7 @@
       "details": [
         "Parent and child NS sets are consistent",
         "Parent NS set: ns2.google.com, ns1.google.com, ns3.google.com, ns4.google.com",
-        "Child NS set: ns4.google.com, ns3.google.com, ns2.google.com, ns1.google.com"
+        "Child NS set: ns1.google.com, ns3.google.com, ns4.google.com, ns2.google.com"
       ],
       "warnings": [],
       "errors": []
@@ -54,18 +54,36 @@
       "details": [
         "Primary NS: ns1.google.com",
         "Admin: dns-admin.google.com",
-        "Serial: 891620646",
+        "Serial: 892826286",
         "Refresh: 900s",
         "Retry: 900s",
         "Expire: 1800s",
         "Minimum TTL: 60s"
       ],
       "warnings": [
-        "Serial 891620646 doesn\u0027t follow YYYYMMDDnn convention",
+        "Serial 892826286 doesn\u0027t follow YYYYMMDDnn convention",
         "Refresh interval 900s is low (recommended \u003E= 3600)",
         "Retry (900s) should be less than Refresh (900s)",
         "Expire interval 1800s is low (recommended \u003E= 604800)"
       ],
+      "errors": []
+    },
+    {
+      "checkName": "SOA Serial Consistency",
+      "category": 1,
+      "severity": 1,
+      "summary": "All 4 nameservers agree on SOA serial 892826286",
+      "details": [
+        "ns1.google.com (216.239.32.10): Serial 892826286",
+        "ns3.google.com (216.239.36.10): Serial 892826286",
+        "ns4.google.com (216.239.38.10): Serial 892826286",
+        "ns2.google.com (216.239.34.10): Serial 892826286",
+        "ns1.google.com (2001:4860:4802:32::a): No SOA in response",
+        "ns3.google.com (2001:4860:4802:36::a): No SOA in response",
+        "ns4.google.com (2001:4860:4802:38::a): No SOA in response",
+        "ns2.google.com (2001:4860:4802:34::a): No SOA in response"
+      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -74,10 +92,10 @@
       "severity": 1,
       "summary": "4 in-bailiwick NS hostname(s) checked for glue",
       "details": [
-        "ns4.google.com: Glue record found (216.239.38.10)",
+        "ns1.google.com: Glue record found (216.239.32.10)",
         "ns3.google.com: Glue record found (216.239.36.10)",
-        "ns2.google.com: Glue record found (216.239.34.10)",
-        "ns1.google.com: Glue record found (216.239.32.10)"
+        "ns4.google.com: Glue record found (216.239.38.10)",
+        "ns2.google.com: Glue record found (216.239.34.10)"
       ],
       "warnings": [],
       "errors": []
@@ -88,10 +106,10 @@
       "severity": 1,
       "summary": "4 NS records found",
       "details": [
-        "NS: ns4.google.com (TTL: 21600s)",
-        "NS: ns3.google.com (TTL: 21600s)",
-        "NS: ns2.google.com (TTL: 21600s)",
-        "NS: ns1.google.com (TTL: 21600s)"
+        "NS: ns1.google.com (TTL: 21569s)",
+        "NS: ns3.google.com (TTL: 21569s)",
+        "NS: ns4.google.com (TTL: 21569s)",
+        "NS: ns2.google.com (TTL: 21569s)"
       ],
       "warnings": [],
       "errors": []
@@ -108,20 +126,19 @@
     {
       "checkName": "NS Lame Delegation",
       "category": 2,
-      "severity": 3,
-      "summary": "4/8 nameservers are lame",
+      "severity": 2,
+      "summary": "4/8 nameservers unreachable (none confirmed lame)",
       "details": [
-        "ns4.google.com (216.239.38.10): Authoritative (SOA present)",
+        "ns1.google.com (216.239.32.10): Authoritative (SOA present)",
+        "ns1.google.com (2001:4860:4802:32::a): Unreachable (query failed)",
         "ns3.google.com (216.239.36.10): Authoritative (SOA present)",
+        "ns3.google.com (2001:4860:4802:36::a): Unreachable (query failed)",
+        "ns4.google.com (216.239.38.10): Authoritative (SOA present)",
+        "ns4.google.com (2001:4860:4802:38::a): Unreachable (query failed)",
         "ns2.google.com (216.239.34.10): Authoritative (SOA present)",
-        "ns1.google.com (216.239.32.10): Authoritative (SOA present)"
+        "ns2.google.com (2001:4860:4802:34::a): Unreachable (query failed)"
       ],
-      "warnings": [
-        "ns4.google.com (2001:4860:4802:38::a): LAME - does not return SOA for google.com",
-        "ns3.google.com (2001:4860:4802:36::a): LAME - does not return SOA for google.com",
-        "ns2.google.com (2001:4860:4802:34::a): LAME - does not return SOA for google.com",
-        "ns1.google.com (2001:4860:4802:32::a): LAME - does not return SOA for google.com"
-      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -130,14 +147,14 @@
       "severity": 1,
       "summary": "NS IPs span 4 different /24 subnets",
       "details": [
-        "ns4.google.com: 216.239.38.10",
-        "ns4.google.com: 2001:4860:4802:38::a",
+        "ns1.google.com: 216.239.32.10",
+        "ns1.google.com: 2001:4860:4802:32::a",
         "ns3.google.com: 216.239.36.10",
         "ns3.google.com: 2001:4860:4802:36::a",
+        "ns4.google.com: 216.239.38.10",
+        "ns4.google.com: 2001:4860:4802:38::a",
         "ns2.google.com: 216.239.34.10",
-        "ns2.google.com: 2001:4860:4802:34::a",
-        "ns1.google.com: 216.239.32.10",
-        "ns1.google.com: 2001:4860:4802:32::a"
+        "ns2.google.com: 2001:4860:4802:34::a"
       ],
       "warnings": [],
       "errors": []
@@ -147,6 +164,15 @@
       "category": 2,
       "severity": 1,
       "summary": "No duplicate NS IPs found",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Open Recursive Resolver Detection",
+      "category": 2,
+      "severity": 0,
+      "summary": "Open resolver check skipped (use --open-resolver to enable)",
       "details": [],
       "warnings": [],
       "errors": []
@@ -166,12 +192,12 @@
       "severity": 1,
       "summary": "6 A record(s) found",
       "details": [
-        "64.233.180.101 (TTL: 60s)",
-        "64.233.180.138 (TTL: 60s)",
-        "64.233.180.139 (TTL: 60s)",
-        "64.233.180.102 (TTL: 60s)",
-        "64.233.180.100 (TTL: 60s)",
-        "64.233.180.113 (TTL: 60s)"
+        "142.251.167.113 (TTL: 104s)",
+        "142.251.167.139 (TTL: 104s)",
+        "142.251.167.100 (TTL: 104s)",
+        "142.251.167.101 (TTL: 104s)",
+        "142.251.167.102 (TTL: 104s)",
+        "142.251.167.138 (TTL: 104s)"
       ],
       "warnings": [],
       "errors": []
@@ -182,10 +208,10 @@
       "severity": 1,
       "summary": "4 AAAA record(s) found",
       "details": [
-        "2607:f8b0:4004:c27::8b (TTL: 300s)",
-        "2607:f8b0:4004:c27::8a (TTL: 300s)",
-        "2607:f8b0:4004:c27::71 (TTL: 300s)",
-        "2607:f8b0:4004:c27::64 (TTL: 300s)"
+        "2607:f8b0:4004:c1b::8b (TTL: 269s)",
+        "2607:f8b0:4004:c1b::66 (TTL: 269s)",
+        "2607:f8b0:4004:c1b::8a (TTL: 269s)",
+        "2607:f8b0:4004:c1b::65 (TTL: 269s)"
       ],
       "warnings": [],
       "errors": []
@@ -196,12 +222,12 @@
       "severity": 1,
       "summary": "1 MX record(s) found",
       "details": [
-        "Priority 10: smtp.google.com -\u003E 172.253.115.26, 172.253.122.27, 172.253.115.27, 172.253.63.26, 172.253.122.26 IPv6: 2607:f8b0:4004:c09::1b, 2607:f8b0:4004:c09::1a, 2607:f8b0:4004:c06::1b, 2607:f8b0:4004:c06::1a",
-        "  172.253.115.26 PTR: bg-in-f26.1e100.net",
-        "  172.253.122.27 PTR: bh-in-f27.1e100.net",
+        "Priority 10: smtp.google.com -\u003E 172.253.115.27, 192.178.155.26, 172.253.139.26, 172.253.122.27, 172.253.115.26 IPv6: 2607:f8b0:4004:c23::1a, 2607:f8b0:4004:c27::1a, 2607:f8b0:4004:c06::1a, 2607:f8b0:4004:c06::1b",
         "  172.253.115.27 PTR: bg-in-f27.1e100.net",
-        "  172.253.63.26 PTR: bi-in-f26.1e100.net",
-        "  172.253.122.26 PTR: bh-in-f26.1e100.net",
+        "  192.178.155.26 PTR: yuiadrs-in-f26.1e100.net",
+        "  172.253.139.26 PTR: yuiadsk-in-f26.1e100.net",
+        "  172.253.122.27 PTR: bh-in-f27.1e100.net",
+        "  172.253.115.26 PTR: bg-in-f26.1e100.net",
         "  SMTP: Connected, STARTTLS: Yes"
       ],
       "warnings": [],
@@ -271,8 +297,8 @@
       "severity": 0,
       "summary": "3/19 common mail subdomains resolve",
       "details": [
-        "mail.google.com: A -\u003E 172.253.115.17, 172.253.115.19, 172.253.115.83, 172.253.115.18",
-        "smtp.google.com: A -\u003E 172.253.115.26, 172.253.122.27, 172.253.115.27, 172.253.63.26, 172.253.122.26",
+        "mail.google.com: A -\u003E 192.178.155.18, 192.178.155.83, 192.178.155.17, 192.178.155.19",
+        "smtp.google.com: A -\u003E 172.253.115.27, 192.178.155.26, 172.253.139.26, 172.253.122.27, 172.253.115.26",
         "email.google.com: CNAME -\u003E www3.l.google.com"
       ],
       "warnings": [],
@@ -308,7 +334,7 @@
         "  ip6:2001:4860:4864::/56",
         "  ip6:2404:6800:4864::/56",
         "  ip6:2607:f8b0:4864::/56",
-        "  ip6:2800:3f0:4000::/36",
+        "  ip6:2800:3f0:4864::/56",
         "  ip6:2a00:1450:4000::/36",
         "  ip6:2c0f:fb50:4000::/36",
         "  ~all",
@@ -386,15 +412,15 @@
       "severity": 0,
       "summary": "9 MX IP(s) not in SPF (normal - SPF covers outbound, MX covers inbound)",
       "details": [
-        "smtp.google.com (172.253.115.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (172.253.122.27): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
         "smtp.google.com (172.253.115.27): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (172.253.63.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (172.253.122.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (2607:f8b0:4004:c09::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (2607:f8b0:4004:c09::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (2607:f8b0:4004:c06::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "smtp.google.com (2607:f8b0:4004:c06::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)"
+        "smtp.google.com (192.178.155.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (172.253.139.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (172.253.122.27): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (172.253.115.26): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (2607:f8b0:4004:c23::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (2607:f8b0:4004:c27::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (2607:f8b0:4004:c06::1a): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "smtp.google.com (2607:f8b0:4004:c06::1b): Not in SPF authorized ranges (expected if MX and outbound servers differ)"
       ],
       "warnings": [],
       "errors": []
@@ -527,7 +553,8 @@
       "severity": 2,
       "summary": "No DKIM selectors found",
       "details": [
-        "AXFR selector discovery: zone transfer denied (probing common selectors only)"
+        "AXFR selector discovery: zone transfer denied (probing common selectors only)",
+        "DKIM selectors checked (default list): default, google, selector1, selector2, k1, k2, k3, s1, s2, s3, dkim, mail, email, smtp, google2048, everlytickey1, everlytickey2, mandrill, amazonses, postmark, sendgrid, cm, mxvault, protonmail, protonmail2, protonmail3, fm1, fm2, fm3, pic, mailjet, zoho, turbo-smtp, sig1, smtpapi, hs1, hs2, m1, m2"
       ],
       "warnings": [
         "Probed 39 selectors - none found"
@@ -549,12 +576,12 @@
       "severity": 1,
       "summary": "PTR check: 0/6 IPs have matching reverse DNS",
       "details": [
-        "64.233.180.101 -\u003E pe-in-f101.1e100.net, on-in-f101.1e100.net (no match)",
-        "64.233.180.138 -\u003E on-in-f138.1e100.net, pe-in-f138.1e100.net (no match)",
-        "64.233.180.139 -\u003E on-in-f139.1e100.net, pe-in-f139.1e100.net (no match)",
-        "64.233.180.102 -\u003E pe-in-f102.1e100.net, on-in-f102.1e100.net (no match)",
-        "64.233.180.100 -\u003E on-in-f100.1e100.net, pe-in-f100.1e100.net (no match)",
-        "64.233.180.113 -\u003E pe-in-f113.1e100.net, on-in-f113.1e100.net (no match)"
+        "142.251.167.113 -\u003E ww-in-f113.1e100.net (no match)",
+        "142.251.167.139 -\u003E ww-in-f139.1e100.net (no match)",
+        "142.251.167.100 -\u003E ww-in-f100.1e100.net (no match)",
+        "142.251.167.101 -\u003E ww-in-f101.1e100.net (no match)",
+        "142.251.167.102 -\u003E ww-in-f102.1e100.net (no match)",
+        "142.251.167.138 -\u003E ww-in-f138.1e100.net (no match)"
       ],
       "warnings": [],
       "errors": []
@@ -565,15 +592,15 @@
       "severity": 1,
       "summary": "All 9 MX IP(s) have valid reverse DNS",
       "details": [
-        "smtp.google.com [172.253.115.26]: PTR \u2192 bg-in-f26.1e100.net",
-        "smtp.google.com [172.253.122.27]: PTR \u2192 bh-in-f27.1e100.net",
         "smtp.google.com [172.253.115.27]: PTR \u2192 bg-in-f27.1e100.net",
-        "smtp.google.com [172.253.63.26]: PTR \u2192 bi-in-f26.1e100.net",
-        "smtp.google.com [172.253.122.26]: PTR \u2192 bh-in-f26.1e100.net",
-        "smtp.google.com [2607:f8b0:4004:c09::1b]: PTR \u2192 bh-in-f27.1e100.net",
-        "smtp.google.com [2607:f8b0:4004:c09::1a]: PTR \u2192 bh-in-f26.1e100.net",
-        "smtp.google.com [2607:f8b0:4004:c06::1b]: PTR \u2192 bg-in-f27.1e100.net",
-        "smtp.google.com [2607:f8b0:4004:c06::1a]: PTR \u2192 bg-in-f26.1e100.net"
+        "smtp.google.com [192.178.155.26]: PTR \u2192 yuiadrs-in-f26.1e100.net",
+        "smtp.google.com [172.253.139.26]: PTR \u2192 yuiadsk-in-f26.1e100.net",
+        "smtp.google.com [172.253.122.27]: PTR \u2192 bh-in-f27.1e100.net",
+        "smtp.google.com [172.253.115.26]: PTR \u2192 bg-in-f26.1e100.net",
+        "smtp.google.com [2607:f8b0:4004:c23::1a]: PTR \u2192 yuiadrs-in-f26.1e100.net",
+        "smtp.google.com [2607:f8b0:4004:c27::1a]: PTR \u2192 yuiadsk-in-f26.1e100.net",
+        "smtp.google.com [2607:f8b0:4004:c06::1a]: PTR \u2192 bg-in-f26.1e100.net",
+        "smtp.google.com [2607:f8b0:4004:c06::1b]: PTR \u2192 bg-in-f27.1e100.net"
       ],
       "warnings": [],
       "errors": []
@@ -584,15 +611,15 @@
       "severity": 1,
       "summary": "FCrDNS: 9/9 MX IPs confirmed",
       "details": [
-        "172.253.115.26 -\u003E bg-in-f26.1e100.net -\u003E 172.253.115.26 (FCrDNS confirmed)",
-        "172.253.122.27 -\u003E bh-in-f27.1e100.net -\u003E 172.253.122.27 (FCrDNS confirmed)",
         "172.253.115.27 -\u003E bg-in-f27.1e100.net -\u003E 172.253.115.27 (FCrDNS confirmed)",
-        "172.253.63.26 -\u003E bi-in-f26.1e100.net -\u003E 172.253.63.26 (FCrDNS confirmed)",
-        "172.253.122.26 -\u003E bh-in-f26.1e100.net -\u003E 172.253.122.26 (FCrDNS confirmed)",
-        "2607:f8b0:4004:c09::1b -\u003E bh-in-f27.1e100.net -\u003E 2607:f8b0:4004:c09::1b (FCrDNS confirmed)",
-        "2607:f8b0:4004:c09::1a -\u003E bh-in-f26.1e100.net -\u003E 2607:f8b0:4004:c09::1a (FCrDNS confirmed)",
-        "2607:f8b0:4004:c06::1b -\u003E bg-in-f27.1e100.net -\u003E 2607:f8b0:4004:c06::1b (FCrDNS confirmed)",
-        "2607:f8b0:4004:c06::1a -\u003E bg-in-f26.1e100.net -\u003E 2607:f8b0:4004:c06::1a (FCrDNS confirmed)"
+        "192.178.155.26 -\u003E yuiadrs-in-f26.1e100.net -\u003E 192.178.155.26 (FCrDNS confirmed)",
+        "172.253.139.26 -\u003E yuiadsk-in-f26.1e100.net -\u003E 172.253.139.26 (FCrDNS confirmed)",
+        "172.253.122.27 -\u003E bh-in-f27.1e100.net -\u003E 172.253.122.27 (FCrDNS confirmed)",
+        "172.253.115.26 -\u003E bg-in-f26.1e100.net -\u003E 172.253.115.26 (FCrDNS confirmed)",
+        "2607:f8b0:4004:c23::1a -\u003E yuiadrs-in-f26.1e100.net -\u003E 2607:f8b0:4004:c23::1a (FCrDNS confirmed)",
+        "2607:f8b0:4004:c27::1a -\u003E yuiadsk-in-f26.1e100.net -\u003E 2607:f8b0:4004:c27::1a (FCrDNS confirmed)",
+        "2607:f8b0:4004:c06::1a -\u003E bg-in-f26.1e100.net -\u003E 2607:f8b0:4004:c06::1a (FCrDNS confirmed)",
+        "2607:f8b0:4004:c06::1b -\u003E bg-in-f27.1e100.net -\u003E 2607:f8b0:4004:c06::1b (FCrDNS confirmed)"
       ],
       "warnings": [],
       "errors": []
@@ -603,21 +630,11 @@
       "severity": 1,
       "summary": "No IP blocklist listings",
       "details": [
-        "172.253.115.26: Not listed on zen.spamhaus.org",
-        "172.253.115.26: Not listed on b.barracudacentral.org",
-        "172.253.115.26: Not listed on bl.spamcop.net",
-        "172.253.122.27: Not listed on zen.spamhaus.org",
-        "172.253.122.27: Not listed on b.barracudacentral.org",
-        "172.253.122.27: Not listed on bl.spamcop.net",
-        "172.253.115.27: Not listed on zen.spamhaus.org",
-        "172.253.115.27: Not listed on b.barracudacentral.org",
         "172.253.115.27: Not listed on bl.spamcop.net",
-        "172.253.63.26: Not listed on zen.spamhaus.org",
-        "172.253.63.26: Not listed on b.barracudacentral.org",
-        "172.253.63.26: Not listed on bl.spamcop.net",
-        "172.253.122.26: Not listed on zen.spamhaus.org",
-        "172.253.122.26: Not listed on b.barracudacentral.org",
-        "172.253.122.26: Not listed on bl.spamcop.net"
+        "192.178.155.26: Not listed on bl.spamcop.net",
+        "172.253.139.26: Not listed on bl.spamcop.net",
+        "172.253.122.27: Not listed on bl.spamcop.net",
+        "172.253.115.26: Not listed on bl.spamcop.net"
       ],
       "warnings": [],
       "errors": []
@@ -628,31 +645,111 @@
       "severity": 1,
       "summary": "Clean on all extended blocklists",
       "details": [
-        "172.253.115.26: Not listed on S5H",
-        "172.253.115.26: Not listed on SORBS",
-        "172.253.115.26: Not listed on SORBS Spam",
-        "172.253.115.26: Not listed on Mailspike",
-        "172.253.115.26: Not listed on UCEProtect L1",
-        "172.253.122.27: Not listed on S5H",
-        "172.253.122.27: Not listed on SORBS",
-        "172.253.122.27: Not listed on SORBS Spam",
-        "172.253.122.27: Not listed on Mailspike",
-        "172.253.122.27: Not listed on UCEProtect L1",
         "172.253.115.27: Not listed on S5H",
-        "172.253.115.27: Not listed on SORBS",
+        "172.253.115.27: Not listed on SORBS Combined",
         "172.253.115.27: Not listed on SORBS Spam",
         "172.253.115.27: Not listed on Mailspike",
         "172.253.115.27: Not listed on UCEProtect L1",
-        "172.253.63.26: Not listed on S5H",
-        "172.253.63.26: Not listed on SORBS",
-        "172.253.63.26: Not listed on SORBS Spam",
-        "172.253.63.26: Not listed on Mailspike",
-        "172.253.63.26: Not listed on UCEProtect L1",
-        "172.253.122.26: Not listed on S5H",
-        "172.253.122.26: Not listed on SORBS",
-        "172.253.122.26: Not listed on SORBS Spam",
-        "172.253.122.26: Not listed on Mailspike",
-        "172.253.122.26: Not listed on UCEProtect L1"
+        "172.253.115.27: Not listed on UCEProtect L2",
+        "172.253.115.27: Not listed on UCEProtect L3",
+        "172.253.115.27: Not listed on PSBL",
+        "172.253.115.27: Not listed on SpamRATS Dyna",
+        "172.253.115.27: Not listed on SpamRATS NoPtr",
+        "172.253.115.27: Not listed on SpamRATS Spam",
+        "172.253.115.27: Not listed on DroneBL",
+        "172.253.115.27: Not listed on InterServer",
+        "172.253.115.27: Not listed on Cymru Bogons",
+        "172.253.115.27: Not listed on Blocklist.de",
+        "172.253.115.27: Not listed on NordSpam BL",
+        "172.253.115.27: Not listed on INPS",
+        "172.253.115.27: Not listed on NiX Spam",
+        "172.253.115.27: Not listed on Truncate/GBUdb",
+        "172.253.115.27: Not listed on Mailspike Z",
+        "172.253.115.27: Not listed on Digibase SpamBot",
+        "192.178.155.26: Not listed on S5H",
+        "192.178.155.26: Not listed on SORBS Combined",
+        "192.178.155.26: Not listed on SORBS Spam",
+        "192.178.155.26: Not listed on Mailspike",
+        "192.178.155.26: Not listed on UCEProtect L1",
+        "192.178.155.26: Not listed on UCEProtect L2",
+        "192.178.155.26: Not listed on UCEProtect L3",
+        "192.178.155.26: Not listed on PSBL",
+        "192.178.155.26: Not listed on SpamRATS Dyna",
+        "192.178.155.26: Not listed on SpamRATS NoPtr",
+        "192.178.155.26: Not listed on SpamRATS Spam",
+        "192.178.155.26: Not listed on DroneBL",
+        "192.178.155.26: Not listed on InterServer",
+        "192.178.155.26: Not listed on Cymru Bogons",
+        "192.178.155.26: Not listed on Blocklist.de",
+        "192.178.155.26: Not listed on NordSpam BL",
+        "192.178.155.26: Not listed on INPS",
+        "192.178.155.26: Not listed on NiX Spam",
+        "192.178.155.26: Not listed on Truncate/GBUdb",
+        "192.178.155.26: Not listed on Mailspike Z",
+        "192.178.155.26: Not listed on Digibase SpamBot",
+        "172.253.139.26: Not listed on S5H",
+        "172.253.139.26: Not listed on SORBS Combined",
+        "172.253.139.26: Not listed on SORBS Spam",
+        "172.253.139.26: Not listed on Mailspike",
+        "172.253.139.26: Not listed on UCEProtect L1",
+        "172.253.139.26: Not listed on UCEProtect L2",
+        "172.253.139.26: Not listed on UCEProtect L3",
+        "172.253.139.26: Not listed on PSBL",
+        "172.253.139.26: Not listed on SpamRATS Dyna",
+        "172.253.139.26: Not listed on SpamRATS NoPtr",
+        "172.253.139.26: Not listed on SpamRATS Spam",
+        "172.253.139.26: Not listed on DroneBL",
+        "172.253.139.26: Not listed on InterServer",
+        "172.253.139.26: Not listed on Cymru Bogons",
+        "172.253.139.26: Not listed on Blocklist.de",
+        "172.253.139.26: Not listed on NordSpam BL",
+        "172.253.139.26: Not listed on INPS",
+        "172.253.139.26: Not listed on NiX Spam",
+        "172.253.139.26: Not listed on Truncate/GBUdb",
+        "172.253.139.26: Not listed on Mailspike Z",
+        "172.253.139.26: Not listed on Digibase SpamBot",
+        "172.253.122.27: Not listed on S5H",
+        "172.253.122.27: Not listed on SORBS Combined",
+        "172.253.122.27: Not listed on SORBS Spam",
+        "172.253.122.27: Not listed on Mailspike",
+        "172.253.122.27: Not listed on UCEProtect L1",
+        "172.253.122.27: Not listed on UCEProtect L2",
+        "172.253.122.27: Not listed on UCEProtect L3",
+        "172.253.122.27: Not listed on PSBL",
+        "172.253.122.27: Not listed on SpamRATS Dyna",
+        "172.253.122.27: Not listed on SpamRATS NoPtr",
+        "172.253.122.27: Not listed on SpamRATS Spam",
+        "172.253.122.27: Not listed on DroneBL",
+        "172.253.122.27: Not listed on InterServer",
+        "172.253.122.27: Not listed on Cymru Bogons",
+        "172.253.122.27: Not listed on Blocklist.de",
+        "172.253.122.27: Not listed on NordSpam BL",
+        "172.253.122.27: Not listed on INPS",
+        "172.253.122.27: Not listed on NiX Spam",
+        "172.253.122.27: Not listed on Truncate/GBUdb",
+        "172.253.122.27: Not listed on Mailspike Z",
+        "172.253.122.27: Not listed on Digibase SpamBot",
+        "172.253.115.26: Not listed on S5H",
+        "172.253.115.26: Not listed on SORBS Combined",
+        "172.253.115.26: Not listed on SORBS Spam",
+        "172.253.115.26: Not listed on Mailspike",
+        "172.253.115.26: Not listed on UCEProtect L1",
+        "172.253.115.26: Not listed on UCEProtect L2",
+        "172.253.115.26: Not listed on UCEProtect L3",
+        "172.253.115.26: Not listed on PSBL",
+        "172.253.115.26: Not listed on SpamRATS Dyna",
+        "172.253.115.26: Not listed on SpamRATS NoPtr",
+        "172.253.115.26: Not listed on SpamRATS Spam",
+        "172.253.115.26: Not listed on DroneBL",
+        "172.253.115.26: Not listed on InterServer",
+        "172.253.115.26: Not listed on Cymru Bogons",
+        "172.253.115.26: Not listed on Blocklist.de",
+        "172.253.115.26: Not listed on NordSpam BL",
+        "172.253.115.26: Not listed on INPS",
+        "172.253.115.26: Not listed on NiX Spam",
+        "172.253.115.26: Not listed on Truncate/GBUdb",
+        "172.253.115.26: Not listed on Mailspike Z",
+        "172.253.115.26: Not listed on Digibase SpamBot"
       ],
       "warnings": [],
       "errors": []
@@ -660,13 +757,18 @@
     {
       "checkName": "Domain Blocklist Check",
       "category": 13,
-      "severity": 1,
-      "summary": "Domain not on any blocklists",
-      "details": [
-        "google.com: Not listed on dbl.spamhaus.org",
-        "google.com: Not listed on multi.surbl.org",
-        "google.com: black.uribl.com returned resolver/error code (127.0.0.1) - not a real listing (using public DNS resolver)"
-      ],
+      "severity": 0,
+      "summary": "Skipped \u2014 domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Hostname Blocklist (RHSBL)",
+      "category": 13,
+      "severity": 0,
+      "summary": "Skipped \u2014 MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -739,7 +841,8 @@
       "severity": 0,
       "summary": "No DANE/TLSA records",
       "details": [
-        "_25._tcp.smtp.google.com: No TLSA records"
+        "_25._tcp.smtp.google.com: No TLSA records",
+        "DANE checked for port 25 only \u2014 submission ports (587/465) not checked"
       ],
       "warnings": [],
       "errors": []
@@ -787,7 +890,7 @@
       "severity": 1,
       "summary": "Checked SMTP banners for 1 MX host(s)",
       "details": [
-        "smtp.google.com: Banner: 220 mx.google.com ESMTP 6a1803df08f44-89f3bc88f85si99996596d6.307 - gsmtp",
+        "smtp.google.com: Banner: 220 mx.google.com ESMTP 6a1803df08f44-8a5973e4ee7si33847786d6.296 - gsmtp",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)"
       ],
       "warnings": [],
@@ -800,7 +903,7 @@
       "summary": "EHLO capabilities retrieved",
       "details": [
         "smtp.google.com EHLO capabilities:",
-        "  mx.google.com at your service, [20.55.223.176]",
+        "  mx.google.com at your service, [20.161.58.224]",
         "  SIZE 157286400",
         "  8BITMIME",
         "  STARTTLS",
@@ -842,6 +945,37 @@
       "summary": "All MX hosts support STARTTLS",
       "details": [
         "smtp.google.com: STARTTLS supported (TLS Tls13)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Banner vs Reverse DNS",
+      "category": 19,
+      "severity": 2,
+      "summary": "9 MX IP(s) have rDNS/banner hostname mismatch",
+      "details": [],
+      "warnings": [
+        "smtp.google.com (172.253.115.27): PTR [bg-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (192.178.155.26): PTR [yuiadrs-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (172.253.139.26): PTR [yuiadsk-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (172.253.122.27): PTR [bh-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (172.253.115.26): PTR [bg-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (2607:f8b0:4004:c23::1a): PTR [yuiadrs-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (2607:f8b0:4004:c27::1a): PTR [yuiadsk-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (2607:f8b0:4004:c06::1a): PTR [bg-in-f26.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "smtp.google.com (2607:f8b0:4004:c06::1b): PTR [bg-in-f27.1e100.net] does not match banner hostname \u0027mx.google.com\u0027",
+        "Reverse DNS should match the SMTP banner hostname for best deliverability"
+      ],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Transaction Timing",
+      "category": 19,
+      "severity": 1,
+      "summary": "SMTP timing acceptable for 1 MX host(s)",
+      "details": [
+        "smtp.google.com: Connect: 19ms, Banner: 37ms, EHLO: 18ms, TLS: 174ms (Total: 248ms)"
       ],
       "warnings": [],
       "errors": []
@@ -903,7 +1037,7 @@
       "severity": 1,
       "summary": "1/1 MX hosts have IPv6",
       "details": [
-        "smtp.google.com: 2607:f8b0:4004:c09::1b, 2607:f8b0:4004:c09::1a, 2607:f8b0:4004:c06::1b, 2607:f8b0:4004:c06::1a"
+        "smtp.google.com: 2607:f8b0:4004:c23::1a, 2607:f8b0:4004:c27::1a, 2607:f8b0:4004:c06::1a, 2607:f8b0:4004:c06::1b"
       ],
       "warnings": [],
       "errors": []
@@ -915,10 +1049,10 @@
       "summary": "4 MX IPv6 address(es) unreachable \u2014 stale AAAA records cause delivery delays",
       "details": [],
       "warnings": [
-        "smtp.google.com [2607:f8b0:4004:c09::1b]: AAAA exists but IPv6 connection failed",
-        "smtp.google.com [2607:f8b0:4004:c09::1a]: AAAA exists but IPv6 connection failed",
-        "smtp.google.com [2607:f8b0:4004:c06::1b]: AAAA exists but IPv6 connection failed",
-        "smtp.google.com [2607:f8b0:4004:c06::1a]: AAAA exists but IPv6 connection failed"
+        "smtp.google.com [2607:f8b0:4004:c23::1a]: AAAA exists but port 25 unreachable over IPv6",
+        "smtp.google.com [2607:f8b0:4004:c27::1a]: AAAA exists but port 25 unreachable over IPv6",
+        "smtp.google.com [2607:f8b0:4004:c06::1a]: AAAA exists but port 25 unreachable over IPv6",
+        "smtp.google.com [2607:f8b0:4004:c06::1b]: AAAA exists but port 25 unreachable over IPv6"
       ],
       "errors": []
     },
@@ -950,9 +1084,9 @@
       "severity": 1,
       "summary": "DNS answers consistent across resolvers",
       "details": [
-        "Google (8.8.8.8): A=[64.233.180.100, 64.233.180.101, 64.233.180.102, 64.233.180.113, 64.233.180.138, 64.233.180.139] MX=[10:smtp.google.com]",
-        "Cloudflare (1.1.1.1): A=[172.253.62.100, 172.253.62.101, 172.253.62.102, 172.253.62.113, 172.253.62.138, 172.253.62.139] MX=[10:smtp.google.com]",
-        "Quad9 (9.9.9.9): A=[172.253.62.100, 172.253.62.101, 172.253.62.102, 172.253.62.113, 172.253.62.138, 172.253.62.139] MX=[10:smtp.google.com]",
+        "Google (8.8.8.8): A=[142.251.16.100, 142.251.16.101, 142.251.16.102, 142.251.16.113, 142.251.16.138, 142.251.16.139] MX=[10:smtp.google.com]",
+        "Cloudflare (1.1.1.1): A=[142.250.31.100, 142.250.31.101, 142.250.31.102, 142.250.31.113, 142.250.31.138, 142.250.31.139] MX=[10:smtp.google.com]",
+        "Quad9 (9.9.9.9): A=[142.251.163.100, 142.251.163.101, 142.251.163.102, 142.251.163.113, 142.251.163.138, 142.251.163.139] MX=[10:smtp.google.com]",
         "A record IPs differ across resolvers (normal for anycast/GeoDNS)"
       ],
       "warnings": [],
@@ -988,14 +1122,15 @@
     {
       "checkName": "TTL Sanity",
       "category": 27,
-      "severity": 1,
-      "summary": "TTLs within reasonable range",
+      "severity": 2,
+      "summary": "TTL issues detected",
       "details": [
-        "MX (google.com): TTL 128s",
-        "SPF/TXT (google.com): TTL 284s",
-        "DMARC (_dmarc.google.com): TTL 285s"
+        "SPF/TXT (google.com): TTL 252s",
+        "DMARC (_dmarc.google.com): TTL 252s"
       ],
-      "warnings": [],
+      "warnings": [
+        "MX (google.com): TTL 0s is very low (\u003C 60s)"
+      ],
       "errors": []
     },
     {
@@ -1004,14 +1139,14 @@
       "severity": 1,
       "summary": "Zone transfer denied on all nameservers",
       "details": [
-        "ns4.google.com (216.239.38.10): Zone transfer denied (good)",
-        "ns4.google.com (2001:4860:4802:38::a): Zone transfer denied (good)",
+        "ns1.google.com (216.239.32.10): Zone transfer denied (good)",
+        "ns1.google.com (2001:4860:4802:32::a): Zone transfer denied (good)",
         "ns3.google.com (216.239.36.10): Zone transfer denied (good)",
         "ns3.google.com (2001:4860:4802:36::a): Zone transfer denied (good)",
+        "ns4.google.com (216.239.38.10): Zone transfer denied (good)",
+        "ns4.google.com (2001:4860:4802:38::a): Zone transfer denied (good)",
         "ns2.google.com (216.239.34.10): Zone transfer denied (good)",
-        "ns2.google.com (2001:4860:4802:34::a): Zone transfer denied (good)",
-        "ns1.google.com (216.239.32.10): Zone transfer denied (good)",
-        "ns1.google.com (2001:4860:4802:32::a): Zone transfer denied (good)"
+        "ns2.google.com (2001:4860:4802:34::a): Zone transfer denied (good)"
       ],
       "warnings": [],
       "errors": []
@@ -1038,17 +1173,17 @@
       "checkName": "Email Provider Verification TXT",
       "category": 30,
       "severity": 0,
-      "summary": "Detected verification records: Google Workspace, DocuSign, Apple, Cisco/Webex, Microsoft 365, Facebook/Meta",
+      "summary": "Detected verification records: Cisco/Webex, DocuSign, Google Workspace, Facebook/Meta, Microsoft 365, Apple",
       "details": [
-        "Google Workspace: google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ",
-        "DocuSign: docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e",
-        "Google Workspace: google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o",
-        "Google Workspace: google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0",
-        "Apple: apple-domain-verification=30afIBcvSuDV2PLX",
-        "DocuSign: docusign=1b0a6754-49b1-4db5-8540-d2c12664b289",
         "Cisco/Webex: cisco-ci-domain-verification=47c38bc8c4b74b7233e9053220c1bbe76bcc1cd33c7acf7acd3...",
+        "DocuSign: docusign=1b0a6754-49b1-4db5-8540-d2c12664b289",
+        "Google Workspace: google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0",
+        "Google Workspace: google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ",
+        "Facebook/Meta: facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95",
         "Microsoft 365: MS=E4A68B9AB2BB9670BCE15412F62916164C0B20BB",
-        "Facebook/Meta: facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95"
+        "DocuSign: docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e",
+        "Apple: apple-domain-verification=30afIBcvSuDV2PLX",
+        "Google Workspace: google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o"
       ],
       "warnings": [],
       "errors": []
@@ -1080,19 +1215,19 @@
       "severity": 0,
       "summary": "13 TXT record(s) found",
       "details": [
-        "TXT: v=spf1 include:_spf.google.com ~all",
-        "TXT: google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ",
-        "TXT: docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e",
-        "TXT: google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o",
-        "TXT: onetrust-domain-verification=6d685f1d41a94696ad7ef771f68993e0",
-        "TXT: globalsign-smime-dv=CDYX\u002BXFHUw2wml6/Gb8\u002B59BsH31KzUr6c1l2BPvqKX8=",
-        "TXT: google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0",
-        "TXT: apple-domain-verification=30afIBcvSuDV2PLX",
-        "TXT: docusign=1b0a6754-49b1-4db5-8540-d2c12664b289",
         "TXT: cisco-ci-domain-verification=47c38bc8c4b74b7233e9053220c1bbe76bcc1cd33c7acf7acd36cd6a5332004b",
-        "TXT: onetrust-domain-verification=0d477fe608074e6f9c12bca7826035cc",
+        "TXT: v=spf1 include:_spf.google.com ~all",
+        "TXT: docusign=1b0a6754-49b1-4db5-8540-d2c12664b289",
+        "TXT: google-site-verification=4ibFUgB-wXLQ_S7vsXVomSTVamuOXBiVAzpR5IZ87D0",
+        "TXT: google-site-verification=TV9-DBe4R80X4v0M4U_bd_J9cpOJM0nikft0jAgjmsQ",
+        "TXT: facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95",
+        "TXT: globalsign-smime-dv=CDYX\u002BXFHUw2wml6/Gb8\u002B59BsH31KzUr6c1l2BPvqKX8=",
         "TXT: MS=E4A68B9AB2BB9670BCE15412F62916164C0B20BB",
-        "TXT: facebook-domain-verification=22rm551cu4k0ab0bxsw536tlds4h95"
+        "TXT: docusign=05958488-4752-4ef2-95eb-aa7ba8a3bd0e",
+        "TXT: onetrust-domain-verification=0d477fe608074e6f9c12bca7826035cc",
+        "TXT: apple-domain-verification=30afIBcvSuDV2PLX",
+        "TXT: google-site-verification=wD8N7i1JTNTkezJ49swvWW48f8_9xveREV4oB-0Hf5o",
+        "TXT: onetrust-domain-verification=6d685f1d41a94696ad7ef771f68993e0"
       ],
       "warnings": [],
       "errors": []
@@ -1104,16 +1239,16 @@
       "summary": "4 DNS query error(s) \u2014 some results may be incomplete",
       "details": [],
       "warnings": [
-        "DNS query to 2001:4860:4802:38::a failed for SOA google.com: Query 33870 =\u003E google.com IN SOA on [2001:4860:4802:38::a]:53 failed with an error.",
-        "DNS query to 2001:4860:4802:36::a failed for SOA google.com: Query 50367 =\u003E google.com IN SOA on [2001:4860:4802:36::a]:53 failed with an error.",
-        "DNS query to 2001:4860:4802:34::a failed for SOA google.com: Query 18858 =\u003E google.com IN SOA on [2001:4860:4802:34::a]:53 failed with an error.",
-        "DNS query to 2001:4860:4802:32::a failed for SOA google.com: Query 63747 =\u003E google.com IN SOA on [2001:4860:4802:32::a]:53 failed with an error."
+        "DNS query to 2001:4860:4802:34::a failed for SOA google.com: Query 5520 =\u003E google.com IN SOA on [2001:4860:4802:34::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:38::a failed for SOA google.com: Query 24591 =\u003E google.com IN SOA on [2001:4860:4802:38::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:36::a failed for SOA google.com: Query 53041 =\u003E google.com IN SOA on [2001:4860:4802:36::a]:53 failed with an error.",
+        "DNS query to 2001:4860:4802:32::a failed for SOA google.com: Query 25559 =\u003E google.com IN SOA on [2001:4860:4802:32::a]:53 failed with an error."
       ],
       "errors": []
     }
   ],
   "passCount": 57,
-  "warningCount": 5,
-  "errorCount": 1,
+  "warningCount": 8,
+  "errorCount": 0,
   "criticalCount": 0
 }
