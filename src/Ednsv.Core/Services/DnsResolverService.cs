@@ -10,6 +10,7 @@ public class DnsResolverService
 {
     private readonly LookupClient _client;
     private readonly LookupClient _directClient;
+    private readonly LookupClient _dnsblClient;
     private const int MaxRetries = 3;
 
     // Application-level cache for DNS queries (survives across domains)
@@ -45,6 +46,17 @@ public class DnsResolverService
             ThrowDnsErrors = false
         };
         _client = new LookupClient(options);
+
+        // Fast client for DNSBL lookups — responsive blocklists answer in <200ms;
+        // anything over 2s is likely dead/unresponsive. No retries to avoid wasting time.
+        var dnsblOptions = new LookupClientOptions(endpoints)
+        {
+            UseCache = true,
+            Timeout = TimeSpan.FromSeconds(2),
+            Retries = 0,
+            ThrowDnsErrors = false
+        };
+        _dnsblClient = new LookupClient(dnsblOptions);
 
         var directOptions = new LookupClientOptions
         {
@@ -115,6 +127,39 @@ public class DnsResolverService
         {
             QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
             CacheFailureIfExhausted(key);
+            return EmptyResponse.Instance;
+        }
+    }
+
+    /// <summary>
+    /// Fast DNSBL query with 2s timeout and no retries. Uses the shared query cache
+    /// so results are reused across domains. Failures are silently treated as "not listed"
+    /// rather than logged as DNS errors (many DNSBLs are simply unresponsive).
+    /// </summary>
+    public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
+    {
+        var key = (query.ToLowerInvariant(), type);
+        if (_queryCache.TryGetValue(key, out var cached))
+            return cached;
+
+        try
+        {
+            var result = await _dnsblClient.QueryAsync(query, type);
+            if (!result.HasError)
+            {
+                _queryCache.TryAdd(key, result);
+            }
+            else
+            {
+                // DNSBL errors: cache immediately — no point retrying unresponsive lists
+                _queryCache.TryAdd(key, result);
+            }
+            return result;
+        }
+        catch
+        {
+            // Silently cache as empty — don't pollute QueryErrors with DNSBL timeouts
+            _queryCache.TryAdd(key, EmptyResponse.Instance);
             return EmptyResponse.Instance;
         }
     }

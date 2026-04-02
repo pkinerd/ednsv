@@ -172,7 +172,7 @@ public class IpBlocklistCheck : ICheck
                     var query = $"{reversed}.{bl}";
                     tasks.Add(Task.Run(async () =>
                     {
-                        var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                         return (capturedIp, capturedBl, resp.Answers.ARecords().ToList());
                     }));
                 }
@@ -271,7 +271,7 @@ public class MxHostnameBlocklistCheck : ICheck
                 foreach (var bl in DomainBlocklists)
                 {
                     var query = $"{mxDomain}.{bl}";
-                    var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                    var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                     var aRecs = resp.Answers.ARecords().ToList();
                     if (aRecs.Any())
                     {
@@ -342,7 +342,7 @@ public class DomainBlocklistCheck : ICheck
             foreach (var bl in DomainBlocklists)
             {
                 var query = $"{domain}.{bl}";
-                var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                 var aRecs = resp.Answers.ARecords().ToList();
                 if (aRecs.Any())
                 {

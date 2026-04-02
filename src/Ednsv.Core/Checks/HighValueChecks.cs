@@ -529,7 +529,7 @@ public class ExtendedDnsblCheck : ICheck
                     await semaphore.WaitAsync();
                     try
                     {
-                        var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                         return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
                     }
                     finally
