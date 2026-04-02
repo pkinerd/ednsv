@@ -36,6 +36,7 @@ var dnsServerOption = new Option<string?>("--dns-server", "DNS server(s) for loo
 dnsServerOption.AddAlias("-s");
 var privateDnsblOption = new Option<bool>("--private-dnsbl", "Include blocklists that require a private/registered DNS resolver (Spamhaus, Barracuda, SURBL, URIBL). Off by default as they return false positives via public resolvers");
 var cacheOption = new Option<string?>("--cache", "Persist probe cache to a directory between runs. Optionally specify a directory path (default: .ednsv-cache/ in current directory)");
+cacheOption.Arity = ArgumentArity.ZeroOrOne;
 cacheOption.AddAlias("-c");
 var cacheTtlOption = new Option<int>("--cache-ttl", () => 24, "Cache time-to-live in hours (default: 24)");
 var retryOption = new Option<bool>("--retry", "Double retry counts for more persistent probing (useful for unreliable networks)");
