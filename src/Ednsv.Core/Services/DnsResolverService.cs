@@ -141,8 +141,12 @@ public class DnsResolverService
     {
         var key = (query.ToLowerInvariant(), type);
         if (_queryCache.TryGetValue(key, out var cached))
+        {
+            Interlocked.Increment(ref _cacheHits);
             return cached;
+        }
 
+        Interlocked.Increment(ref _cacheMisses);
         try
         {
             var result = await _dnsblClient.QueryAsync(query, type);
