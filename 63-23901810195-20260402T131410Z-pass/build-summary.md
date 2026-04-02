@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #14 (attempt 1) |
-| **Run ID** | 23781817312 |
+| **Run** | #63 (attempt 1) |
+| **Run ID** | 23901810195 |
 | **Result** | pass |
-| **Commit** | ee82a12259d8498887e9ac9b0ac22c00172f38a4 |
-| **Ref** | refs/pull/2/merge |
+| **Commit** | 25cd0cf9553312c9ac47eaea7081cf2e0b141f76 |
+| **Ref** | refs/pull/4/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #2: Add --list-checks, --verbose options and checks summary in --help |
-| **Branch** | claude/add-help-checks-summary-7f2IM |
+| **PR** | #4: Add support for validating multiple domains in a single run |
+| **Branch** | claude/multi-domain-file-input-Mqheq |
 
 ## Artifacts
 ```
