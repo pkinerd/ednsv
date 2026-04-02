@@ -28,6 +28,9 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      - name: Run unit tests
+        run: dotnet test --no-build --configuration Release --verbosity normal
+
       - name: Run against test domains
         run: |
           mkdir -p test-output
