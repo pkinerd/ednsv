@@ -301,17 +301,18 @@ public class DomainValidator
         }
 
         // Surface any DNS query errors so users know results may be incomplete
-        if (_dns.QueryErrors.Any())
+        var dnsErrors = _dns.QueryErrors.ToList(); // snapshot for consistent reads
+        if (dnsErrors.Any())
         {
             report.Results.Add(new CheckResult
             {
                 CheckName = "DNS Query Errors",
                 Category = CheckCategory.NS,
                 Severity = CheckSeverity.Warning,
-                Summary = $"{_dns.QueryErrors.Count} DNS query error(s) — some results may be incomplete",
-                Warnings = _dns.QueryErrors.Take(20).ToList(),
-                Details = _dns.QueryErrors.Count > 20
-                    ? new List<string> { $"...and {_dns.QueryErrors.Count - 20} more" }
+                Summary = $"{dnsErrors.Count} DNS query error(s) — some results may be incomplete",
+                Warnings = dnsErrors.Take(20).ToList(),
+                Details = dnsErrors.Count > 20
+                    ? new List<string> { $"...and {dnsErrors.Count - 20} more" }
                     : new List<string>()
             });
         }
