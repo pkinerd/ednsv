@@ -727,9 +727,19 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
             var showingRunningLine = false;
             CheckCategory? currentCategory = null;
             var shownDescriptions = new HashSet<string>();
+            var checkTimings = new Dictionary<string, TimeSpan>();
+            var checkDnsHitsBefore = 0;
+            var checkDnsMissesBefore = 0;
+
+            validator.OnCheckTiming += (name, elapsed) =>
+            {
+                checkTimings[name] = elapsed;
+            };
 
             validator.OnCheckStarted += name =>
             {
+                checkDnsHitsBefore = dns.CacheHits;
+                checkDnsMissesBefore = dns.CacheMisses;
                 AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
                 showingRunningLine = true;
             };
@@ -772,7 +782,15 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
                     _ => "[grey]????[/]"
                 };
 
-                AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+                var timingSuffix = "";
+                if (checkTimings.TryGetValue(name, out var elapsed))
+                {
+                    var hits = dns.CacheHits - checkDnsHitsBefore;
+                    var misses = dns.CacheMisses - checkDnsMissesBefore;
+                    timingSuffix = $" [dim]({elapsed.TotalSeconds:F1}s, dns:{hits}h/{misses}m)[/]";
+                }
+
+                AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}{timingSuffix}");
 
                 if (verbose)
                 {
@@ -912,9 +930,21 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         var showingRunningLine = false;
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
+        var checkTimings = new Dictionary<string, TimeSpan>();
+        var checkDnsHitsBefore = 0;
+        var checkDnsMissesBefore = 0;
+
+        validator.OnCheckTiming += (name, elapsed) =>
+        {
+            checkTimings[name] = elapsed;
+            if (name == "Prefetch")
+                AnsiConsole.MarkupLine($"  [dim]Prefetch: {elapsed.TotalSeconds:F1}s (dns:{dns.CacheHits}h/{dns.CacheMisses}m)[/]");
+        };
 
         validator.OnCheckStarted += name =>
         {
+            checkDnsHitsBefore = dns.CacheHits;
+            checkDnsMissesBefore = dns.CacheMisses;
             AnsiConsole.MarkupLine($"  [dim blue]● Running: {Markup.Escape(name)}…[/]");
             showingRunningLine = true;
         };
@@ -948,7 +978,15 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
                 CheckSeverity.Critical => "[red bold]CRIT[/]",
                 _ => "[grey]????[/]"
             };
-            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}");
+
+            var timingSuffix = "";
+            if (checkTimings.TryGetValue(name, out var elapsed))
+            {
+                var hits = dns.CacheHits - checkDnsHitsBefore;
+                var misses = dns.CacheMisses - checkDnsMissesBefore;
+                timingSuffix = $" [dim]({elapsed.TotalSeconds:F1}s, dns:{hits}h/{misses}m)[/]";
+            }
+            AnsiConsole.MarkupLine($"  {icon} [bold]{Markup.Escape(check.CheckName)}[/]: {Markup.Escape(check.Summary)}{timingSuffix}");
 
             if (verbose)
             {
