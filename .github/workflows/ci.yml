@@ -175,50 +175,45 @@ jobs:
               print(f'  Could not extract total durations')
           " || true
 
-      - name: Same-domain duplicate run (in-memory cache reuse)
+      - name: Multi-domain run (in-memory cache reuse across domains)
         if: always()
         run: |
-          DOMAIN="cnn.com"
-
           echo "============================================"
-          echo "Two-domain run: $DOMAIN $DOMAIN (verbose)"
+          echo "Multi-domain run: google.com gmail.com (verbose)"
           echo "============================================"
-          echo "Running same domain twice in one invocation to verify in-memory cache reuse..."
+          echo "Domains sharing infrastructure should show cache hits on 2nd domain..."
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" "$DOMAIN" --verbose \
-            > "test-output/duplicate-domain.txt" 2>&1 || true
-          cat "test-output/duplicate-domain.txt"
+            google.com gmail.com --verbose \
+            > "test-output/multi-domain.txt" 2>&1 || true
+          cat "test-output/multi-domain.txt"
 
           echo ""
           echo "============================================"
-          echo "Per-domain timing comparison:"
+          echo "Per-domain cache reuse analysis:"
           echo "============================================"
           python3 -c "
           import re
 
           # Strip ANSI escape codes
-          raw = open('test-output/duplicate-domain.txt').read()
+          raw = open('test-output/multi-domain.txt').read()
           text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
 
           # Duration is in Spectre table: │ Duration │ 80.7s │
           durations = [float(m.group(1)) for m in re.finditer(r'Duration\s*│\s*(\d+\.?\d*)s', text)]
 
-          # Find DNS hit/miss totals per domain block
+          # Find DNS hit/miss totals per domain block (split on Validating:)
           blocks = re.split(r'Validating:', text)
+          domains = ['google.com', 'gmail.com']
           for i, block in enumerate(blocks[1:], 1):
               hm = re.findall(r'dns:(\d+)h/(\d+)m', block)
               hits = sum(int(h) for h,_ in hm)
               misses = sum(int(m) for _,m in hm)
-              print(f'  Domain #{i}: dns:{hits}h/{misses}m')
+              name = domains[i-1] if i <= len(domains) else f'domain #{i}'
+              dur = f'{durations[i-1]:.1f}s' if i <= len(durations) else '?'
+              print(f'  {name}: {dur}, dns:{hits}h/{misses}m')
 
           if len(durations) >= 2:
-              print(f'  1st run: {durations[0]:.1f}s')
-              print(f'  2nd run: {durations[1]:.1f}s')
-              if durations[1] > 0:
-                  speedup = durations[0] / durations[1]
-                  print(f'  Speedup: {speedup:.1f}x (in-memory cache reuse)')
-          else:
-              print(f'  Found {len(durations)} duration(s), expected 2')
+              print(f'  Speedup: {durations[0]/durations[1]:.1f}x' if durations[1] > 0 else '  2nd domain was instant')
           " || true
 
       - name: Upload test output
