@@ -151,8 +151,53 @@ public static class DnsCacheSerializer
                 dto.Data["Port"] = srv.Port.ToString();
                 dto.Data["Target"] = srv.Target.Value.TrimEnd('.');
                 break;
+            case DsRecord ds:
+                dto.Type = "DS";
+                dto.Data["KeyTag"] = ds.KeyTag.ToString();
+                dto.Data["Algorithm"] = ((byte)ds.Algorithm).ToString();
+                dto.Data["DigestType"] = ds.DigestType.ToString();
+                dto.Data["Digest"] = ds.DigestAsString;
+                break;
+            case DnsKeyRecord dnsKey:
+                dto.Type = "DNSKEY";
+                dto.Data["Flags"] = dnsKey.Flags.ToString();
+                dto.Data["Protocol"] = dnsKey.Protocol.ToString();
+                dto.Data["Algorithm"] = ((byte)dnsKey.Algorithm).ToString();
+                dto.Data["PublicKey"] = Convert.ToBase64String(dnsKey.PublicKey.ToArray());
+                break;
+            case RRSigRecord rrsig:
+                dto.Type = "RRSIG";
+                dto.Data["CoveredType"] = ((int)rrsig.CoveredType).ToString();
+                dto.Data["Algorithm"] = ((byte)rrsig.Algorithm).ToString();
+                dto.Data["Labels"] = rrsig.Labels.ToString();
+                dto.Data["OriginalTtl"] = rrsig.OriginalTtl.ToString();
+                dto.Data["Expiration"] = rrsig.SignatureExpiration.ToUnixTimeSeconds().ToString();
+                dto.Data["Inception"] = rrsig.SignatureInception.ToUnixTimeSeconds().ToString();
+                dto.Data["KeyTag"] = rrsig.KeyTag.ToString();
+                dto.Data["SignersName"] = rrsig.SignersName.Value.TrimEnd('.');
+                dto.Data["Signature"] = Convert.ToBase64String(rrsig.Signature.ToArray());
+                break;
+            case TlsaRecord tlsa:
+                dto.Type = "TLSA";
+                dto.Data["CertUsage"] = ((byte)tlsa.CertificateUsage).ToString();
+                dto.Data["Selector"] = ((byte)tlsa.Selector).ToString();
+                dto.Data["MatchingType"] = ((byte)tlsa.MatchingType).ToString();
+                dto.Data["CertData"] = tlsa.CertificateAssociationDataAsString;
+                break;
+            case NSecRecord nsec:
+                dto.Type = "NSEC";
+                dto.Data["NextDomainName"] = nsec.NextDomainName.Value.TrimEnd('.');
+                dto.Data["TypeBitMaps"] = Convert.ToHexString(nsec.TypeBitMapsRaw.ToArray());
+                break;
+            case NSec3ParamRecord nsec3:
+                dto.Type = "NSEC3PARAM";
+                dto.Data["HashAlgorithm"] = nsec3.HashAlgorithm.ToString();
+                dto.Data["Flags"] = nsec3.Flags.ToString();
+                dto.Data["Iterations"] = nsec3.Iterations.ToString();
+                dto.Data["Salt"] = Convert.ToHexString(nsec3.Salt ?? Array.Empty<byte>());
+                break;
             default:
-                // Unsupported record type — can't serialize
+                // Unknown record type — skip but don't fail the whole response
                 return null;
         }
 
@@ -194,6 +239,39 @@ public static class DnsCacheSerializer
                     ushort.Parse(dto.Data["Weight"]),
                     ushort.Parse(dto.Data["Port"]),
                     DnsString.Parse(dto.Data["Target"])),
+                "DS" => new DsRecord(info,
+                    int.Parse(dto.Data["KeyTag"]),
+                    byte.Parse(dto.Data["Algorithm"]),
+                    byte.Parse(dto.Data["DigestType"]),
+                    Convert.FromHexString(dto.Data["Digest"])),
+                "DNSKEY" => new DnsKeyRecord(info,
+                    int.Parse(dto.Data["Flags"]),
+                    byte.Parse(dto.Data["Protocol"]),
+                    byte.Parse(dto.Data["Algorithm"]),
+                    Convert.FromBase64String(dto.Data["PublicKey"])),
+                "RRSIG" => new RRSigRecord(info,
+                    int.Parse(dto.Data["CoveredType"]),
+                    byte.Parse(dto.Data["Algorithm"]),
+                    byte.Parse(dto.Data["Labels"]),
+                    long.Parse(dto.Data["OriginalTtl"]),
+                    long.Parse(dto.Data["Expiration"]),
+                    long.Parse(dto.Data["Inception"]),
+                    int.Parse(dto.Data["KeyTag"]),
+                    DnsString.Parse(dto.Data["SignersName"]),
+                    Convert.FromBase64String(dto.Data["Signature"])),
+                "TLSA" => new TlsaRecord(info,
+                    byte.Parse(dto.Data["CertUsage"]),
+                    byte.Parse(dto.Data["Selector"]),
+                    byte.Parse(dto.Data["MatchingType"]),
+                    Convert.FromHexString(dto.Data["CertData"])),
+                "NSEC" => new NSecRecord(info,
+                    DnsString.Parse(dto.Data["NextDomainName"]),
+                    Convert.FromHexString(dto.Data["TypeBitMaps"])),
+                "NSEC3PARAM" => new NSec3ParamRecord(info,
+                    byte.Parse(dto.Data["HashAlgorithm"]),
+                    byte.Parse(dto.Data["Flags"]),
+                    int.Parse(dto.Data["Iterations"]),
+                    Convert.FromHexString(dto.Data["Salt"])),
                 _ => null
             };
         }
@@ -215,6 +293,12 @@ public static class DnsCacheSerializer
         "SOA" => ResourceRecordType.SOA,
         "CAA" => ResourceRecordType.CAA,
         "SRV" => ResourceRecordType.SRV,
+        "DS" => ResourceRecordType.DS,
+        "DNSKEY" => ResourceRecordType.DNSKEY,
+        "RRSIG" => ResourceRecordType.RRSIG,
+        "TLSA" => ResourceRecordType.TLSA,
+        "NSEC" => ResourceRecordType.NSEC,
+        "NSEC3PARAM" => ResourceRecordType.NSEC3PARAM,
         _ => ResourceRecordType.A // fallback, shouldn't happen
     };
 }
