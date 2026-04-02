@@ -43,14 +43,13 @@ public class DnsResolverService
         };
         _client = new LookupClient(options);
 
-        // DNSBL client — most responsive blocklists answer in <500ms. 3s timeout
-        // with 1 retry gives slow-but-alive lists a fair chance without wasting time
-        // on dead ones. Failures cached after 2 attempts (not 3).
+        // DNSBL client — shorter timeout (3s) since most responsive blocklists
+        // answer in <500ms. 3 attempts like all other DNS clients.
         var dnsblOptions = new LookupClientOptions(endpoints)
         {
             UseCache = true,
             Timeout = TimeSpan.FromSeconds(3),
-            Retries = 1,
+            Retries = 2,
             ThrowDnsErrors = false
         };
         _dnsblClient = new LookupClient(dnsblOptions);
@@ -59,7 +58,7 @@ public class DnsResolverService
         {
             UseCache = false,
             Timeout = TimeSpan.FromSeconds(5),
-            Retries = 1,
+            Retries = 2,
             ThrowDnsErrors = false
         };
         _directClient = new LookupClient(directOptions);
@@ -132,10 +131,9 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// DNSBL query with 3s timeout and 1 retry. Uses the shared query cache so results
-    /// are reused across domains. Failures cached after 2 attempts — gives slow-but-alive
-    /// lists a second chance without wasting time on dead ones. Timeouts don't pollute
-    /// the DNS error log (many obscure DNSBLs are simply unresponsive).
+    /// DNSBL query with 3s timeout and 2 retries (3 attempts). Uses the shared query cache
+    /// so results are reused across domains. Timeouts don't pollute the DNS error log
+    /// (many obscure DNSBLs are simply unresponsive).
     /// </summary>
     public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
     {
@@ -186,7 +184,7 @@ public class DnsResolverService
             {
                 UseCache = false,
                 Timeout = TimeSpan.FromSeconds(5),
-                Retries = 1,
+                Retries = 2,
                 ThrowDnsErrors = false
             };
             var client = new LookupClient(opts);

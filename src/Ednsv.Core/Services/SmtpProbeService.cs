@@ -44,6 +44,19 @@ public class SmtpProbeService
         if (_probeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
+        SmtpProbeResult result = null!;
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            result = await ProbeSmtpAttemptAsync(host, port);
+            if (result.Connected) break; // Got a real connection — no need to retry
+        }
+
+        _probeCache.TryAdd(cacheKey, result);
+        return result;
+    }
+
+    private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
+    {
         var result = new SmtpProbeResult();
         TcpClient? client = null;
         try
@@ -54,7 +67,6 @@ public class SmtpProbeService
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
             {
                 result.Error = "Connection timed out";
-                _probeCache.TryAdd(cacheKey, result);
                 return result;
             }
             await connectTask; // propagate exception if any
@@ -151,8 +163,6 @@ public class SmtpProbeService
             client?.Dispose();
         }
 
-        // Always cache — failures are filtered out by --retry-errors on load
-        _probeCache.TryAdd(cacheKey, result);
         return result;
     }
 
@@ -162,25 +172,28 @@ public class SmtpProbeService
         if (_portCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        bool reachable;
-        try
+        bool reachable = false;
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
-            using var client = new TcpClient();
-            var connectTask = client.ConnectAsync(host, port);
-            if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
-                reachable = false;
-            else
+            try
             {
-                await connectTask;
-                reachable = true;
+                using var client = new TcpClient();
+                var connectTask = client.ConnectAsync(host, port);
+                if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
+                    reachable = false;
+                else
+                {
+                    await connectTask;
+                    reachable = true;
+                }
             }
-        }
-        catch
-        {
-            reachable = false;
+            catch
+            {
+                reachable = false;
+            }
+            if (reachable) break;
         }
 
-        // Always cache result — failures are filtered out by --retry-errors on load
         _portCache.TryAdd(cacheKey, reachable);
         return reachable;
     }
@@ -197,17 +210,28 @@ public class SmtpProbeService
         if (_rcptCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
+        (bool accepted, string response) lastResult = default;
+        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        {
+            lastResult = await ProbeRcptAttemptAsync(host, address);
+            // Got a server-level response (connected successfully) — no need to retry
+            if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
+                break;
+        }
+
+        _rcptCache.TryAdd(cacheKey, lastResult);
+        return lastResult;
+    }
+
+    private async Task<(bool accepted, string response)> ProbeRcptAttemptAsync(string host, string address)
+    {
         TcpClient? client = null;
         try
         {
             client = new TcpClient();
             var connectTask = client.ConnectAsync(host, 25);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
-            {
-                var result = (false, "Connection timed out");
-                _rcptCache.TryAdd(cacheKey, result);
-                return result;
-            }
+                return (false, "Connection timed out");
             await connectTask;
 
             var stream = client.GetStream();
@@ -221,27 +245,19 @@ public class SmtpProbeService
             await WriteLineAsync(stream, "MAIL FROM:<>");
             var mailResp = await ReadLineAsync(stream);
             if (!mailResp.StartsWith("250"))
-            {
-                var result = (false, $"MAIL FROM rejected: {mailResp}");
-                _rcptCache.TryAdd(cacheKey, result);
-                return result;
-            }
+                return (false, $"MAIL FROM rejected: {mailResp}");
 
             await WriteLineAsync(stream, $"RCPT TO:<{address}>");
             var rcptResp = await ReadLineAsync(stream);
 
-            await WriteLineAsync(stream, "QUIT");
+            try { await WriteLineAsync(stream, "QUIT"); } catch { }
 
             var accepted = rcptResp.StartsWith("250") || rcptResp.StartsWith("251");
-            var final = (accepted, rcptResp);
-            _rcptCache.TryAdd(cacheKey, final);
-            return final;
+            return (accepted, rcptResp);
         }
         catch (Exception ex)
         {
-            var result = (false, $"Error: {ex.Message}");
-            _rcptCache.TryAdd(cacheKey, result);
-            return result;
+            return (false, $"Error: {ex.Message}");
         }
         finally
         {
