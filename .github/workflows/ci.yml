@@ -136,21 +136,14 @@ jobs:
           python3 -c "
           import re, sys
 
-          def parse_timespan(ts):
-              # Parse Duration: HH:MM:SS.ticks or H:MM:SS.ticks
-              m = re.match(r'(\d+):(\d+):(\d+)\.?(\d*)', ts)
-              if m:
-                  return int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3)) + float('0.'+m.group(4)) if m.group(4) else 0
-              return 0
-
           def parse_timing(path):
               # Strip ANSI escape codes for reliable parsing
               raw = open(path).read()
               text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
               times = {}
-              # Extract total duration (TimeSpan format: HH:MM:SS.ticks)
-              dur = re.search(r'Duration:\s*(\d+:\d+:\d+\.\d+)', text)
-              if dur: times['TOTAL'] = parse_timespan(dur.group(1))
+              # Duration is in a Spectre.Console table: │ Duration │ 80.7s │
+              dur = re.search(r'Duration\s*│\s*(\d+\.?\d*)s', text)
+              if dur: times['TOTAL'] = float(dur.group(1))
               # Extract cache load line
               cache = re.search(r'Loaded cache[^\n]*', text)
               if cache: times['_cache_line'] = cache.group(0).strip()
@@ -203,21 +196,12 @@ jobs:
           python3 -c "
           import re
 
-          def parse_timespan(ts):
-              m = re.match(r'(\d+):(\d+):(\d+)\.?(\d*)', ts)
-              if m:
-                  return int(m.group(1))*3600 + int(m.group(2))*60 + int(m.group(3)) + float('0.'+m.group(4)) if m.group(4) else 0
-              return 0
-
           # Strip ANSI escape codes
           raw = open('test-output/duplicate-domain.txt').read()
           text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
 
-          # Find all Duration: HH:MM:SS.ticks entries
-          durations = []
-          for m in re.finditer(r'Duration:\s*(\d+:\d+:\d+\.\d+)', text):
-              secs = parse_timespan(m.group(1))
-              durations.append(secs)
+          # Duration is in Spectre table: │ Duration │ 80.7s │
+          durations = [float(m.group(1)) for m in re.finditer(r'Duration\s*│\s*(\d+\.?\d*)s', text)]
 
           # Find DNS hit/miss totals per domain block
           blocks = re.split(r'Validating:', text)
