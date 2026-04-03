@@ -1,7 +1,7 @@
 {
   "domain": "example.com",
-  "timestamp": "2026-04-01T00:30:29.4507347Z",
-  "duration": "00:00:07.9704974",
+  "timestamp": "2026-04-03T11:55:10.6030811Z",
+  "duration": "00:00:15.2984389",
   "results": [
     {
       "checkName": "Delegation Chain",
@@ -9,7 +9,7 @@
       "severity": 1,
       "summary": "Delegation chain walked through 2 levels",
       "details": [
-        "Zone [com] NS: a.gtld-servers.net, m.gtld-servers.net, c.gtld-servers.net, b.gtld-servers.net, k.gtld-servers.net, j.gtld-servers.net, d.gtld-servers.net, e.gtld-servers.net, i.gtld-servers.net, f.gtld-servers.net, l.gtld-servers.net, g.gtld-servers.net, h.gtld-servers.net",
+        "Zone [com] NS: a.gtld-servers.net, b.gtld-servers.net, i.gtld-servers.net, j.gtld-servers.net, k.gtld-servers.net, g.gtld-servers.net, f.gtld-servers.net, d.gtld-servers.net, h.gtld-servers.net, c.gtld-servers.net, m.gtld-servers.net, e.gtld-servers.net, l.gtld-servers.net",
         "Zone [example.com] NS: hera.ns.cloudflare.com, elliott.ns.cloudflare.com"
       ],
       "warnings": [],
@@ -24,14 +24,14 @@
         "NS: hera.ns.cloudflare.com -\u003E 173.245.58.162 (PTR: hera.ns.cloudflare.com)",
         "NS: hera.ns.cloudflare.com -\u003E 108.162.192.162 (PTR: hera.ns.cloudflare.com)",
         "NS: hera.ns.cloudflare.com -\u003E 172.64.32.162 (PTR: hera.ns.cloudflare.com)",
-        "NS: hera.ns.cloudflare.com -\u003E 2606:4700:50::adf5:3aa2 (PTR: hera.ns.cloudflare.com)",
-        "NS: hera.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:20a2 (PTR: hera.ns.cloudflare.com)",
         "NS: hera.ns.cloudflare.com -\u003E 2803:f800:50::6ca2:c0a2 (PTR: hera.ns.cloudflare.com)",
-        "NS: elliott.ns.cloudflare.com -\u003E 108.162.195.228 (PTR: elliott.ns.cloudflare.com)",
+        "NS: hera.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:20a2 (PTR: hera.ns.cloudflare.com)",
+        "NS: hera.ns.cloudflare.com -\u003E 2606:4700:50::adf5:3aa2 (PTR: hera.ns.cloudflare.com)",
         "NS: elliott.ns.cloudflare.com -\u003E 172.64.35.228 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 108.162.195.228 (PTR: elliott.ns.cloudflare.com)",
         "NS: elliott.ns.cloudflare.com -\u003E 162.159.44.228 (PTR: elliott.ns.cloudflare.com)",
-        "NS: elliott.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:23e4 (PTR: elliott.ns.cloudflare.com)",
         "NS: elliott.ns.cloudflare.com -\u003E 2606:4700:58::a29f:2ce4 (PTR: elliott.ns.cloudflare.com)",
+        "NS: elliott.ns.cloudflare.com -\u003E 2a06:98c1:50::ac40:23e4 (PTR: elliott.ns.cloudflare.com)",
         "NS: elliott.ns.cloudflare.com -\u003E 2803:f800:50::6ca2:c3e4 (PTR: elliott.ns.cloudflare.com)"
       ],
       "warnings": [],
@@ -58,15 +58,37 @@
       "details": [
         "Primary NS: elliott.ns.cloudflare.com",
         "Admin: dns.cloudflare.com",
-        "Serial: 2399341694",
+        "Serial: 2400651045",
         "Refresh: 10000s",
         "Retry: 2400s",
         "Expire: 604800s",
         "Minimum TTL: 1800s"
       ],
       "warnings": [
-        "Serial 2399341694 doesn\u0027t follow YYYYMMDDnn convention"
+        "Serial 2400651045 doesn\u0027t follow YYYYMMDDnn convention"
       ],
+      "errors": []
+    },
+    {
+      "checkName": "SOA Serial Consistency",
+      "category": 1,
+      "severity": 1,
+      "summary": "All 6 nameservers agree on SOA serial 2400651045",
+      "details": [
+        "hera.ns.cloudflare.com (173.245.58.162): Serial 2400651045",
+        "hera.ns.cloudflare.com (108.162.192.162): Serial 2400651045",
+        "hera.ns.cloudflare.com (172.64.32.162): Serial 2400651045",
+        "elliott.ns.cloudflare.com (172.64.35.228): Serial 2400651045",
+        "elliott.ns.cloudflare.com (108.162.195.228): Serial 2400651045",
+        "elliott.ns.cloudflare.com (162.159.44.228): Serial 2400651045",
+        "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): No SOA in response",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): No SOA in response",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): No SOA in response",
+        "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): No SOA in response",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): No SOA in response",
+        "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): No SOA in response"
+      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -86,8 +108,8 @@
       "severity": 1,
       "summary": "2 NS records found",
       "details": [
-        "NS: hera.ns.cloudflare.com (TTL: 21600s)",
-        "NS: elliott.ns.cloudflare.com (TTL: 21600s)"
+        "NS: hera.ns.cloudflare.com (TTL: 21599s)",
+        "NS: elliott.ns.cloudflare.com (TTL: 21599s)"
       ],
       "warnings": [],
       "errors": []
@@ -110,14 +132,14 @@
         "hera.ns.cloudflare.com (173.245.58.162): Authoritative (SOA present)",
         "hera.ns.cloudflare.com (108.162.192.162): Authoritative (SOA present)",
         "hera.ns.cloudflare.com (172.64.32.162): Authoritative (SOA present)",
-        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Unreachable (query failed)",
-        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Unreachable (query failed)",
         "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): Unreachable (query failed)",
-        "elliott.ns.cloudflare.com (108.162.195.228): Authoritative (SOA present)",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Unreachable (query failed)",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Unreachable (query failed)",
         "elliott.ns.cloudflare.com (172.64.35.228): Authoritative (SOA present)",
+        "elliott.ns.cloudflare.com (108.162.195.228): Authoritative (SOA present)",
         "elliott.ns.cloudflare.com (162.159.44.228): Authoritative (SOA present)",
-        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Unreachable (query failed)",
         "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): Unreachable (query failed)",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Unreachable (query failed)",
         "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): Unreachable (query failed)"
       ],
       "warnings": [],
@@ -132,14 +154,14 @@
         "hera.ns.cloudflare.com: 173.245.58.162",
         "hera.ns.cloudflare.com: 108.162.192.162",
         "hera.ns.cloudflare.com: 172.64.32.162",
-        "hera.ns.cloudflare.com: 2606:4700:50::adf5:3aa2",
-        "hera.ns.cloudflare.com: 2a06:98c1:50::ac40:20a2",
         "hera.ns.cloudflare.com: 2803:f800:50::6ca2:c0a2",
-        "elliott.ns.cloudflare.com: 108.162.195.228",
+        "hera.ns.cloudflare.com: 2a06:98c1:50::ac40:20a2",
+        "hera.ns.cloudflare.com: 2606:4700:50::adf5:3aa2",
         "elliott.ns.cloudflare.com: 172.64.35.228",
+        "elliott.ns.cloudflare.com: 108.162.195.228",
         "elliott.ns.cloudflare.com: 162.159.44.228",
-        "elliott.ns.cloudflare.com: 2a06:98c1:50::ac40:23e4",
         "elliott.ns.cloudflare.com: 2606:4700:58::a29f:2ce4",
+        "elliott.ns.cloudflare.com: 2a06:98c1:50::ac40:23e4",
         "elliott.ns.cloudflare.com: 2803:f800:50::6ca2:c3e4"
       ],
       "warnings": [],
@@ -150,6 +172,15 @@
       "category": 2,
       "severity": 1,
       "summary": "No duplicate NS IPs found",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Open Recursive Resolver Detection",
+      "category": 2,
+      "severity": 0,
+      "summary": "Open resolver check skipped (use --open-resolver to enable)",
       "details": [],
       "warnings": [],
       "errors": []
@@ -169,8 +200,8 @@
       "severity": 1,
       "summary": "2 A record(s) found",
       "details": [
-        "104.18.27.120 (TTL: 300s)",
-        "104.18.26.120 (TTL: 300s)"
+        "104.18.26.120 (TTL: 299s)",
+        "104.18.27.120 (TTL: 299s)"
       ],
       "warnings": [],
       "errors": []
@@ -181,8 +212,8 @@
       "severity": 1,
       "summary": "2 AAAA record(s) found",
       "details": [
-        "2606:4700::6812:1b78 (TTL: 300s)",
-        "2606:4700::6812:1a78 (TTL: 300s)"
+        "2606:4700::6812:1a78 (TTL: 299s)",
+        "2606:4700::6812:1b78 (TTL: 299s)"
       ],
       "warnings": [],
       "errors": []
@@ -531,8 +562,8 @@
       "summary": "PTR check: 0/2 IPs have matching reverse DNS",
       "details": [],
       "warnings": [
-        "104.18.27.120: No PTR record",
-        "104.18.26.120: No PTR record"
+        "104.18.26.120: No PTR record",
+        "104.18.27.120: No PTR record"
       ],
       "errors": []
     },
@@ -575,13 +606,18 @@
     {
       "checkName": "Domain Blocklist Check",
       "category": 13,
-      "severity": 1,
-      "summary": "Domain not on any blocklists",
-      "details": [
-        "example.com: Not listed on dbl.spamhaus.org",
-        "example.com: Not listed on multi.surbl.org",
-        "example.com: black.uribl.com returned resolver/error code (127.0.0.1) - not a real listing (using public DNS resolver)"
-      ],
+      "severity": 0,
+      "summary": "Skipped \u2014 domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Hostname Blocklist (RHSBL)",
+      "category": 13,
+      "severity": 0,
+      "summary": "Skipped \u2014 MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -745,6 +781,26 @@
       "errors": []
     },
     {
+      "checkName": "SMTP Banner vs Reverse DNS",
+      "category": 19,
+      "severity": 0,
+      "summary": "Could not compare rDNS and banner (no data)",
+      "details": [],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SMTP Transaction Timing",
+      "category": 19,
+      "severity": 1,
+      "summary": "SMTP timing acceptable for 1 MX host(s)",
+      "details": [
+        ": Could not connect (The value cannot be an empty string. (Parameter \u0027host\u0027))"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
       "checkName": "Submission Ports",
       "category": 19,
       "severity": 0,
@@ -888,15 +944,14 @@
     {
       "checkName": "TTL Sanity",
       "category": 27,
-      "severity": 2,
-      "summary": "TTL issues detected",
+      "severity": 1,
+      "summary": "TTLs within reasonable range",
       "details": [
-        "SPF/TXT (example.com): TTL 297s",
-        "DMARC (_dmarc.example.com): TTL 298s"
+        "MX (example.com): TTL 113s",
+        "SPF/TXT (example.com): TTL 295s",
+        "DMARC (_dmarc.example.com): TTL 295s"
       ],
-      "warnings": [
-        "MX (example.com): TTL 33s is very low (\u003C 60s)"
-      ],
+      "warnings": [],
       "errors": []
     },
     {
@@ -908,14 +963,14 @@
         "hera.ns.cloudflare.com (173.245.58.162): Zone transfer denied (good)",
         "hera.ns.cloudflare.com (108.162.192.162): Zone transfer denied (good)",
         "hera.ns.cloudflare.com (172.64.32.162): Zone transfer denied (good)",
-        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Zone transfer denied (good)",
-        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Zone transfer denied (good)",
         "hera.ns.cloudflare.com (2803:f800:50::6ca2:c0a2): Zone transfer denied (good)",
-        "elliott.ns.cloudflare.com (108.162.195.228): Zone transfer denied (good)",
+        "hera.ns.cloudflare.com (2a06:98c1:50::ac40:20a2): Zone transfer denied (good)",
+        "hera.ns.cloudflare.com (2606:4700:50::adf5:3aa2): Zone transfer denied (good)",
         "elliott.ns.cloudflare.com (172.64.35.228): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (108.162.195.228): Zone transfer denied (good)",
         "elliott.ns.cloudflare.com (162.159.44.228): Zone transfer denied (good)",
-        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Zone transfer denied (good)",
         "elliott.ns.cloudflare.com (2606:4700:58::a29f:2ce4): Zone transfer denied (good)",
+        "elliott.ns.cloudflare.com (2a06:98c1:50::ac40:23e4): Zone transfer denied (good)",
         "elliott.ns.cloudflare.com (2803:f800:50::6ca2:c3e4): Zone transfer denied (good)"
       ],
       "warnings": [],
@@ -943,11 +998,8 @@
       "checkName": "Certificate Transparency",
       "category": 22,
       "severity": 0,
-      "summary": "~57 certificate(s) in CT logs",
-      "details": [
-        "Certificates found in crt.sh for example.com",
-        "Certificate Authorities: C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA DV E36, C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA DV R36, C=US, O=SSL Corporation, CN=Cloudflare TLS Issuing ECC CA 3, C=US, O=SSL Corporation, CN=Cloudflare TLS Issuing RSA CA 3, C=GB, O=Sectigo Limited, CN=Sectigo Public Server Authentication CA OV R36, C=GB, ST=Greater Manchester, L=Salford, O=Sectigo Limited, CN=Sectigo ECC Organization Validation Secure Server CA, C=US, O=DigiCert Inc, CN=DigiCert Global G3 TLS ECC SHA384 2020 CA1, C=GB, ST=Greater Manchester, L=Salford, O=Sectigo Limited, CN=Sectigo RSA Domain Validation Secure Server CA, C=US, O=DigiCert Inc, CN=DigiCert Global G2 TLS RSA SHA256 2020 CA1, C=US, O=DigiCert Inc, CN=DigiCert TLS RSA SHA256 2020 CA1, C=US, O=DigiCert Inc, CN=DigiCert SHA2 Secure Server CA, emailAddress=pki_admin@sungard.com, O=SunGard Availability Services, CN=SAS Public CA v1, C=US, O=\\, C=US, O=Symantec Corporation, OU=Symantec Trust Network, CN=Symantec Class 3 Secure Server CA - G4, C=US, O=DigiCert Inc, OU=www.digicert.com, CN=DigiCert SHA2 High Assurance Server CA, C=GB, ST=Cymru, O=AS207960 Cyfyngedig, OU=AS207960 Department of Random Numbers, CN=AS207960 Test CA, Issuer Not Found"
-      ],
+      "summary": "No CT log entries found (or crt.sh unreachable)",
+      "details": [],
       "warnings": [],
       "errors": []
     },
@@ -966,8 +1018,8 @@
       "severity": 0,
       "summary": "2 TXT record(s) found",
       "details": [
-        "TXT: v=spf1 -all",
-        "TXT: _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9"
+        "TXT: _k2n1y4vw3qtb4skdx9e7dxt97qrmmq9",
+        "TXT: v=spf1 -all"
       ],
       "warnings": [],
       "errors": []
@@ -979,18 +1031,18 @@
       "summary": "6 DNS query error(s) \u2014 some results may be incomplete",
       "details": [],
       "warnings": [
-        "DNS query to 2606:4700:50::adf5:3aa2 failed for SOA example.com: Query 55936 =\u003E example.com IN SOA on [2606:4700:50::adf5:3aa2]:53 failed with an error.",
-        "DNS query to 2a06:98c1:50::ac40:20a2 failed for SOA example.com: Query 51799 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:20a2]:53 failed with an error.",
-        "DNS query to 2803:f800:50::6ca2:c0a2 failed for SOA example.com: Query 33100 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c0a2]:53 failed with an error.",
-        "DNS query to 2a06:98c1:50::ac40:23e4 failed for SOA example.com: Query 5706 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:23e4]:53 failed with an error.",
-        "DNS query to 2606:4700:58::a29f:2ce4 failed for SOA example.com: Query 65513 =\u003E example.com IN SOA on [2606:4700:58::a29f:2ce4]:53 failed with an error.",
-        "DNS query to 2803:f800:50::6ca2:c3e4 failed for SOA example.com: Query 4723 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c3e4]:53 failed with an error."
+        "DNS query to 2803:f800:50::6ca2:c3e4 failed for SOA example.com: Query 65368 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c3e4]:53 failed with an error.",
+        "DNS query to 2a06:98c1:50::ac40:23e4 failed for SOA example.com: Query 27300 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:23e4]:53 failed with an error.",
+        "DNS query to 2606:4700:58::a29f:2ce4 failed for SOA example.com: Query 8837 =\u003E example.com IN SOA on [2606:4700:58::a29f:2ce4]:53 failed with an error.",
+        "DNS query to 2606:4700:50::adf5:3aa2 failed for SOA example.com: Query 4987 =\u003E example.com IN SOA on [2606:4700:50::adf5:3aa2]:53 failed with an error.",
+        "DNS query to 2a06:98c1:50::ac40:20a2 failed for SOA example.com: Query 35357 =\u003E example.com IN SOA on [2a06:98c1:50::ac40:20a2]:53 failed with an error.",
+        "DNS query to 2803:f800:50::6ca2:c0a2 failed for SOA example.com: Query 20294 =\u003E example.com IN SOA on [2803:f800:50::6ca2:c0a2]:53 failed with an error."
       ],
       "errors": []
     }
   ],
-  "passCount": 43,
-  "warningCount": 9,
+  "passCount": 45,
+  "warningCount": 8,
   "errorCount": 0,
   "criticalCount": 0
 }
