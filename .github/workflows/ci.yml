@@ -177,6 +177,73 @@ jobs:
               print(f'  Could not extract total durations')
           " || true
 
+      - name: Recheck integration test (--recheck warning)
+        if: always()
+        run: |
+          CACHE_DIR="test-output/integration-cache"
+          DOMAIN="gmail.com"
+
+          echo "============================================"
+          echo "Domain results from previous run:"
+          echo "============================================"
+          python3 -c "
+          import json, os
+          path = os.path.join('$CACHE_DIR', 'domain-results.json')
+          if os.path.exists(path):
+              data = json.load(open(path))
+              for domain, summary in data.items():
+                  issues = summary.get('issueChecks', [])
+                  print(f'  {domain}: {len(issues)} issues')
+                  for issue in issues:
+                      print(f'    - {issue[\"name\"]} ({issue[\"category\"]}): {issue[\"severity\"]}')
+          else:
+              print('  No domain-results.json found')
+          " || echo "  Could not read domain results"
+
+          echo ""
+          echo "============================================"
+          echo "Recheck run: $DOMAIN (--recheck warning)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" --recheck warning \
+            > "test-output/${DOMAIN}-recheck.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-recheck.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Recheck analysis:"
+          echo "============================================"
+          python3 -c "
+          import re
+
+          raw = open('test-output/${DOMAIN}-recheck.txt').read()
+          text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+
+          # Check if recheck cleared anything
+          recheck_line = re.search(r'Recheck: cleared stale cache for.*\(([^)]+)\)', text)
+          if recheck_line:
+              print(f'  Cache deps cleared: {recheck_line.group(1)}')
+          else:
+              print('  No recheck clearing detected (domain may have had no issues)')
+
+          # DNS hits/misses — recheck should have more misses than warm run
+          hm = re.findall(r'dns:(\d+)h/(\d+)m', text)
+          if hm:
+              hits = sum(int(h) for h,m in hm)
+              misses = sum(int(m) for h,m in hm)
+              print(f'  Recheck DNS: {hits} hits, {misses} misses')
+
+          # Duration
+          dur = re.search(r'Duration\s*│\s*(\d+\.?\d*)s', text)
+          if dur:
+              print(f'  Duration: {dur.group(1)}s')
+
+          # Cache load line
+          cache = re.search(r'Loaded cache[^\n]*', text)
+          if cache:
+              print(f'  Cache: {cache.group(0).strip()}')
+          " || true
+
       - name: Multi-domain run (in-memory cache reuse across domains)
         if: always()
         run: |
