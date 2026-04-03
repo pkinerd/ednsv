@@ -82,7 +82,11 @@ public class DiskCacheService
 
         if (retryErrors)
         {
-            smtpProbes = smtpProbes?.Where(kvp => kvp.Value.Error == null && kvp.Value.Connected)
+            smtpProbes = smtpProbes?.Where(kvp =>
+                    kvp.Value.Error == null &&
+                    kvp.Value.Connected &&
+                    // Retry probes where TLS was expected but cert wasn't obtained (transient TLS failure)
+                    !(kvp.Value.SupportsStartTls && kvp.Value.CertSubject == null))
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             portProbes = portProbes?.Where(kvp => kvp.Value.Open)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
