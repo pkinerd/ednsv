@@ -360,8 +360,15 @@ public class DomainResultSummary
     public int WarningCount { get; set; }
     public int ErrorCount { get; set; }
     public int CriticalCount { get; set; }
-    /// <summary>Check names that had warning or higher severity.</summary>
-    public List<string> IssueChecks { get; set; } = new();
+    /// <summary>Checks that had warning or higher severity.</summary>
+    public List<IssueCheckEntry> IssueChecks { get; set; } = new();
+}
+
+public class IssueCheckEntry
+{
+    public string Name { get; set; } = "";
+    public string Category { get; set; } = "";
+    public string Severity { get; set; } = "";
 }
 
 /// <summary>

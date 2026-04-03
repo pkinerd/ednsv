@@ -10,6 +10,10 @@ public class HttpProbeService
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
 
+    // Track keys loaded from disk cache
+    private readonly ConcurrentDictionary<string, bool> _importedGetKeys = new();
+    private readonly ConcurrentDictionary<string, bool> _importedGetWithHeadersKeys = new();
+
     public HttpProbeService()
     {
         var handler = new HttpClientHandler
@@ -94,7 +98,10 @@ public class HttpProbeService
     public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
     {
         foreach (var kvp in entries)
+        {
             _getCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode));
+            _importedGetKeys.TryAdd(kvp.Key, true);
+        }
     }
 
     public Dictionary<string, HttpGetWithHeadersCacheEntry> ExportGetWithHeadersCache()
@@ -108,6 +115,23 @@ public class HttpProbeService
     public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)
     {
         foreach (var kvp in entries)
+        {
             _getWithHeadersCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode, kvp.Value.ContentType));
+            _importedGetWithHeadersKeys.TryAdd(kvp.Key, true);
+        }
+    }
+
+    // ── Recheck support ─────────────────────────────────────────────────
+
+    public void RemoveImportedGetEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedGetKeys.Keys)
+            if (predicate(key)) { _getCache.TryRemove(key, out _); _importedGetKeys.TryRemove(key, out _); }
+    }
+
+    public void RemoveImportedGetWithHeadersEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedGetWithHeadersKeys.Keys)
+            if (predicate(key)) { _getWithHeadersCache.TryRemove(key, out _); _importedGetWithHeadersKeys.TryRemove(key, out _); }
     }
 }

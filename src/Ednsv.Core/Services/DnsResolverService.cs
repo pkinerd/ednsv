@@ -22,6 +22,11 @@ public class DnsResolverService
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
 
+    // Track keys loaded from disk cache (vs. generated during this run)
+    private readonly ConcurrentDictionary<(string domain, QueryType type), bool> _importedQueryKeys = new();
+    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), bool> _importedServerQueryKeys = new();
+    private readonly ConcurrentDictionary<string, bool> _importedPtrKeys = new();
+
     public DnsResolverService() : this(null) { }
 
     /// <summary>
@@ -370,7 +375,10 @@ public class DnsResolverService
     public void ImportPtrCache(Dictionary<string, List<string>> entries)
     {
         foreach (var kvp in entries)
+        {
             _ptrCache.TryAdd(kvp.Key, kvp.Value);
+            _importedPtrKeys.TryAdd(kvp.Key, true);
+        }
     }
 
     /// <summary>
@@ -403,6 +411,7 @@ public class DnsResolverService
             var key = (parts[0].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
             _queryCache.TryAdd(key, response);
+            _importedQueryKeys.TryAdd(key, true);
         }
     }
 
@@ -435,7 +444,85 @@ public class DnsResolverService
             var key = (parts[0], parts[1].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
             _serverQueryCache.TryAdd(key, response);
+            _importedServerQueryKeys.TryAdd(key, true);
         }
+    }
+
+    // ── Recheck support: remove imported entries matching a predicate ────
+
+    /// <summary>
+    /// Removes imported DNS query cache entries matching the predicate.
+    /// Only entries loaded from disk cache are affected; entries generated
+    /// during this run are preserved.
+    /// </summary>
+    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate)
+    {
+        foreach (var key in _importedQueryKeys.Keys)
+        {
+            if (predicate(key.domain, key.type))
+            {
+                _queryCache.TryRemove(key, out _);
+                _importedQueryKeys.TryRemove(key, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes imported server query cache entries matching the predicate.
+    /// </summary>
+    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate)
+    {
+        foreach (var key in _importedServerQueryKeys.Keys)
+        {
+            if (predicate(key.server, key.domain, key.type))
+            {
+                _serverQueryCache.TryRemove(key, out _);
+                _importedServerQueryKeys.TryRemove(key, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes imported PTR cache entries matching the predicate.
+    /// </summary>
+    public void RemoveImportedPtrEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedPtrKeys.Keys)
+        {
+            if (predicate(key))
+            {
+                _ptrCache.TryRemove(key, out _);
+                _importedPtrKeys.TryRemove(key, out _);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns MX hostnames from the query cache for a domain, if available.
+    /// Used by recheck logic to identify SMTP entries to clear.
+    /// </summary>
+    public List<string> GetCachedMxHosts(string domain)
+    {
+        var key = (domain.ToLowerInvariant(), QueryType.MX);
+        if (_queryCache.TryGetValue(key, out var response))
+            return response.Answers.MxRecords().Select(m => m.Exchange.Value.TrimEnd('.')).ToList();
+        return new List<string>();
+    }
+
+    /// <summary>
+    /// Returns A-record IPs from the query cache for a host, if available.
+    /// Used by recheck logic to identify PTR entries to clear.
+    /// </summary>
+    public List<string> GetCachedIps(string host)
+    {
+        var ips = new List<string>();
+        var aKey = (host.ToLowerInvariant(), QueryType.A);
+        if (_queryCache.TryGetValue(aKey, out var aResponse))
+            ips.AddRange(aResponse.Answers.ARecords().Select(r => r.Address.ToString()));
+        var aaaaKey = (host.ToLowerInvariant(), QueryType.AAAA);
+        if (_queryCache.TryGetValue(aaaaKey, out var aaaaResponse))
+            ips.AddRange(aaaaResponse.Answers.AaaaRecords().Select(r => r.Address.ToString()));
+        return ips;
     }
 
     /// <summary>

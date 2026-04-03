@@ -38,6 +38,11 @@ public class SmtpProbeService
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
 
+    // Track keys loaded from disk cache
+    private readonly ConcurrentDictionary<string, bool> _importedProbeKeys = new();
+    private readonly ConcurrentDictionary<string, bool> _importedPortKeys = new();
+    private readonly ConcurrentDictionary<string, bool> _importedRcptKeys = new();
+
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
         var cacheKey = $"{host.ToLowerInvariant()}:{port}";
@@ -393,6 +398,7 @@ public class SmtpProbeService
                 TlsTimeMs = kvp.Value.TlsTimeMs,
                 Error = kvp.Value.Error
             });
+            _importedProbeKeys.TryAdd(kvp.Key, true);
         }
     }
 
@@ -402,7 +408,10 @@ public class SmtpProbeService
     public void ImportPortCache(Dictionary<string, bool> entries)
     {
         foreach (var kvp in entries)
+        {
             _portCache.TryAdd(kvp.Key, kvp.Value);
+            _importedPortKeys.TryAdd(kvp.Key, true);
+        }
     }
 
     public Dictionary<string, RcptCacheEntry> ExportRcptCache()
@@ -422,6 +431,29 @@ public class SmtpProbeService
     public void ImportRcptCache(Dictionary<string, RcptCacheEntry> entries)
     {
         foreach (var kvp in entries)
+        {
             _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
+            _importedRcptKeys.TryAdd(kvp.Key, true);
+        }
+    }
+
+    // ── Recheck support ─────────────────────────────────────────────────
+
+    public void RemoveImportedProbeEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedProbeKeys.Keys)
+            if (predicate(key)) { _probeCache.TryRemove(key, out _); _importedProbeKeys.TryRemove(key, out _); }
+    }
+
+    public void RemoveImportedPortEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedPortKeys.Keys)
+            if (predicate(key)) { _portCache.TryRemove(key, out _); _importedPortKeys.TryRemove(key, out _); }
+    }
+
+    public void RemoveImportedRcptEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedRcptKeys.Keys)
+            if (predicate(key)) { _rcptCache.TryRemove(key, out _); _importedRcptKeys.TryRemove(key, out _); }
     }
 }
