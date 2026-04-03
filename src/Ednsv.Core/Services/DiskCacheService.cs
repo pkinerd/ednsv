@@ -28,6 +28,7 @@ public class DiskCacheService
     private const string PtrLookupsFile = "ptr-lookups.json";
     private const string DnsQueriesFile = "dns-queries.json";
     private const string DnsServerQueriesFile = "dns-server-queries.json";
+    private const string DomainResultsFile = "domain-results.json";
 
     /// <summary>
     /// Saves current service caches to disk, merging with any existing entries.
@@ -221,6 +222,56 @@ public class DiskCacheService
         public int PtrLookups { get; set; }
         public int Total => SmtpProbes + PortProbes + RcptProbes + HttpRequests + DnsQueries + PtrLookups;
     }
+
+    // ── Domain results persistence ──────────────────────────────────────
+
+    /// <summary>
+    /// Saves a domain's validation result summary to the cache directory.
+    /// Merges with existing results from other domains.
+    /// </summary>
+    public static async Task SaveDomainResultAsync(string cacheDir, string domain, DomainResultSummary summary)
+    {
+        Directory.CreateDirectory(cacheDir);
+        var path = Path.Combine(cacheDir, DomainResultsFile);
+
+        Dictionary<string, DomainResultSummary>? existing = null;
+        if (File.Exists(path))
+        {
+            try
+            {
+                var json = await File.ReadAllTextAsync(path);
+                existing = JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+            }
+            catch { /* corrupt — overwrite */ }
+        }
+
+        var merged = existing ?? new Dictionary<string, DomainResultSummary>();
+        merged[domain.ToLowerInvariant()] = summary;
+
+        var output = JsonSerializer.Serialize(merged, JsonOptions);
+        var tmp = path + ".tmp";
+        await File.WriteAllTextAsync(tmp, output);
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// Loads all domain result summaries from the cache directory.
+    /// </summary>
+    public static async Task<Dictionary<string, DomainResultSummary>?> LoadDomainResultsAsync(string cacheDir)
+    {
+        var path = Path.Combine(cacheDir, DomainResultsFile);
+        if (!File.Exists(path)) return null;
+
+        try
+        {
+            var json = await File.ReadAllTextAsync(path);
+            return JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 // ── Cache entry interface ────────────────────────────────────────────────
@@ -297,6 +348,20 @@ public class PtrCacheEntry : ICacheEntry
 {
     public DateTime CachedAtUtc { get; set; }
     public List<string> Names { get; set; } = new();
+}
+
+/// <summary>
+/// Stores a summary of a domain's validation results for recheck decisions.
+/// </summary>
+public class DomainResultSummary
+{
+    public DateTime ValidatedAtUtc { get; set; }
+    public int PassCount { get; set; }
+    public int WarningCount { get; set; }
+    public int ErrorCount { get; set; }
+    public int CriticalCount { get; set; }
+    /// <summary>Check names that had warning or higher severity.</summary>
+    public List<string> IssueChecks { get; set; } = new();
 }
 
 /// <summary>
