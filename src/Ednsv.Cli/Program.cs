@@ -1201,9 +1201,9 @@ static async Task WriteIndexFileAsync(List<ValidationReport> reports, string fmt
 /// Extracts unique issues (Warning/Error/Critical) across all reports,
 /// grouped by check name + severity + summary, with the list of affected domains.
 /// </summary>
-static List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> CollectCrossDomainIssues(List<ValidationReport> reports, Dictionary<string, DomainMeta>? meta = null)
+static List<(string CheckName, CheckCategory Category, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> CollectCrossDomainIssues(List<ValidationReport> reports, Dictionary<string, DomainMeta>? meta = null)
 {
-    var issueMap = new Dictionary<(string, CheckSeverity, string), List<string>>();
+    var issueMap = new Dictionary<(string, CheckCategory, CheckSeverity, string), List<string>>();
 
     foreach (var report in reports)
     {
@@ -1212,7 +1212,7 @@ static List<(string CheckName, CheckSeverity Severity, string Summary, List<stri
             if (result.Severity is CheckSeverity.Pass or CheckSeverity.Info)
                 continue;
 
-            var key = (result.CheckName, result.Severity, result.Summary);
+            var key = (result.CheckName, result.Category, result.Severity, result.Summary);
             if (!issueMap.TryGetValue(key, out var domains))
             {
                 domains = new List<string>();
@@ -1230,11 +1230,11 @@ static List<(string CheckName, CheckSeverity Severity, string Summary, List<stri
             long totalVol = 0;
             if (hasVolume && meta != null)
                 totalVol = kv.Value.Where(d => meta.ContainsKey(d)).Sum(d => meta[d].Volume);
-            return (kv.Key.Item1, kv.Key.Item2, kv.Key.Item3, kv.Value, totalVol);
+            return (kv.Key.Item1, kv.Key.Item2, kv.Key.Item3, kv.Key.Item4, kv.Value, totalVol);
         })
-        .OrderByDescending(x => x.Item2) // Critical first
+        .OrderByDescending(x => x.Item3) // Critical first
         .ThenByDescending(x => x.totalVol) // Highest message impact first
-        .ThenByDescending(x => x.Item4.Count) // Most affected domains
+        .ThenByDescending(x => x.Item5.Count) // Most affected domains
         .ThenBy(x => x.Item1)
         .ToList();
 }
@@ -1262,7 +1262,7 @@ static async Task WriteIssuesFileAsync(List<ValidationReport> reports, string fm
     }
 }
 
-static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, TextWriter writer, bool hasVolume = false, string? volCol = null)
+static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckCategory Category, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var jsonOptions = new JsonSerializerOptions
     {
@@ -1296,7 +1296,7 @@ static async Task WriteJsonIssuesAsync(List<(string CheckName, CheckSeverity Sev
     await writer.WriteLineAsync(JsonSerializer.Serialize(obj, jsonOptions));
 }
 
-static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
+static void WriteMdIssues(List<(string CheckName, CheckCategory Category, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var sb = new StringBuilder();
     sb.AppendLine("# ednsv — Cross-Domain Issues");
@@ -1358,8 +1358,9 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
             if (hasVolume && issue.TotalVolume > 0)
                 sb.AppendLine($"**{MdText(volCol ?? "Messages")} impacted:** {issue.TotalVolume:N0}");
             sb.AppendLine($"**Affected domains ({issue.Domains.Count}/{totalDomains}):**");
+            var mdCheckSlug = Slugify(issue.CheckName);
             foreach (var domain in issue.Domains)
-                sb.AppendLine($"- [`{domain}`]({SanitizeFilename(domain)}.{ext})");
+                sb.AppendLine($"- [`{domain}`]({SanitizeFilename(domain)}.{ext}#check-{mdCheckSlug})");
             sb.AppendLine();
         }
     }
@@ -1370,7 +1371,7 @@ static void WriteMdIssues(List<(string CheckName, CheckSeverity Severity, string
     writer.Write(sb.ToString());
 }
 
-static void WriteHtmlIssues(List<(string CheckName, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
+static void WriteHtmlIssues(List<(string CheckName, CheckCategory Category, CheckSeverity Severity, string Summary, List<string> Domains, long TotalVolume)> issues, int totalDomains, string ext, TextWriter writer, bool hasVolume = false, string? volCol = null)
 {
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);
@@ -1469,10 +1470,11 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
             sb.AppendLine($"  </div>");
             sb.AppendLine($"  <div class=\"issue-summary\">{e(issue.Summary)}</div>");
             sb.AppendLine($"  <div class=\"domain-chips\">");
+            var checkSlug = Slugify(issue.CheckName);
             foreach (var domain in issue.Domains)
             {
                 var file = $"{SanitizeFilename(domain)}.{ext}";
-                sb.AppendLine($"    <a class=\"domain-chip\" href=\"{e(file)}\">{e(domain)}</a>");
+                sb.AppendLine($"    <a class=\"domain-chip\" href=\"{e(file)}#check-{checkSlug}\">{e(domain)}</a>");
             }
             sb.AppendLine($"  </div>");
             sb.AppendLine($"</div>");
@@ -1505,6 +1507,26 @@ static DomainResultSummary BuildDomainResultSummary(ValidationReport report)
             })
             .ToList()
     };
+}
+
+/// <summary>
+/// Converts a check name or category into a URL-safe HTML anchor ID.
+/// e.g. "SMTP TLS Certificate" → "smtp-tls-certificate"
+/// </summary>
+static string Slugify(string text)
+{
+    var sb = new StringBuilder(text.Length);
+    foreach (var c in text.ToLowerInvariant())
+    {
+        if (char.IsLetterOrDigit(c))
+            sb.Append(c);
+        else if (c is ' ' or '_' or '/' or '(' or ')')
+        {
+            if (sb.Length > 0 && sb[^1] != '-')
+                sb.Append('-');
+        }
+    }
+    return sb.ToString().TrimEnd('-');
 }
 
 static string SanitizeFilename(string domain)
@@ -2099,12 +2121,14 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
 
         foreach (var group in grouped)
         {
-            sb.AppendLine($"<div class=\"category\">");
+            var catSlug = Slugify(group.Key.ToString());
+            sb.AppendLine($"<div class=\"category\" id=\"cat-{catSlug}\">");
             sb.AppendLine($"  <h2>{e(group.Key.ToString())}</h2>");
 
             foreach (var check in group)
             {
                 var sevClass = check.Severity.ToString().ToLowerInvariant();
+                var checkSlug = Slugify(check.CheckName);
                 var badgeLabel = check.Severity switch
                 {
                     CheckSeverity.Pass => "PASS",
@@ -2115,7 +2139,7 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
                     _ => "????"
                 };
 
-                sb.AppendLine($"  <div class=\"check sev-{sevClass}\">");
+                sb.AppendLine($"  <div class=\"check sev-{sevClass}\" id=\"check-{checkSlug}\">");
                 sb.AppendLine($"    <div class=\"check-header\">");
                 sb.AppendLine($"      <span class=\"badge badge-{sevClass}\">{badgeLabel}</span>");
                 sb.AppendLine($"      <span class=\"check-name\">{e(check.CheckName)}</span>");
