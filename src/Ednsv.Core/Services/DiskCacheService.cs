@@ -85,6 +85,8 @@ public class DiskCacheService
             smtpProbes = smtpProbes?.Where(kvp =>
                     kvp.Value.Error == null &&
                     kvp.Value.Connected &&
+                    // Retry probes with empty banner (likely transient read timeout)
+                    !string.IsNullOrEmpty(kvp.Value.Banner) &&
                     // Retry probes where TLS was expected but cert wasn't obtained (transient TLS failure)
                     !(kvp.Value.SupportsStartTls && kvp.Value.CertSubject == null))
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
