@@ -27,7 +27,7 @@ public class SmtpTlsCertCheck : ICheck
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                if (probe.Certificate != null)
+                if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}:");
                     result.Details.Add($"  Subject: {probe.CertSubject}");
@@ -61,7 +61,7 @@ public class SmtpTlsCertCheck : ICheck
                 }
                 else if (probe.Connected)
                 {
-                    result.Warnings.Add($"{mxHost}: Connected but no TLS certificate obtained");
+                    result.Errors.Add($"{mxHost}: Connected but no TLS certificate obtained — TLS handshake failed");
                 }
                 else
                 {
@@ -104,7 +104,7 @@ public class DaneTlsaCertMatchCheck : ICheck
 
                 anyTlsa = true;
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                if (probe.Certificate != null)
+                if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}: TLSA records found, certificate available");
 
@@ -152,10 +152,13 @@ public class DaneTlsaCertMatchCheck : ICheck
 
                         // Compute digest from cert and compare
                         byte[]? dataToHash = null;
-                        if ((int)tlsa.Selector == 0) // Full certificate
-                            dataToHash = probe.Certificate.RawData;
-                        else if ((int)tlsa.Selector == 1) // SubjectPublicKeyInfo
-                            dataToHash = probe.Certificate.PublicKey.ExportSubjectPublicKeyInfo();
+                        if (probe.Certificate != null)
+                        {
+                            if ((int)tlsa.Selector == 0) // Full certificate
+                                dataToHash = probe.Certificate.RawData;
+                            else if ((int)tlsa.Selector == 1) // SubjectPublicKeyInfo
+                                dataToHash = probe.Certificate.PublicKey.ExportSubjectPublicKeyInfo();
+                        }
 
                         if (dataToHash != null)
                         {
@@ -567,8 +570,7 @@ public class SubmissionPortsCheck : ICheck
 
         try
         {
-            // Throttle to 2 concurrent probes to avoid looking like a port scan
-            using var semaphore = new SemaphoreSlim(2);
+            // Probe all submission ports in parallel (port probes are cached)
             var probeTasks = new List<(string host, int port, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -576,17 +578,25 @@ public class SubmissionPortsCheck : ICheck
                 {
                     var h = mxHost;
                     var p = port;
-                    var task = Task.Run(async () =>
-                    {
-                        await semaphore.WaitAsync();
-                        try { return await ctx.Smtp.ProbePortAsync(h, p); }
-                        finally { semaphore.Release(); }
-                    });
-                    probeTasks.Add((h, p, task));
+                    probeTasks.Add((h, p, Task.Run(() => ctx.Smtp.ProbePortAsync(h, p))));
                 }
             }
 
             await Task.WhenAll(probeTasks.Select(t => t.task));
+
+            // SMTP probe open 587 ports in parallel for TLS details
+            var smtpProbeTasks = new List<(string host, Task<SmtpProbeResult> task)>();
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var port587 = probeTasks.First(t => t.host == mxHost && t.port == 587).task.Result;
+                if (port587)
+                {
+                    var h = mxHost;
+                    smtpProbeTasks.Add((h, Task.Run(() => ctx.Smtp.ProbeSmtpAsync(h, 587))));
+                }
+            }
+            if (smtpProbeTasks.Count > 0)
+                await Task.WhenAll(smtpProbeTasks.Select(t => t.task));
 
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -600,11 +610,10 @@ public class SubmissionPortsCheck : ICheck
                 if (port465)
                     result.Details.Add($"  Port 465 (implicit TLS) is open — TLS certificate and version details not probed (only port 25/587 STARTTLS is checked)");
 
-                // Probe TLS on open submission ports
                 if (port587)
                 {
-                    var probe587 = await ctx.Smtp.ProbeSmtpAsync(mxHost, 587);
-                    if (probe587.Connected)
+                    var probe587 = smtpProbeTasks.FirstOrDefault(t => t.host == mxHost).task?.Result;
+                    if (probe587?.Connected == true)
                     {
                         if (probe587.SupportsStartTls)
                             result.Details.Add($"  Port 587 TLS: {probe587.TlsProtocol} ({probe587.TlsCipherSuite ?? "unknown cipher"})");
@@ -830,10 +839,8 @@ public class OpenRelayCheck : ICheck
             var relayDetected = false;
             foreach (var mxHost in ctx.MxHosts)
             {
-                // Test relay: use an external sender and external recipient
-                // If the server accepts RCPT TO for an address outside its domain
-                // when MAIL FROM is also outside its domain, it's an open relay
-                var relayResult = await TestRelayAsync(mxHost, domain);
+                // Test relay through the cached SMTP service
+                var relayResult = await ctx.Smtp.TestRelayAsync(mxHost, domain);
                 result.Details.Add($"{mxHost}: {relayResult.description}");
 
                 if (relayResult.isRelay)
@@ -865,101 +872,6 @@ public class OpenRelayCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private async Task<(bool isRelay, string description)> TestRelayAsync(string mxHost, string domain)
-    {
-        TcpClient? client = null;
-        try
-        {
-            client = new TcpClient();
-            var timeout = TimeSpan.FromSeconds(10);
-            var connectTask = client.ConnectAsync(mxHost, 25);
-            if (await Task.WhenAny(connectTask, Task.Delay(timeout)) != connectTask)
-                return (false, "Connection timed out");
-            await connectTask;
-
-            var stream = client.GetStream();
-            stream.ReadTimeout = 10000;
-            stream.WriteTimeout = 10000;
-
-            await ReadSmtpLineAsync(stream); // banner
-            await WriteSmtpLineAsync(stream, "EHLO ednsv-relay-test.invalid");
-            await ReadSmtpMultiLineAsync(stream);
-
-            // Use a clearly non-existent external sender and recipient
-            // to test if the server will relay mail it has no business handling
-            await WriteSmtpLineAsync(stream, "MAIL FROM:<relay-test@ednsv-probe.invalid>");
-            var mailResp = await ReadSmtpLineAsync(stream);
-            if (!mailResp.StartsWith("250"))
-            {
-                await WriteSmtpLineAsync(stream, "QUIT");
-                return (false, $"MAIL FROM rejected ({mailResp.Substring(0, Math.Min(50, mailResp.Length))}) — not an open relay");
-            }
-
-            // Try to relay to an external domain (not the target domain)
-            await WriteSmtpLineAsync(stream, "RCPT TO:<relay-test@ednsv-probe.invalid>");
-            var rcptResp = await ReadSmtpLineAsync(stream);
-
-            await WriteSmtpLineAsync(stream, "QUIT");
-
-            if (rcptResp.StartsWith("250") || rcptResp.StartsWith("251"))
-                return (true, $"RCPT TO for external address ACCEPTED ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))})");
-
-            return (false, $"RCPT TO for external address rejected ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))}) — not an open relay");
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Error: {ex.Message}");
-        }
-        finally
-        {
-            client?.Dispose();
-        }
-    }
-
-    private static async Task<string> ReadSmtpLineAsync(NetworkStream stream)
-    {
-        var buffer = new byte[4096];
-        var sb = new StringBuilder();
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var read = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token);
-            if (read > 0) sb.Append(Encoding.ASCII.GetString(buffer, 0, read));
-        }
-        catch { }
-        return sb.ToString().TrimEnd('\r', '\n');
-    }
-
-    private static async Task<List<string>> ReadSmtpMultiLineAsync(NetworkStream stream)
-    {
-        var lines = new List<string>();
-        var buffer = new byte[8192];
-        var sb = new StringBuilder();
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (true)
-            {
-                var read = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token);
-                if (read == 0) break;
-                sb.Append(Encoding.ASCII.GetString(buffer, 0, read));
-                var allLines = sb.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                if (allLines.Any(l => l.TrimEnd('\r').Length >= 4 && l[3] == ' '))
-                    break;
-            }
-        }
-        catch { }
-        foreach (var line in sb.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            lines.Add(line.TrimEnd('\r'));
-        return lines;
-    }
-
-    private static async Task WriteSmtpLineAsync(NetworkStream stream, string line)
-    {
-        var data = Encoding.ASCII.GetBytes(line + "\r\n");
-        await stream.WriteAsync(data, 0, data.Length);
-        await stream.FlushAsync();
-    }
 }
 
 public class CatchAllDetectionCheck : ICheck
@@ -1103,6 +1015,9 @@ public class SmtpIpv6ConnectivityCheck : ICheck
             int reachable = 0;
             int unreachable = 0;
 
+            // Resolve AAAA records for all MX hosts, then probe all IPv6 addresses
+            // concurrently using the cached port probe service
+            var probes = new List<(string host, string addr, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
                 var v6Addrs = await ctx.Dns.ResolveAAAAAsync(mxHost);
@@ -1115,27 +1030,24 @@ public class SmtpIpv6ConnectivityCheck : ICheck
                 hasAaaa++;
                 foreach (var addr in v6Addrs)
                 {
-                    try
-                    {
-                        using var client = new TcpClient(AddressFamily.InterNetworkV6);
-                        var connectTask = client.ConnectAsync(IPAddress.Parse(addr), 25);
-                        if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(5))) == connectTask)
-                        {
-                            await connectTask;
-                            reachable++;
-                            result.Details.Add($"{mxHost} [{addr}]: Port 25 reachable over IPv6");
-                        }
-                        else
-                        {
-                            unreachable++;
-                            result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
-                        }
-                    }
-                    catch
-                    {
-                        unreachable++;
-                        result.Warnings.Add($"{mxHost} [{addr}]: AAAA exists but IPv6 connection failed");
-                    }
+                    probes.Add((mxHost, addr, ctx.Smtp.ProbePortAsync(addr, 25)));
+                }
+            }
+
+            if (probes.Count > 0)
+                await Task.WhenAll(probes.Select(p => p.task));
+
+            foreach (var (host, addr, task) in probes)
+            {
+                if (task.Result)
+                {
+                    reachable++;
+                    result.Details.Add($"{host} [{addr}]: Port 25 reachable over IPv6");
+                }
+                else
+                {
+                    unreachable++;
+                    result.Warnings.Add($"{host} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
                 }
             }
 

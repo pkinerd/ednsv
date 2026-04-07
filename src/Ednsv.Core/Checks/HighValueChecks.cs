@@ -448,44 +448,48 @@ public class ExtendedDnsblCheck : ICheck
     public string Name => "Extended IP Blocklist Check";
     public CheckCategory Category => CheckCategory.DNSBL;
 
-    private static readonly (string zone, string name)[] Blocklists =
+    // Lists that work reliably via public DNS resolvers
+    private static readonly (string zone, string name)[] PublicBlocklists =
     {
-        // Tier 1: Widely used
+        // Tier 1: Widely used, open to public queries
         ("all.s5h.net", "S5H"),
         ("dnsbl.sorbs.net", "SORBS Combined"),
         ("spam.dnsbl.sorbs.net", "SORBS Spam"),
         ("bl.mailspike.net", "Mailspike"),
         ("dnsbl-1.uceprotect.net", "UCEProtect L1"),
 
-        // Tier 2: Additional well-known lists
+        // Tier 2: Additional well-known open lists
         ("dnsbl-2.uceprotect.net", "UCEProtect L2"),
         ("dnsbl-3.uceprotect.net", "UCEProtect L3"),
         ("psbl.surriel.com", "PSBL"),
         ("dyna.spamrats.com", "SpamRATS Dyna"),
         ("noptr.spamrats.com", "SpamRATS NoPtr"),
         ("spam.spamrats.com", "SpamRATS Spam"),
-        ("cbl.abuseat.org", "CBL"),
         ("dnsbl.dronebl.org", "DroneBL"),
-        ("db.wpbl.info", "WPBL"),
-        ("bl.spamcannibal.org", "SpamCannibal"),
-        ("access.redhawk.org", "Redhawk"),
         ("rbl.interserver.net", "InterServer"),
         ("bogons.cymru.com", "Cymru Bogons"),
         ("bl.blocklist.de", "Blocklist.de"),
         ("bl.nordspam.com", "NordSpam BL"),
-        ("combined.abuse.ch", "abuse.ch Combined"),
         ("dnsbl.inps.de", "INPS"),
         ("ix.dnsbl.manitu.net", "NiX Spam"),
-        ("rbl.abuse.net", "abuse.net"),
         ("truncate.gbudb.net", "Truncate/GBUdb"),
-
-        // Tier 3: Specialized lists
-        ("spambot.bls.digibase.ca", "Digibase SpamBot"),
         ("z.mailspike.net", "Mailspike Z"),
-        ("singular.ttk.pte.hu", "Singular"),
-        ("uribl.swinog.ch", "SwiNOG URIBL"),
-        ("bl.fmb.la", "FMB"),
-        ("dnsbl.rv-soft.info", "RV-Soft"),
+        ("spambot.bls.digibase.ca", "Digibase SpamBot"),
+    };
+
+    // Lists that require a private/registered resolver, or are commonly dead/unresponsive
+    private static readonly (string zone, string name)[] PrivateBlocklists =
+    {
+        ("cbl.abuseat.org", "CBL"),                // Often blocks public resolvers
+        ("db.wpbl.info", "WPBL"),                  // Frequently unresponsive
+        ("bl.spamcannibal.org", "SpamCannibal"),   // Dead
+        ("access.redhawk.org", "Redhawk"),         // Dead
+        ("combined.abuse.ch", "abuse.ch Combined"),// Discontinued DNSBL
+        ("rbl.abuse.net", "abuse.net"),            // Frequently unresponsive
+        ("singular.ttk.pte.hu", "Singular"),       // Frequently unresponsive
+        ("uribl.swinog.ch", "SwiNOG URIBL"),      // Often blocks public resolvers
+        ("bl.fmb.la", "FMB"),                      // Frequently unresponsive
+        ("dnsbl.rv-soft.info", "RV-Soft"),         // Frequently unresponsive
     };
 
     // Same false-positive set as IpBlocklistCheck
@@ -510,34 +514,61 @@ public class ExtendedDnsblCheck : ICheck
         }
 
         int listed = 0;
+        // Build all query tasks up-front and run in parallel (throttled).
+        // High concurrency is fine here — DNSBL queries are lightweight UDP with
+        // short timeouts and the DNS cache deduplicates repeated queries.
+        var semaphore = new SemaphoreSlim(30);
+        var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
+
         foreach (var ip in allMxIps)
         {
             var octets = ip.Split('.').Reverse();
             var reversed = string.Join('.', octets);
 
-            foreach (var (zone, name) in Blocklists)
+            var blocklists = ctx.Options.EnablePrivateDnsbl
+                ? PublicBlocklists.Concat(PrivateBlocklists)
+                : PublicBlocklists;
+            foreach (var (zone, name) in blocklists)
             {
+                var capturedIp = ip;
+                var capturedName = name;
                 var query = $"{reversed}.{zone}";
-                var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
-                var aRecs = resp.Answers.ARecords().ToList();
-                if (aRecs.Any())
+                tasks.Add(Task.Run(async () =>
                 {
-                    var responses = aRecs.Select(a => a.Address.ToString()).ToList();
-                    var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
-                    var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
-
-                    if (realListings.Any())
+                    await semaphore.WaitAsync();
+                    try
                     {
-                        listed++;
-                        result.Errors.Add($"{ip} is LISTED on {name} ({string.Join(", ", realListings)})");
+                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
+                        return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
                     }
-                    if (falsePositives.Any())
-                        result.Details.Add($"{ip}: {name} returned resolver/error code ({string.Join(", ", falsePositives)})");
-                }
-                else
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }));
+            }
+        }
+
+        var results = await Task.WhenAll(tasks);
+        foreach (var (ip, name, aRecs) in results)
+        {
+            if (aRecs.Any())
+            {
+                var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+
+                if (realListings.Any())
                 {
-                    result.Details.Add($"{ip}: Not listed on {name}");
+                    listed++;
+                    result.Errors.Add($"{ip} is LISTED on {name} ({string.Join(", ", realListings)})");
                 }
+                if (falsePositives.Any())
+                    result.Details.Add($"{ip}: {name} returned resolver/error code ({string.Join(", ", falsePositives)})");
+            }
+            else
+            {
+                result.Details.Add($"{ip}: Not listed on {name}");
             }
         }
 

@@ -24,9 +24,9 @@ public class DmarcRecordCheck : ICheck
 
             if (!dmarcRecords.Any())
             {
-                result.Severity = CheckSeverity.Warning;
+                result.Severity = CheckSeverity.Error;
                 result.Summary = "No DMARC record found";
-                result.Warnings.Add("No DMARC record at _dmarc." + domain);
+                result.Errors.Add("No DMARC record at _dmarc." + domain + " — required by Gmail and Yahoo for bulk senders since Feb 2024");
                 return new List<CheckResult> { result };
             }
 
@@ -62,7 +62,7 @@ public class DmarcRecordCheck : ICheck
             {
                 result.Details.Add($"Policy (p): {policy}");
                 if (policy == "none")
-                    result.Warnings.Add("DMARC policy is 'none' - no enforcement");
+                    result.Errors.Add("DMARC policy is 'none' — no enforcement. Gmail and Yahoo require p=quarantine or p=reject for bulk senders");
             }
             else
             {
@@ -206,7 +206,7 @@ public class DmarcRecordCheck : ICheck
 
             if (result.Severity == default)
             {
-                result.Severity = policy == "reject" || policy == "quarantine" ? CheckSeverity.Pass : CheckSeverity.Warning;
+                result.Severity = policy == "reject" || policy == "quarantine" ? CheckSeverity.Pass : CheckSeverity.Error;
             }
             result.Summary = $"DMARC p={policy ?? "unknown"}";
         }

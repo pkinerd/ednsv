@@ -84,7 +84,7 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                 if (!ptrs.Any())
                 {
-                    result.Warnings.Add($"{ip}: No PTR record");
+                    result.Errors.Add($"{ip}: No PTR record — Gmail requires FCrDNS for all sending IPs");
                     continue;
                 }
 
@@ -103,10 +103,10 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 }
 
                 if (confirmed) passed++;
-                else result.Warnings.Add($"{ip}: PTR {string.Join(",", ptrs)} does not resolve back to {ip}");
+                else result.Errors.Add($"{ip}: PTR {string.Join(",", ptrs)} does not resolve back to {ip}");
             }
 
-            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+            result.Severity = result.Errors.Any() ? CheckSeverity.Error : CheckSeverity.Pass;
             result.Summary = $"FCrDNS: {passed}/{checked_} MX IPs confirmed";
         }
         catch (Exception ex)
@@ -124,11 +124,17 @@ public class IpBlocklistCheck : ICheck
     public string Name => "IP Blocklist Check (DNSBL)";
     public CheckCategory Category => CheckCategory.DNSBL;
 
-    private static readonly string[] Blocklists =
+    // Lists that work reliably via public DNS resolvers
+    private static readonly string[] PublicBlocklists =
+    {
+        "bl.spamcop.net"
+    };
+
+    // Lists that require a private/registered resolver — return false positives via public DNS
+    private static readonly string[] PrivateBlocklists =
     {
         "zen.spamhaus.org",
-        "b.barracudacentral.org",
-        "bl.spamcop.net"
+        "b.barracudacentral.org"
     };
 
     // Well-known DNSBL responses that indicate resolver/query errors, not actual listings
@@ -158,37 +164,52 @@ public class IpBlocklistCheck : ICheck
             }
 
             int listed = 0;
+            var tasks = new List<Task<(string ip, string bl, List<DnsClient.Protocol.ARecord> aRecs)>>();
+
             foreach (var ip in allMxIps)
             {
                 var octets = ip.Split('.').Reverse();
                 var reversed = string.Join('.', octets);
 
-                foreach (var bl in Blocklists)
+                var blocklists = ctx.Options.EnablePrivateDnsbl
+                    ? PublicBlocklists.Concat(PrivateBlocklists)
+                    : PublicBlocklists;
+                foreach (var bl in blocklists)
                 {
+                    var capturedIp = ip;
+                    var capturedBl = bl;
                     var query = $"{reversed}.{bl}";
-                    var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
-                    var aRecs = resp.Answers.ARecords().ToList();
-                    if (aRecs.Any())
+                    tasks.Add(Task.Run(async () =>
                     {
-                        var responses = aRecs.Select(a => a.Address.ToString()).ToList();
-                        var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
-                        var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
+                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
+                        return (capturedIp, capturedBl, resp.Answers.ARecords().ToList());
+                    }));
+                }
+            }
 
-                        if (realListings.Any())
-                        {
-                            listed++;
-                            result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", realListings)})");
-                        }
+            var results = await Task.WhenAll(tasks);
+            foreach (var (ip, bl, aRecs) in results)
+            {
+                if (aRecs.Any())
+                {
+                    var responses = aRecs.Select(a => a.Address.ToString()).ToList();
+                    var realListings = responses.Where(r => !FalsePositiveResponses.Contains(r)).ToList();
+                    var falsePositives = responses.Where(r => FalsePositiveResponses.Contains(r)).ToList();
 
-                        if (falsePositives.Any())
-                        {
-                            result.Details.Add($"{ip}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
-                        }
-                    }
-                    else
+                    if (realListings.Any())
                     {
-                        result.Details.Add($"{ip}: Not listed on {bl}");
+                        listed++;
+                        result.Errors.Add($"{ip} is LISTED on {bl} ({string.Join(", ", realListings)})");
                     }
+
+                    if (falsePositives.Any())
+                    {
+                        result.Details.Add($"{ip}: {bl} returned resolver/error code ({string.Join(", ", falsePositives)}) - not a real listing (using public DNS resolver)");
+                    }
+                }
+                else
+                {
+                    result.Details.Add($"{ip}: Not listed on {bl}");
                 }
             }
 
@@ -214,7 +235,8 @@ public class MxHostnameBlocklistCheck : ICheck
     public string Name => "MX Hostname Blocklist (RHSBL)";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    private static readonly string[] DomainBlocklists =
+    // All RHSBL lists require private/registered resolvers
+    private static readonly string[] PrivateDomainBlocklists =
     {
         "dbl.spamhaus.org",
         "multi.surbl.org",
@@ -229,6 +251,13 @@ public class MxHostnameBlocklistCheck : ICheck
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
+
+        if (!ctx.Options.EnablePrivateDnsbl)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Skipped — MX hostname blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)";
+            return new List<CheckResult> { result };
+        }
 
         try
         {
@@ -256,10 +285,10 @@ public class MxHostnameBlocklistCheck : ICheck
             int listed = 0;
             foreach (var mxDomain in mxDomains)
             {
-                foreach (var bl in DomainBlocklists)
+                foreach (var bl in PrivateDomainBlocklists)
                 {
                     var query = $"{mxDomain}.{bl}";
-                    var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                    var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                     var aRecs = resp.Answers.ARecords().ToList();
                     if (aRecs.Any())
                     {
@@ -303,7 +332,8 @@ public class DomainBlocklistCheck : ICheck
     public string Name => "Domain Blocklist Check";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    private static readonly string[] DomainBlocklists =
+    // All domain blocklists require private/registered resolvers
+    private static readonly string[] PrivateDomainBlocklists =
     {
         "dbl.spamhaus.org",
         "multi.surbl.org",
@@ -324,13 +354,20 @@ public class DomainBlocklistCheck : ICheck
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
+        if (!ctx.Options.EnablePrivateDnsbl)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "Skipped — domain blocklists (Spamhaus DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to enable)";
+            return new List<CheckResult> { result };
+        }
+
         try
         {
             int listed = 0;
-            foreach (var bl in DomainBlocklists)
+            foreach (var bl in PrivateDomainBlocklists)
             {
                 var query = $"{domain}.{bl}";
-                var resp = await ctx.Dns.QueryAsync(query, QueryType.A);
+                var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
                 var aRecs = resp.Answers.ARecords().ToList();
                 if (aRecs.Any())
                 {

@@ -170,11 +170,16 @@ public class WildcardDnsCheck : ICheck
 
         try
         {
-            var randomSub = $"ednsv-wildcard-test-{Guid.NewGuid():N}.{domain}";
+            var randomSub = $"ednsv-wildcard-probe.{domain}";
 
-            var aResp = await ctx.Dns.ResolveAAsync(randomSub);
-            var mxResp = await ctx.Dns.GetMxRecordsAsync(randomSub);
-            var spfTxts = await ctx.Dns.GetTxtRecordsAsync(randomSub);
+            var aTask = ctx.Dns.ResolveAAsync(randomSub);
+            var mxTask = ctx.Dns.GetMxRecordsAsync(randomSub);
+            var txtTask = ctx.Dns.GetTxtRecordsAsync(randomSub);
+            await Task.WhenAll(aTask, mxTask, txtTask);
+
+            var aResp = await aTask;
+            var mxResp = await mxTask;
+            var spfTxts = await txtTask;
             var hasSpf = spfTxts.Any(t => t.Text.Any(s => s.Contains("v=spf1", StringComparison.OrdinalIgnoreCase)));
 
             if (aResp.Any())

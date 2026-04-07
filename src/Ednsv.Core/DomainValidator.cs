@@ -12,11 +12,22 @@ public class DomainValidator
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
 
-    public DomainValidator()
+    /// <summary>
+    /// Creates a new validator with fresh (non-shared) services.
+    /// </summary>
+    public DomainValidator() : this(new DnsResolverService(), new SmtpProbeService(), new HttpProbeService()) { }
+
+    /// <summary>
+    /// Creates a new validator using shared services whose caches persist
+    /// across multiple <see cref="ValidateAsync"/> calls. This avoids
+    /// repeating expensive DNS, SMTP, and HTTP lookups when checking
+    /// multiple domains that share infrastructure.
+    /// </summary>
+    public DomainValidator(DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http)
     {
-        _dns = new DnsResolverService();
-        _smtp = new SmtpProbeService();
-        _http = new HttpProbeService();
+        _dns = dns;
+        _smtp = smtp;
+        _http = http;
 
         _checks = new List<ICheck>
         {
@@ -182,11 +193,15 @@ public class DomainValidator
 
     public event Action<string>? OnCheckStarted;
     public event Action<string, CheckResult>? OnCheckCompleted;
+    public event Action<string, TimeSpan>? OnCheckTiming;
 
     public async Task<ValidationReport> ValidateAsync(string domain, ValidationOptions? options = null)
     {
         var report = new ValidationReport { Domain = domain };
         var sw = Stopwatch.StartNew();
+
+        // Reset per-validation state while keeping shared caches
+        _dns.ResetErrors();
 
         var context = new CheckContext
         {
@@ -196,12 +211,67 @@ public class DomainValidator
             Options = options ?? new ValidationOptions()
         };
 
+        // ── Prefetch phase: fire common DNS queries and SMTP probes in parallel ──
+        // This primes the service caches so sequential checks hit cache instead of
+        // waiting on network I/O one-by-one.
+        var prefetchSw = Stopwatch.StartNew();
+        await PrefetchAsync(domain, context);
+        prefetchSw.Stop();
+        OnCheckTiming?.Invoke("Prefetch", prefetchSw.Elapsed);
+
+        var timedOutChecks = new List<ICheck>();
+
         foreach (var check in _checks)
         {
             try
             {
                 OnCheckStarted?.Invoke(check.Name);
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var checkSw = Stopwatch.StartNew();
+                var checkTask = check.RunAsync(domain, context);
+                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
+                List<CheckResult> results;
+                if (completedTask == checkTask)
+                {
+                    results = await checkTask;
+                }
+                else
+                {
+                    // Track for deferred retry instead of immediately reporting timeout
+                    timedOutChecks.Add(check);
+                    checkSw.Stop();
+                    OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    continue;
+                }
+                checkSw.Stop();
+                OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                foreach (var r in results)
+                {
+                    report.Results.Add(r);
+                    OnCheckCompleted?.Invoke(check.Name, r);
+                }
+            }
+            catch (Exception ex)
+            {
+                var errorResult = new CheckResult
+                {
+                    CheckName = check.Name,
+                    Category = check.Category,
+                    Severity = CheckSeverity.Error,
+                    Summary = $"Check failed: {ex.Message}",
+                    Errors = { ex.Message }
+                };
+                report.Results.Add(errorResult);
+                OnCheckCompleted?.Invoke(check.Name, errorResult);
+            }
+        }
+
+        // Deferred retry: timed-out checks get a second attempt.
+        // By now, slow DNS responses may have resolved and been cached.
+        foreach (var check in timedOutChecks)
+        {
+            try
+            {
+                OnCheckStarted?.Invoke(check.Name);
                 var checkTask = check.RunAsync(domain, context);
                 var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(30)));
                 List<CheckResult> results;
@@ -218,8 +288,8 @@ public class DomainValidator
                             CheckName = check.Name,
                             Category = check.Category,
                             Severity = CheckSeverity.Warning,
-                            Summary = "Check timed out (30s limit)",
-                            Warnings = { "Check did not complete within timeout" }
+                            Summary = "Check timed out",
+                            Warnings = { "Check did not complete within timeout — retried once" }
                         }
                     };
                 }
@@ -245,17 +315,18 @@ public class DomainValidator
         }
 
         // Surface any DNS query errors so users know results may be incomplete
-        if (_dns.QueryErrors.Any())
+        var dnsErrors = _dns.QueryErrors.ToList(); // snapshot for consistent reads
+        if (dnsErrors.Any())
         {
             report.Results.Add(new CheckResult
             {
                 CheckName = "DNS Query Errors",
                 Category = CheckCategory.NS,
                 Severity = CheckSeverity.Warning,
-                Summary = $"{_dns.QueryErrors.Count} DNS query error(s) — some results may be incomplete",
-                Warnings = _dns.QueryErrors.Take(20).ToList(),
-                Details = _dns.QueryErrors.Count > 20
-                    ? new List<string> { $"...and {_dns.QueryErrors.Count - 20} more" }
+                Summary = $"{dnsErrors.Count} DNS query error(s) — some results may be incomplete",
+                Warnings = dnsErrors.Take(20).ToList(),
+                Details = dnsErrors.Count > 20
+                    ? new List<string> { $"...and {dnsErrors.Count - 20} more" }
                     : new List<string>()
             });
         }
@@ -263,5 +334,107 @@ public class DomainValidator
         sw.Stop();
         report.Duration = sw.Elapsed;
         return report;
+    }
+
+    /// <summary>
+    /// Prefetches common DNS records and SMTP probes in batches to prime the
+    /// service caches. Concurrency is capped to avoid looking abusive — DNS
+    /// queries go through the configured resolver (not hammering authoritative
+    /// servers directly) and SMTP probes are limited to 3 at a time.
+    /// </summary>
+    private async Task PrefetchAsync(string domain, CheckContext ctx)
+    {
+        try
+        {
+            // Phase 1: Core DNS records — small batch, all go through our configured
+            // resolver (Google/Cloudflare) which handles its own rate limiting.
+            var mxTask = _dns.GetMxRecordsAsync(domain);
+            var nsTask = _dns.GetNsRecordsAsync(domain);
+            var aTask = _dns.ResolveAAsync(domain);
+            var aaaaTask = _dns.ResolveAAAAAsync(domain);
+            var txtTask = _dns.QueryAsync(domain, DnsClient.QueryType.TXT);
+            var soaTask = _dns.QueryAsync(domain, DnsClient.QueryType.SOA);
+
+            await Task.WhenAll(mxTask, nsTask, aTask, aaaaTask, txtTask, soaTask);
+
+            var mxRecords = await mxTask;
+            var nsRecords = await nsTask;
+
+            // Phase 2: Resolve MX/NS host IPs + policy records (throttled to 8 concurrent)
+            var mxHosts = mxRecords.Select(m => m.Exchange.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
+            var nsHosts = nsRecords.Select(n => n.NSDName.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
+
+            var dnsSemaphore = new SemaphoreSlim(8);
+            var phase2Tasks = new List<Task>();
+
+            Task ThrottledDns(Func<Task> query)
+            {
+                return Task.Run(async () =>
+                {
+                    await dnsSemaphore.WaitAsync();
+                    try { await query(); }
+                    finally { dnsSemaphore.Release(); }
+                });
+            }
+
+            foreach (var host in mxHosts.Concat(nsHosts).Distinct())
+            {
+                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAsync(host)));
+                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAAAAsync(host)));
+            }
+
+            // Policy/security records
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CAA)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CNAME)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DS)));
+            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY)));
+
+            // DKIM selectors
+            var selectors = new[] { "default", "google", "selector1", "selector2", "k1", "s1", "s2", "dkim" };
+            foreach (var sel in selectors.Concat(ctx.Options.AdditionalDkimSelectors).Distinct())
+                phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT)));
+
+            await Task.WhenAll(phase2Tasks);
+
+            // Phase 3: PTR lookups + SMTP probes — SMTP limited to 3 concurrent
+            // to be respectful of mail servers (each probe opens a TCP connection).
+            var smtpSemaphore = new SemaphoreSlim(3);
+            var phase3Tasks = new List<Task>();
+
+            foreach (var host in mxHosts)
+            {
+                var ips = await _dns.ResolveAAsync(host);
+                foreach (var ip in ips)
+                    phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
+
+                // Pre-probe SMTP port 25
+                var h = host;
+                phase3Tasks.Add(Task.Run(async () =>
+                {
+                    await smtpSemaphore.WaitAsync();
+                    try { await _smtp.ProbeSmtpAsync(h, 25); }
+                    finally { smtpSemaphore.Release(); }
+                }));
+
+                // Pre-probe submission ports 587/465 (cached, avoids timeout in SubmissionPortsCheck)
+                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 587)));
+                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 465)));
+            }
+
+            var domainIps = await aTask;
+            foreach (var ip in domainIps)
+                phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
+
+            if (phase3Tasks.Count > 0)
+                await Task.WhenAll(phase3Tasks);
+        }
+        catch
+        {
+            // Prefetch is best-effort — any failures will be retried by the checks themselves
+        }
     }
 }

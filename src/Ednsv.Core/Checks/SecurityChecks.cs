@@ -991,8 +991,8 @@ public class ZoneTransferCheck : ICheck
         if (!ctx.Options.EnableAxfr)
         {
             result.Severity = CheckSeverity.Info;
-            result.Summary = "AXFR test skipped (--no-axfr)";
-            result.Details.Add("Zone transfer test was disabled via --no-axfr option");
+            result.Summary = "AXFR test skipped (use --axfr to enable)";
+            result.Details.Add("Zone transfer test is disabled by default — use --axfr to enable");
             return new List<CheckResult> { result };
         }
 

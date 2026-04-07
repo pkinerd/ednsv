@@ -33,10 +33,16 @@ public class CheckContext
 
 public class ValidationOptions
 {
-    public bool EnableAxfr { get; set; } = true;
+    public bool EnableAxfr { get; set; } = false;
     public bool EnableCatchAll { get; set; } = false;
     public bool EnableOpenRelay { get; set; } = false;
     public bool EnableOpenResolver { get; set; } = false;
     public string OpenResolverTestDomain { get; set; } = "www.google.com";
     public List<string> AdditionalDkimSelectors { get; set; } = new();
+    /// <summary>
+    /// Include blocklists that require a private/registered DNS resolver
+    /// (e.g. Spamhaus, Barracuda, SURBL, URIBL). These return false positives
+    /// or refuse queries from public resolvers like Google/Cloudflare.
+    /// </summary>
+    public bool EnablePrivateDnsbl { get; set; } = false;
 }

@@ -28,6 +28,9 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      - name: Run unit tests
+        run: dotnet test --no-build --configuration Release --verbosity normal
+
       - name: Run against test domains
         run: |
           mkdir -p test-output
@@ -90,6 +93,197 @@ jobs:
             cat "test-output/${domain}-verbose.txt"
             echo ""
           done
+
+      - name: Disk cache integration test (cold + warm run)
+        if: always()
+        run: |
+          CACHE_DIR="test-output/integration-cache"
+          DOMAIN="gmail.com"
+
+          echo "============================================"
+          echo "Cold run: $DOMAIN (no cache, verbose)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
+            > "test-output/${DOMAIN}-cold.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-cold.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Cache directory contents:"
+          echo "============================================"
+          python3 -c "
+          import json, os, glob
+          cache_dir = '$CACHE_DIR'
+          for f in sorted(glob.glob(os.path.join(cache_dir, '*.json'))):
+              try:
+                  d = json.load(open(f))
+                  print(f'  {os.path.basename(f)}: {len(d)} entries')
+              except: pass
+          " || echo "  Could not read cache directory"
+
+          echo ""
+          echo "============================================"
+          echo "Warm run: $DOMAIN (from cache, verbose)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
+            > "test-output/${DOMAIN}-warm.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-warm.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Cache effectiveness comparison:"
+          echo "============================================"
+          python3 -c "
+          import re, sys
+
+          def parse_timing(path):
+              # Strip ANSI escape codes for reliable parsing
+              raw = open(path).read()
+              text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+              times = {}
+              # Duration is in a Spectre.Console table: │ Duration │ 80.7s │
+              dur = re.search(r'Duration\s*│\s*(\d+\.?\d*)s', text)
+              if dur: times['TOTAL'] = float(dur.group(1))
+              # Extract cache load line
+              cache = re.search(r'Loaded cache[^\n]*', text)
+              if cache: times['_cache_line'] = cache.group(0).strip()
+              # Extract hit/miss from verbose lines
+              hm = re.findall(r'dns:(\d+)h/(\d+)m', text)
+              if hm:
+                  times['_dns_hits'] = sum(int(h) for h,m in hm)
+                  times['_dns_misses'] = sum(int(m) for h,m in hm)
+              return times
+
+          cold = parse_timing('test-output/${DOMAIN}-cold.txt')
+          warm = parse_timing('test-output/${DOMAIN}-warm.txt')
+
+          if '_cache_line' in warm:
+              print(f'  Cache: {warm[\"_cache_line\"]}')
+          if '_dns_hits' in warm:
+              print(f'  Warm run DNS: {warm[\"_dns_hits\"]} hits, {warm[\"_dns_misses\"]} misses')
+          if '_dns_hits' in cold:
+              print(f'  Cold run DNS: {cold[\"_dns_hits\"]} hits, {cold[\"_dns_misses\"]} misses')
+
+          cold_total = cold.get('TOTAL', 0)
+          warm_total = warm.get('TOTAL', 0)
+          if cold_total and warm_total:
+              speedup = cold_total / warm_total if warm_total > 0 else 0
+              print(f'  Cold: {cold_total:.1f}s  Warm: {warm_total:.1f}s  Speedup: {speedup:.1f}x')
+          elif cold_total:
+              print(f'  Cold: {cold_total:.1f}s  Warm: could not parse')
+          else:
+              print(f'  Could not extract total durations')
+          " || true
+
+      - name: Recheck integration test (--recheck warning)
+        if: always()
+        run: |
+          CACHE_DIR="test-output/integration-cache"
+          DOMAIN="gmail.com"
+
+          echo "============================================"
+          echo "Domain results from previous run:"
+          echo "============================================"
+          python3 -c "
+          import json, os
+          path = os.path.join('$CACHE_DIR', 'domain-results.json')
+          if os.path.exists(path):
+              data = json.load(open(path))
+              for domain, summary in data.items():
+                  issues = summary.get('issueChecks', [])
+                  print(f'  {domain}: {len(issues)} issues')
+                  for issue in issues:
+                      print(f'    - {issue[\"name\"]} ({issue[\"category\"]}): {issue[\"severity\"]}')
+          else:
+              print('  No domain-results.json found')
+          " || echo "  Could not read domain results"
+
+          echo ""
+          echo "============================================"
+          echo "Recheck run: $DOMAIN (--recheck warning)"
+          echo "============================================"
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            "$DOMAIN" --verbose --cache "$CACHE_DIR" --recheck warning \
+            > "test-output/${DOMAIN}-recheck.txt" 2>&1 || true
+          cat "test-output/${DOMAIN}-recheck.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Recheck analysis:"
+          echo "============================================"
+          python3 -c "
+          import re
+
+          raw = open('test-output/${DOMAIN}-recheck.txt').read()
+          text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+
+          # Check if recheck cleared anything
+          recheck_line = re.search(r'Recheck: cleared stale cache for.*\(([^)]+)\)', text)
+          if recheck_line:
+              print(f'  Cache deps cleared: {recheck_line.group(1)}')
+          else:
+              print('  No recheck clearing detected (domain may have had no issues)')
+
+          # DNS hits/misses — recheck should have more misses than warm run
+          hm = re.findall(r'dns:(\d+)h/(\d+)m', text)
+          if hm:
+              hits = sum(int(h) for h,m in hm)
+              misses = sum(int(m) for h,m in hm)
+              print(f'  Recheck DNS: {hits} hits, {misses} misses')
+
+          # Duration
+          dur = re.search(r'Duration\s*│\s*(\d+\.?\d*)s', text)
+          if dur:
+              print(f'  Duration: {dur.group(1)}s')
+
+          # Cache load line
+          cache = re.search(r'Loaded cache[^\n]*', text)
+          if cache:
+              print(f'  Cache: {cache.group(0).strip()}')
+          " || true
+
+      - name: Multi-domain run (in-memory cache reuse across domains)
+        if: always()
+        run: |
+          echo "============================================"
+          echo "Multi-domain run: google.com gmail.com (verbose)"
+          echo "============================================"
+          echo "Domains sharing infrastructure should show cache hits on 2nd domain..."
+          dotnet run --project src/Ednsv.Cli --configuration Release -- \
+            google.com gmail.com --verbose \
+            > "test-output/multi-domain.txt" 2>&1 || true
+          cat "test-output/multi-domain.txt"
+
+          echo ""
+          echo "============================================"
+          echo "Per-domain cache reuse analysis:"
+          echo "============================================"
+          python3 -c "
+          import re
+
+          # Strip ANSI escape codes
+          raw = open('test-output/multi-domain.txt').read()
+          text = re.sub(r'\x1b\[[0-9;]*m', '', raw)
+
+          # Duration is in Spectre table: │ Duration │ 80.7s │
+          durations = [float(m.group(1)) for m in re.finditer(r'Duration\s*│\s*(\d+\.?\d*)s', text)]
+
+          # Find DNS hit/miss totals per domain block (split on Validating:)
+          blocks = re.split(r'Validating:', text)
+          domains = ['google.com', 'gmail.com']
+          for i, block in enumerate(blocks[1:], 1):
+              hm = re.findall(r'dns:(\d+)h/(\d+)m', block)
+              hits = sum(int(h) for h,_ in hm)
+              misses = sum(int(m) for _,m in hm)
+              name = domains[i-1] if i <= len(domains) else f'domain #{i}'
+              dur = f'{durations[i-1]:.1f}s' if i <= len(durations) else '?'
+              print(f'  {name}: {dur}, dns:{hits}h/{misses}m')
+
+          if len(durations) >= 2:
+              print(f'  Speedup: {durations[0]/durations[1]:.1f}x' if durations[1] > 0 else '  2nd domain was instant')
+          " || true
 
       - name: Upload test output
         uses: actions/upload-artifact@v4
