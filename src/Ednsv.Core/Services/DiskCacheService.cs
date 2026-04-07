@@ -88,7 +88,9 @@ public class DiskCacheService
                     // Retry probes with empty banner (likely transient read timeout)
                     !string.IsNullOrEmpty(kvp.Value.Banner) &&
                     // Retry probes where TLS was expected but cert wasn't obtained (transient TLS failure)
-                    !(kvp.Value.SupportsStartTls && kvp.Value.CertSubject == null))
+                    !(kvp.Value.SupportsStartTls && kvp.Value.CertSubject == null) &&
+                    // Retry probes with cert metadata but missing raw bytes (upgrades old cache format)
+                    !(kvp.Value.CertSubject != null && kvp.Value.CertRawBase64 == null))
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             portProbes = portProbes?.Where(kvp => kvp.Value.Open)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
