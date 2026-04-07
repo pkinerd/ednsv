@@ -28,6 +28,7 @@ public class DiskCacheService
     private const string PtrLookupsFile = "ptr-lookups.json";
     private const string DnsQueriesFile = "dns-queries.json";
     private const string DnsServerQueriesFile = "dns-server-queries.json";
+    private const string AxfrResultsFile = "axfr-results.json";
     private const string DomainResultsFile = "domain-results.json";
 
     /// <summary>
@@ -45,6 +46,8 @@ public class DiskCacheService
             .ToDictionary(kvp => kvp.Key, kvp => new UnreachableServerCacheEntry { FailCount = kvp.Value });
         var ptrEntries = dns.ExportPtrCache()
             .ToDictionary(kvp => kvp.Key, kvp => new PtrCacheEntry { Names = kvp.Value });
+        var axfrEntries = dns.ExportAxfrCache()
+            .ToDictionary(kvp => kvp.Key, kvp => new AxfrCacheEntry { Vulnerable = kvp.Value });
 
         await Task.WhenAll(
             MergeSaveAsync(cacheDir, SmtpProbesFile, smtp.ExportProbeCache(), now),
@@ -55,7 +58,8 @@ public class DiskCacheService
             MergeSaveAsync(cacheDir, UnreachableServersFile, unreachableEntries, now),
             MergeSaveAsync(cacheDir, PtrLookupsFile, ptrEntries, now),
             MergeSaveAsync(cacheDir, DnsQueriesFile, dns.ExportQueryCache(), now),
-            MergeSaveAsync(cacheDir, DnsServerQueriesFile, dns.ExportServerQueryCache(), now)
+            MergeSaveAsync(cacheDir, DnsServerQueriesFile, dns.ExportServerQueryCache(), now),
+            MergeSaveAsync(cacheDir, AxfrResultsFile, axfrEntries, now)
         );
     }
 
@@ -79,6 +83,7 @@ public class DiskCacheService
         var ptr = await LoadFileAsync<PtrCacheEntry>(cacheDir, PtrLookupsFile, cutoff);
         var dnsQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsQueriesFile, cutoff);
         var dnsServerQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsServerQueriesFile, cutoff);
+        var axfrResults = await LoadFileAsync<AxfrCacheEntry>(cacheDir, AxfrResultsFile, cutoff);
 
         if (retryErrors)
         {
@@ -117,6 +122,7 @@ public class DiskCacheService
         if (ptr?.Count > 0) dns.ImportPtrCache(ptr.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Names));
         if (dnsQueries?.Count > 0) dns.ImportQueryCache(dnsQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
         if (dnsServerQueries?.Count > 0) dns.ImportServerQueryCache(dnsServerQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
+        if (axfrResults?.Count > 0) dns.ImportAxfrCache(axfrResults.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vulnerable));
 
         var result = new CacheLoadResult
         {
@@ -351,6 +357,12 @@ public class UnreachableServerCacheEntry : ICacheEntry
 {
     public DateTime CachedAtUtc { get; set; }
     public int FailCount { get; set; }
+}
+
+public class AxfrCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
+    public bool Vulnerable { get; set; }
 }
 
 public class PtrCacheEntry : ICacheEntry

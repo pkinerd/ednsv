@@ -377,6 +377,19 @@ public class DnsResolverService
             _unreachableServerCounts.TryAdd(kvp.Key, kvp.Value);
     }
 
+    public Dictionary<string, bool> ExportAxfrCache()
+        => _axfrCache.ToDictionary(kvp => $"{kvp.Key.ip}|{kvp.Key.domain}", kvp => kvp.Value);
+
+    public void ImportAxfrCache(Dictionary<string, bool> entries)
+    {
+        foreach (var kvp in entries)
+        {
+            var parts = kvp.Key.Split('|', 2);
+            if (parts.Length == 2)
+                _axfrCache.TryAdd((parts[0], parts[1]), kvp.Value);
+        }
+    }
+
     public Dictionary<string, List<string>> ExportPtrCache()
         => _ptrCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
