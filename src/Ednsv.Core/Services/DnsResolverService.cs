@@ -13,6 +13,15 @@ public class DnsResolverService
     private readonly LookupClient _dnsblClient;
     private static int MaxRetries = 3;
 
+    // ── Rate limiting ───────────────────────────────────────────────────
+    // Token bucket: limits sustained query rate independent of response times.
+    // Concurrency cap: prevents unbounded in-flight queries during slow periods.
+    private readonly SemaphoreSlim _rateLimiter;
+    private readonly SemaphoreSlim _concurrencyLimiter;
+    private readonly Timer _refillTimer;
+    private readonly int _tokensPerSecond;
+    private readonly int _maxTokens;
+
     // Application-level cache for DNS queries (survives across domains)
     private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
     private readonly ConcurrentDictionary<string, List<string>> _ptrCache = new();
@@ -35,7 +44,12 @@ public class DnsResolverService
     /// Creates a resolver using the specified DNS server(s).
     /// Pass null or empty to use Google Public DNS (default).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers)
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers) : this(nameservers, tokensPerSecond: 25, maxConcurrency: 40) { }
+
+    /// <summary>
+    /// Creates a resolver with custom rate limiting parameters.
+    /// </summary>
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency)
     {
         var endpoints = nameservers?.Count > 0
             ? nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray()
@@ -44,19 +58,19 @@ public class DnsResolverService
         var options = new LookupClientOptions(endpoints)
         {
             UseCache = true,
-            Timeout = TimeSpan.FromSeconds(5),
+            Timeout = TimeSpan.FromSeconds(15),
             Retries = 2,
             ThrowDnsErrors = false
         };
         _client = new LookupClient(options);
 
-        // DNSBL client — shorter timeout (3s) since most responsive blocklists
-        // answer in <500ms. 3 attempts like all other DNS clients.
+        // DNSBL client — short timeout (3s), 1 retry (2 attempts total).
+        // DNSBL failures are best-effort and don't produce error reports.
         var dnsblOptions = new LookupClientOptions(endpoints)
         {
             UseCache = true,
             Timeout = TimeSpan.FromSeconds(3),
-            Retries = 2,
+            Retries = 1,
             ThrowDnsErrors = false
         };
         _dnsblClient = new LookupClient(dnsblOptions);
@@ -64,11 +78,47 @@ public class DnsResolverService
         var directOptions = new LookupClientOptions
         {
             UseCache = false,
-            Timeout = TimeSpan.FromSeconds(5),
+            Timeout = TimeSpan.FromSeconds(15),
             Retries = 2,
             ThrowDnsErrors = false
         };
         _directClient = new LookupClient(directOptions);
+
+        // Rate limiting
+        _tokensPerSecond = tokensPerSecond;
+        _maxTokens = tokensPerSecond;
+        _rateLimiter = new SemaphoreSlim(tokensPerSecond, tokensPerSecond);
+        _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        _refillTimer = new Timer(_ => RefillTokens(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+    }
+
+    private void RefillTokens()
+    {
+        int toRelease = _maxTokens - _rateLimiter.CurrentCount;
+        if (toRelease > 0)
+        {
+            try { _rateLimiter.Release(toRelease); }
+            catch (SemaphoreFullException) { /* race with Release — harmless */ }
+        }
+    }
+
+    /// <summary>
+    /// Acquires a rate-limit token and a concurrency slot before executing a DNS query.
+    /// The token bucket limits sustained QPS; the concurrency cap prevents runaway
+    /// in-flight queries when the resolver is slow.
+    /// </summary>
+    private async Task<T> RateLimitedAsync<T>(Func<Task<T>> query)
+    {
+        await _rateLimiter.WaitAsync();
+        await _concurrencyLimiter.WaitAsync();
+        try
+        {
+            return await query();
+        }
+        finally
+        {
+            _concurrencyLimiter.Release();
+        }
     }
 
     /// <summary>
@@ -106,7 +156,7 @@ public class DnsResolverService
         Interlocked.Increment(ref _cacheMisses);
         try
         {
-            var result = await _client.QueryAsync(domain, type);
+            var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type));
             // Always cache — errors are filtered out by --retry-errors on load
             _queryCache.TryAdd(key, result);
             return result;
@@ -138,9 +188,10 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// DNSBL query with 3s timeout and 2 retries (3 attempts). Uses the shared query cache
-    /// so results are reused across domains. Timeouts don't pollute the DNS error log
-    /// (many obscure DNSBLs are simply unresponsive).
+    /// DNSBL query with 3s timeout and 1 retry (2 attempts total). Uses the shared
+    /// query cache so results are reused across domains. Timeouts don't pollute the
+    /// DNS error log (many obscure DNSBLs are simply unresponsive). Rate limited
+    /// alongside all other DNS queries.
     /// </summary>
     public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
     {
@@ -154,7 +205,7 @@ public class DnsResolverService
         Interlocked.Increment(ref _cacheMisses);
         try
         {
-            var result = await _dnsblClient.QueryAsync(query, type);
+            var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type));
             _queryCache.TryAdd(key, result);
             return result;
         }
@@ -190,12 +241,12 @@ public class DnsResolverService
             var opts = new LookupClientOptions(serverEndpoint)
             {
                 UseCache = false,
-                Timeout = TimeSpan.FromSeconds(5),
+                Timeout = TimeSpan.FromSeconds(15),
                 Retries = 2,
                 ThrowDnsErrors = false
             };
             var client = new LookupClient(opts);
-            var result = await client.QueryAsync(domain, type);
+            var result = await RateLimitedAsync(() => client.QueryAsync(domain, type));
             _serverQueryCache.TryAdd(key, result);
             if (!result.HasError)
             {
@@ -233,7 +284,8 @@ public class DnsResolverService
 
         try
         {
-            var result = await _client.QueryReverseAsync(IPAddress.Parse(ip));
+            var parsedIp = IPAddress.Parse(ip);
+            var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp));
             var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             _ptrCache.TryAdd(ip, ptrs);
             return ptrs;
@@ -362,13 +414,13 @@ public class DnsResolverService
         var opts = new LookupClientOptions(new IPEndPoint(nsIp, 53))
         {
             UseCache = false,
-            Timeout = TimeSpan.FromSeconds(5),
+            Timeout = TimeSpan.FromSeconds(10),
             Retries = 0,
             UseTcpOnly = true,
             ThrowDnsErrors = false
         };
         var client = new LookupClient(opts);
-        return await client.QueryAsync(domain, QueryType.AXFR);
+        return await RateLimitedAsync(() => client.QueryAsync(domain, QueryType.AXFR));
     }
 
     /// <summary>

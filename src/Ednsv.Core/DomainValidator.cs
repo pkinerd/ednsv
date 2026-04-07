@@ -360,43 +360,33 @@ public class DomainValidator
             var mxRecords = await mxTask;
             var nsRecords = await nsTask;
 
-            // Phase 2: Resolve MX/NS host IPs + policy records (throttled to 8 concurrent)
+            // Phase 2: Resolve MX/NS host IPs + policy records.
+            // DNS rate limiting is handled globally by DnsResolverService.
             var mxHosts = mxRecords.Select(m => m.Exchange.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
             var nsHosts = nsRecords.Select(n => n.NSDName.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
 
-            var dnsSemaphore = new SemaphoreSlim(8);
             var phase2Tasks = new List<Task>();
-
-            Task ThrottledDns(Func<Task> query)
-            {
-                return Task.Run(async () =>
-                {
-                    await dnsSemaphore.WaitAsync();
-                    try { await query(); }
-                    finally { dnsSemaphore.Release(); }
-                });
-            }
 
             foreach (var host in mxHosts.Concat(nsHosts).Distinct())
             {
-                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAsync(host)));
-                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAAAAsync(host)));
+                phase2Tasks.Add(_dns.ResolveAAsync(host));
+                phase2Tasks.Add(_dns.ResolveAAAAAsync(host));
             }
 
             // Policy/security records
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CAA)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CNAME)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DS)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY)));
+            phase2Tasks.Add(_dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT));
+            phase2Tasks.Add(_dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT));
+            phase2Tasks.Add(_dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT));
+            phase2Tasks.Add(_dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT));
+            phase2Tasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CAA));
+            phase2Tasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CNAME));
+            phase2Tasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DS));
+            phase2Tasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY));
 
             // DKIM selectors
             var selectors = new[] { "default", "google", "selector1", "selector2", "k1", "s1", "s2", "dkim" };
             foreach (var sel in selectors.Concat(ctx.Options.AdditionalDkimSelectors).Distinct())
-                phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT)));
+                phase2Tasks.Add(_dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT));
 
             await Task.WhenAll(phase2Tasks);
 
@@ -409,7 +399,7 @@ public class DomainValidator
             {
                 var ips = await _dns.ResolveAAsync(host);
                 foreach (var ip in ips)
-                    phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
+                    phase3Tasks.Add(_dns.ResolvePtrAsync(ip));
 
                 // Pre-probe SMTP port 25
                 var h = host;
@@ -427,7 +417,7 @@ public class DomainValidator
 
             var domainIps = await aTask;
             foreach (var ip in domainIps)
-                phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
+                phase3Tasks.Add(_dns.ResolvePtrAsync(ip));
 
             if (phase3Tasks.Count > 0)
                 await Task.WhenAll(phase3Tasks);

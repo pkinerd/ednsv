@@ -851,23 +851,18 @@ public class SubdomainSpfGapCheck : ICheck
             var missingSpf = new List<string>();
             var hasSpf = new List<string>();
 
-            using var semaphore = new SemaphoreSlim(5);
+            // Rate limiting is handled globally by DnsResolverService.
             var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
             {
-                await semaphore.WaitAsync();
-                try
-                {
-                    var subDomain = $"{sub}.{domain}";
-                    var aRecs = await ctx.Dns.ResolveAAsync(subDomain);
-                    var mxRecs = await ctx.Dns.GetMxRecordsAsync(subDomain);
-                    if (!aRecs.Any() && !mxRecs.Any()) return (sub, exists: false, hasSpf: false);
+                var subDomain = $"{sub}.{domain}";
+                var aRecs = await ctx.Dns.ResolveAAsync(subDomain);
+                var mxRecs = await ctx.Dns.GetMxRecordsAsync(subDomain);
+                if (!aRecs.Any() && !mxRecs.Any()) return (sub, exists: false, hasSpf: false);
 
-                    var txts = await ctx.Dns.GetTxtRecordsAsync(subDomain);
-                    var spf = txts.Any(t => string.Join("", t.Text).TrimStart()
-                        .StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase));
-                    return (sub, exists: true, hasSpf: spf);
-                }
-                finally { semaphore.Release(); }
+                var txts = await ctx.Dns.GetTxtRecordsAsync(subDomain);
+                var spf = txts.Any(t => string.Join("", t.Text).TrimStart()
+                    .StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase));
+                return (sub, exists: true, hasSpf: spf);
             })).ToList();
 
             var results = await Task.WhenAll(tasks);

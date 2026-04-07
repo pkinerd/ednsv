@@ -514,10 +514,8 @@ public class ExtendedDnsblCheck : ICheck
         }
 
         int listed = 0;
-        // Build all query tasks up-front and run in parallel (throttled).
-        // High concurrency is fine here — DNSBL queries are lightweight UDP with
-        // short timeouts and the DNS cache deduplicates repeated queries.
-        var semaphore = new SemaphoreSlim(30);
+        // Build all query tasks up-front and run in parallel.
+        // Rate limiting is handled globally by DnsResolverService.
         var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
 
         foreach (var ip in allMxIps)
@@ -535,16 +533,8 @@ public class ExtendedDnsblCheck : ICheck
                 var query = $"{reversed}.{zone}";
                 tasks.Add(Task.Run(async () =>
                 {
-                    await semaphore.WaitAsync();
-                    try
-                    {
-                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
-                        return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
+                    var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
+                    return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
                 }));
             }
         }
