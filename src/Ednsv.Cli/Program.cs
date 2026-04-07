@@ -21,7 +21,7 @@ var outputOption = new Option<string?>("--output", "Write output to file instead
 outputOption.AddAlias("-o");
 var outputDirOption = new Option<string?>("--output-dir", "Write per-domain reports to separate files in this directory, plus an index and cross-domain issues file");
 outputDirOption.AddAlias("-D");
-var noAxfrOption = new Option<bool>("--no-axfr", "Disable zone transfer (AXFR) testing");
+var axfrOption = new Option<bool>("--axfr", "Enable zone transfer (AXFR) testing");
 var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
 var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
 var openResolverOption = new Option<bool>("--open-resolver", "Enable open recursive resolver detection (probes NS servers with external domain)");
@@ -52,7 +52,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     formatOption,
     outputOption,
     outputDirOption,
-    noAxfrOption,
+    axfrOption,
     catchAllOption,
     openRelayOption,
     openResolverOption,
@@ -70,7 +70,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     liveIndexOption
 };
 
-rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
+rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
 {
     if (listChecks)
     {
@@ -182,7 +182,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
 
     var options = new ValidationOptions
     {
-        EnableAxfr = !noAxfr,
+        EnableAxfr = axfr,
         EnableCatchAll = catchAll,
         EnableOpenRelay = openRelay,
         EnableOpenResolver = enableOpenResolver,
@@ -304,7 +304,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool noAxfr, b
             Console.Error.WriteLine($"Report written to {outputPath}");
         }
     }
-}, domainArg, formatOption, noAxfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption, verboseOption);
+}, domainArg, formatOption, axfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption, verboseOption);
 
 return await rootCommand.InvokeAsync(args);
 
@@ -501,8 +501,8 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         AnsiConsole.MarkupLine($"[bold]Started:[/] {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
         if (dnsServers?.Count > 0)
             AnsiConsole.MarkupLine($"[grey]DNS server: {Markup.Escape(string.Join(", ", dnsServers))}[/]");
-        if (!options.EnableAxfr)
-            AnsiConsole.MarkupLine("[grey]AXFR testing disabled[/]");
+        if (options.EnableAxfr)
+            AnsiConsole.MarkupLine("[grey]AXFR testing enabled[/]");
         if (verbose)
             AnsiConsole.MarkupLine("[grey]Verbose mode: showing check descriptions[/]");
         AnsiConsole.WriteLine();

@@ -33,7 +33,7 @@ public class CheckContext
 
 public class ValidationOptions
 {
-    public bool EnableAxfr { get; set; } = true;
+    public bool EnableAxfr { get; set; } = false;
     public bool EnableCatchAll { get; set; } = false;
     public bool EnableOpenRelay { get; set; } = false;
     public bool EnableOpenResolver { get; set; } = false;
