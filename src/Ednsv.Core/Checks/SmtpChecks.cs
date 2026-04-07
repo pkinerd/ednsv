@@ -1113,7 +1113,7 @@ public class SmtpIpv6ConnectivityCheck : ICheck
             int unreachable = 0;
 
             // Resolve AAAA records for all MX hosts, then probe all IPv6 addresses
-            // in parallel with a short timeout (3s — if port 25 is open, it responds fast)
+            // concurrently using the cached port probe service
             var probes = new List<(string host, string addr, Task<bool> task)>();
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -1127,22 +1127,7 @@ public class SmtpIpv6ConnectivityCheck : ICheck
                 hasAaaa++;
                 foreach (var addr in v6Addrs)
                 {
-                    var a = addr;
-                    probes.Add((mxHost, addr, Task.Run(async () =>
-                    {
-                        try
-                        {
-                            using var client = new TcpClient(AddressFamily.InterNetworkV6);
-                            var connectTask = client.ConnectAsync(IPAddress.Parse(a), 25);
-                            if (await Task.WhenAny(connectTask, Task.Delay(TimeSpan.FromSeconds(3))) == connectTask)
-                            {
-                                await connectTask;
-                                return true;
-                            }
-                            return false;
-                        }
-                        catch { return false; }
-                    })));
+                    probes.Add((mxHost, addr, ctx.Smtp.ProbePortAsync(addr, 25)));
                 }
             }
 
