@@ -14,6 +14,8 @@
   .search-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
   .search-form input { flex: 1; padding: 0.6rem 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
   .search-form input:focus { border-color: var(--accent); }
+  .search-form select { padding: 0.6rem 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
+  .search-form select:focus { border-color: var(--accent); }
   .search-form button { padding: 0.6rem 1.2rem; background: var(--accent); color: var(--bg); border: none; border-radius: 6px; font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
   .search-form button:hover { opacity: 0.9; }
   .search-form button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -56,6 +58,8 @@
   .filter-bar { display: flex; gap: 0.4rem; margin-bottom: 1rem; flex-wrap: wrap; }
   .filter-bar button { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
   .filter-bar button.active { border-color: var(--accent); background: #1e3a5f; }
+  .recheck-btn { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--warn); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
+  .recheck-btn:hover { border-color: var(--warn); }
 </style>
 </head>
 <body>
@@ -65,6 +69,12 @@
 
   <form class="search-form" id="form">
     <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+    <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
+      <option value="">No recheck</option>
+      <option value="Warning">Recheck warnings+</option>
+      <option value="Error">Recheck errors+</option>
+      <option value="Critical">Recheck critical</option>
+    </select>
     <button type="submit" id="btn">Validate</button>
   </form>
 
@@ -74,26 +84,32 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const form = $('#form'), input = $('#domain'), btn = $('#btn'), statusEl = $('#status'), resultsEl = $('#results');
+const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
 let pollTimer = null;
+let lastDomain = '';
 
 form.addEventListener('submit', async e => {
   e.preventDefault();
   const domain = input.value.trim();
   if (!domain) return;
-  startValidation(domain);
+  lastDomain = domain;
+  startValidation(domain, recheckSel.value || null);
 });
 
-async function startValidation(domain) {
+async function startValidation(domain, recheckSeverity) {
   btn.disabled = true;
   resultsEl.innerHTML = '';
-  statusEl.textContent = `Starting validation for ${domain}...`;
+  const recheckLabel = recheckSeverity ? ` (recheck >= ${recheckSeverity})` : '';
+  statusEl.textContent = `Starting validation for ${domain}${recheckLabel}...`;
+
+  const body = { domain };
+  if (recheckSeverity) body.recheckSeverity = recheckSeverity;
 
   try {
     const res = await fetch('/api/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ domain })
+      body: JSON.stringify(body)
     });
     const data = await res.json();
     if (!res.ok) { statusEl.textContent = `Error: ${data.error || res.statusText}`; btn.disabled = false; return; }
@@ -119,7 +135,7 @@ function pollJob(jobId, domain) {
         btn.disabled = false;
         if (data.status === 'completed') {
           statusEl.textContent = `Completed ${domain} in ${fmtDuration(data.report.duration)}`;
-          renderReport(data.report);
+          renderReport(data.report, domain);
         } else {
           statusEl.textContent = `Failed: ${data.error || 'Unknown error'}`;
         }
@@ -143,7 +159,7 @@ function fmtDuration(d) {
 
 let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
 
-function renderReport(report) {
+function renderReport(report, domain) {
   const r = report.results || report.Results || [];
   const counts = { Pass: 0, Info: 0, Warning: 0, Error: 0, Critical: 0 };
   r.forEach(c => counts[c.severity] = (counts[c.severity]||0) + 1);
@@ -202,7 +218,22 @@ function renderReport(report) {
     html += '</div></div>';
   }
 
+  const hasIssues = (counts.Warning || 0) + (counts.Error || 0) + (counts.Critical || 0) > 0;
+  if (hasIssues && domain) {
+    html += '<div style="margin-top:1rem;display:flex;gap:0.5rem;align-items:center">';
+    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck issues:</span>';
+    html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
+    html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
+    html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    html += '</div>';
+  }
+
   resultsEl.innerHTML = html;
+
+  // Recheck buttons
+  resultsEl.querySelectorAll('.recheck-btn').forEach(b => {
+    b.addEventListener('click', () => startValidation(domain, b.dataset.sev));
+  });
 
   // Filter buttons
   resultsEl.querySelectorAll('.sev-filter').forEach(btn => {

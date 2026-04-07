@@ -75,7 +75,12 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, req.Options, cache, logger);
+    CheckSeverity? recheckSeverity = null;
+    if (!string.IsNullOrEmpty(req.RecheckSeverity) &&
+        Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
+        recheckSeverity = parsed;
+
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, req.Options, cache, logger, recheckSeverity);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 });
 
@@ -101,13 +106,17 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 // GET /api/validate/{domain}
 // Synchronous convenience endpoint — runs validation and returns the full report.
 // Times out after 3 minutes.
-app.MapGet("/api/validate/{domain}", async (string domain, DnsResolverService dnsSvc,
-    SmtpProbeService smtpSvc, HttpProbeService httpSvc, CacheManager cache,
-    CancellationToken ct) =>
+app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
+    DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
+    CacheManager cache, CancellationToken ct) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
+
+    if (!string.IsNullOrEmpty(recheck) &&
+        Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
+        cache.ClearForRecheck(domain, recheckSev);
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
 
@@ -152,7 +161,7 @@ app.Run();
 
 // ── Supporting types ─────────────────────────────────────────────────────
 
-record ValidateRequest(string? Domain, ValidationOptions? Options = null);
+record ValidateRequest(string? Domain, ValidationOptions? Options = null, string? RecheckSeverity = null);
 
 enum JobStatus { Running, Completed, Failed }
 
@@ -173,7 +182,7 @@ class ValidationTracker
 
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
-        CacheManager cache, ILogger logger)
+        CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain };
@@ -183,6 +192,13 @@ class ValidationTracker
         {
             try
             {
+                if (recheckSeverity != null)
+                {
+                    var cleared = cache.ClearForRecheck(domain, recheckSeverity.Value);
+                    if (cleared)
+                        logger.LogInformation("Recheck: cleared stale cache for {Domain} (>= {Severity})", domain, recheckSeverity);
+                }
+
                 var validator = new DomainValidator(dns, smtp, http);
                 validator.OnCheckStarted += name => job.CurrentCheck = name;
                 validator.OnCheckCompleted += (_, _) => job.CompletedChecks++;
