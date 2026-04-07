@@ -61,7 +61,7 @@ public class SmtpTlsCertCheck : ICheck
                 }
                 else if (probe.Connected)
                 {
-                    result.Warnings.Add($"{mxHost}: Connected but no TLS certificate obtained");
+                    result.Errors.Add($"{mxHost}: Connected but no TLS certificate obtained — TLS handshake failed");
                 }
                 else
                 {

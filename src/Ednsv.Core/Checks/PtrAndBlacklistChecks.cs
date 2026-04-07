@@ -84,7 +84,7 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                 if (!ptrs.Any())
                 {
-                    result.Warnings.Add($"{ip}: No PTR record");
+                    result.Errors.Add($"{ip}: No PTR record — Gmail requires FCrDNS for all sending IPs");
                     continue;
                 }
 
@@ -103,10 +103,10 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 }
 
                 if (confirmed) passed++;
-                else result.Warnings.Add($"{ip}: PTR {string.Join(",", ptrs)} does not resolve back to {ip}");
+                else result.Errors.Add($"{ip}: PTR {string.Join(",", ptrs)} does not resolve back to {ip}");
             }
 
-            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+            result.Severity = result.Errors.Any() ? CheckSeverity.Error : CheckSeverity.Pass;
             result.Summary = $"FCrDNS: {passed}/{checked_} MX IPs confirmed";
         }
         catch (Exception ex)

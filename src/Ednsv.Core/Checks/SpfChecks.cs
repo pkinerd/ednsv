@@ -39,9 +39,9 @@ public class SpfRecordCheck : ICheck
 
             if (spfRecords.Count == 0)
             {
-                result.Severity = CheckSeverity.Warning;
+                result.Severity = CheckSeverity.Error;
                 result.Summary = "No SPF record found";
-                result.Warnings.Add("No SPF record - any server can claim to send email for this domain");
+                result.Errors.Add("No SPF record — any server can claim to send email for this domain. Gmail, Outlook, and Yahoo may reject or junk mail without SPF");
                 return new List<CheckResult> { result };
             }
 
