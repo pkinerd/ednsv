@@ -436,6 +436,15 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Triggers a non-blocking flush. Returns immediately; the flush runs in the background.
+    /// Safe to call frequently — skips if a flush is already in progress.
+    /// </summary>
+    public void RequestFlush()
+    {
+        _ = FlushInBackground();
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
