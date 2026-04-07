@@ -488,27 +488,33 @@ public class MailSubdomainSurveyCheck : ICheck
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
-        int found = 0;
 
-        foreach (var sub in MailSubdomains)
+        // Query all subdomains in parallel to avoid sequential timeouts
+        var tasks = MailSubdomains.Select(async sub =>
         {
             var fqdn = $"{sub}.{domain}";
 
             // Check CNAME first
             var chain = await ctx.Dns.ResolveCnameChainAsync(fqdn);
             if (chain.Any())
-            {
-                found++;
-                result.Details.Add($"{fqdn}: CNAME -> {chain.Last().Split(" -> ").Last()}");
-                continue;
-            }
+                return (fqdn, detail: $"{fqdn}: CNAME -> {chain.Last().Split(" -> ").Last()}", found: true);
 
             // Check A
             var aRecs = await ctx.Dns.ResolveAAsync(fqdn);
             if (aRecs.Any())
+                return (fqdn, detail: $"{fqdn}: A -> {string.Join(", ", aRecs)}", found: true);
+
+            return (fqdn, detail: (string?)null, found: false);
+        }).ToList();
+
+        var results = await Task.WhenAll(tasks);
+        int found = 0;
+        foreach (var r in results)
+        {
+            if (r.found)
             {
                 found++;
-                result.Details.Add($"{fqdn}: A -> {string.Join(", ", aRecs)}");
+                result.Details.Add(r.detail!);
             }
         }
 
