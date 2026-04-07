@@ -138,6 +138,9 @@ public static class RecheckHelper
         {
             smtp.RemoveImportedProbeEntries(key =>
                 mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase)));
+            smtp.RemoveImportedRelayEntries(key =>
+                key.Contains("|" + domainLower, StringComparison.OrdinalIgnoreCase) ||
+                mxHosts.Any(h => key.Contains(h, StringComparison.OrdinalIgnoreCase)));
         }
 
         // Port probes for MX hosts

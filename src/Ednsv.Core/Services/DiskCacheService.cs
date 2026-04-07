@@ -29,6 +29,7 @@ public class DiskCacheService
     private const string DnsQueriesFile = "dns-queries.json";
     private const string DnsServerQueriesFile = "dns-server-queries.json";
     private const string AxfrResultsFile = "axfr-results.json";
+    private const string RelayTestsFile = "relay-tests.json";
     private const string DomainResultsFile = "domain-results.json";
 
     /// <summary>
@@ -53,6 +54,7 @@ public class DiskCacheService
             MergeSaveAsync(cacheDir, SmtpProbesFile, smtp.ExportProbeCache(), now),
             MergeSaveAsync(cacheDir, PortProbesFile, portEntries, now),
             MergeSaveAsync(cacheDir, RcptProbesFile, smtp.ExportRcptCache(), now),
+            MergeSaveAsync(cacheDir, RelayTestsFile, smtp.ExportRelayCache(), now),
             MergeSaveAsync(cacheDir, HttpGetFile, http.ExportGetCache(), now),
             MergeSaveAsync(cacheDir, HttpGetWithHeadersFile, http.ExportGetWithHeadersCache(), now),
             MergeSaveAsync(cacheDir, UnreachableServersFile, unreachableEntries, now),
@@ -84,6 +86,7 @@ public class DiskCacheService
         var dnsQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsQueriesFile, cutoff);
         var dnsServerQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsServerQueriesFile, cutoff);
         var axfrResults = await LoadFileAsync<AxfrCacheEntry>(cacheDir, AxfrResultsFile, cutoff);
+        var relayTests = await LoadFileAsync<RelayCacheEntry>(cacheDir, RelayTestsFile, cutoff);
 
         if (retryErrors)
         {
@@ -105,6 +108,8 @@ public class DiskCacheService
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             httpGetHeaders = httpGetHeaders?.Where(kvp => kvp.Value.Success)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            relayTests = relayTests?.Where(kvp => !kvp.Value.Description.StartsWith("Error:") && !kvp.Value.Description.StartsWith("Connection timed out"))
+                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             unreachable = null; // let unreachable servers be retried
             dnsQueries = dnsQueries?.Where(kvp => !kvp.Value.HasError)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
@@ -122,6 +127,7 @@ public class DiskCacheService
         if (ptr?.Count > 0) dns.ImportPtrCache(ptr.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Names));
         if (dnsQueries?.Count > 0) dns.ImportQueryCache(dnsQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
         if (dnsServerQueries?.Count > 0) dns.ImportServerQueryCache(dnsServerQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
+        if (relayTests?.Count > 0) smtp.ImportRelayCache(relayTests.ToDictionary(kvp => kvp.Key, kvp => (RelayCacheEntry)kvp.Value));
         if (axfrResults?.Count > 0) dns.ImportAxfrCache(axfrResults.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vulnerable));
 
         var result = new CacheLoadResult
@@ -363,6 +369,13 @@ public class AxfrCacheEntry : ICacheEntry
 {
     public DateTime CachedAtUtc { get; set; }
     public bool Vulnerable { get; set; }
+}
+
+public class RelayCacheEntry : ICacheEntry
+{
+    public DateTime CachedAtUtc { get; set; }
+    public bool IsRelay { get; set; }
+    public string Description { get; set; } = "";
 }
 
 public class PtrCacheEntry : ICacheEntry

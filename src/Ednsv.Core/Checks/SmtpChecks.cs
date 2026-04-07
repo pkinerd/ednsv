@@ -839,10 +839,8 @@ public class OpenRelayCheck : ICheck
             var relayDetected = false;
             foreach (var mxHost in ctx.MxHosts)
             {
-                // Test relay: use an external sender and external recipient
-                // If the server accepts RCPT TO for an address outside its domain
-                // when MAIL FROM is also outside its domain, it's an open relay
-                var relayResult = await TestRelayAsync(mxHost, domain);
+                // Test relay through the cached SMTP service
+                var relayResult = await ctx.Smtp.TestRelayAsync(mxHost, domain);
                 result.Details.Add($"{mxHost}: {relayResult.description}");
 
                 if (relayResult.isRelay)
@@ -874,101 +872,6 @@ public class OpenRelayCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private async Task<(bool isRelay, string description)> TestRelayAsync(string mxHost, string domain)
-    {
-        TcpClient? client = null;
-        try
-        {
-            client = new TcpClient();
-            var timeout = TimeSpan.FromSeconds(10);
-            var connectTask = client.ConnectAsync(mxHost, 25);
-            if (await Task.WhenAny(connectTask, Task.Delay(timeout)) != connectTask)
-                return (false, "Connection timed out");
-            await connectTask;
-
-            var stream = client.GetStream();
-            stream.ReadTimeout = 10000;
-            stream.WriteTimeout = 10000;
-
-            await ReadSmtpLineAsync(stream); // banner
-            await WriteSmtpLineAsync(stream, "EHLO ednsv-relay-test.invalid");
-            await ReadSmtpMultiLineAsync(stream);
-
-            // Use a clearly non-existent external sender and recipient
-            // to test if the server will relay mail it has no business handling
-            await WriteSmtpLineAsync(stream, "MAIL FROM:<relay-test@ednsv-probe.invalid>");
-            var mailResp = await ReadSmtpLineAsync(stream);
-            if (!mailResp.StartsWith("250"))
-            {
-                await WriteSmtpLineAsync(stream, "QUIT");
-                return (false, $"MAIL FROM rejected ({mailResp.Substring(0, Math.Min(50, mailResp.Length))}) — not an open relay");
-            }
-
-            // Try to relay to an external domain (not the target domain)
-            await WriteSmtpLineAsync(stream, "RCPT TO:<relay-test@ednsv-probe.invalid>");
-            var rcptResp = await ReadSmtpLineAsync(stream);
-
-            await WriteSmtpLineAsync(stream, "QUIT");
-
-            if (rcptResp.StartsWith("250") || rcptResp.StartsWith("251"))
-                return (true, $"RCPT TO for external address ACCEPTED ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))})");
-
-            return (false, $"RCPT TO for external address rejected ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))}) — not an open relay");
-        }
-        catch (Exception ex)
-        {
-            return (false, $"Error: {ex.Message}");
-        }
-        finally
-        {
-            client?.Dispose();
-        }
-    }
-
-    private static async Task<string> ReadSmtpLineAsync(NetworkStream stream)
-    {
-        var buffer = new byte[4096];
-        var sb = new StringBuilder();
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var read = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token);
-            if (read > 0) sb.Append(Encoding.ASCII.GetString(buffer, 0, read));
-        }
-        catch { }
-        return sb.ToString().TrimEnd('\r', '\n');
-    }
-
-    private static async Task<List<string>> ReadSmtpMultiLineAsync(NetworkStream stream)
-    {
-        var lines = new List<string>();
-        var buffer = new byte[8192];
-        var sb = new StringBuilder();
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (true)
-            {
-                var read = await stream.ReadAsync(buffer, 0, buffer.Length, cts.Token);
-                if (read == 0) break;
-                sb.Append(Encoding.ASCII.GetString(buffer, 0, read));
-                var allLines = sb.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-                if (allLines.Any(l => l.TrimEnd('\r').Length >= 4 && l[3] == ' '))
-                    break;
-            }
-        }
-        catch { }
-        foreach (var line in sb.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            lines.Add(line.TrimEnd('\r'));
-        return lines;
-    }
-
-    private static async Task WriteSmtpLineAsync(NetworkStream stream, string line)
-    {
-        var data = Encoding.ASCII.GetBytes(line + "\r\n");
-        await stream.WriteAsync(data, 0, data.Length);
-        await stream.FlushAsync();
-    }
 }
 
 public class CatchAllDetectionCheck : ICheck

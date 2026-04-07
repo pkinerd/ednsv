@@ -37,11 +37,13 @@ public class SmtpProbeService
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
+    private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
 
     // Track keys loaded from disk cache
     private readonly ConcurrentDictionary<string, bool> _importedProbeKeys = new();
     private readonly ConcurrentDictionary<string, bool> _importedPortKeys = new();
     private readonly ConcurrentDictionary<string, bool> _importedRcptKeys = new();
+    private readonly ConcurrentDictionary<string, bool> _importedRelayKeys = new();
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
@@ -342,6 +344,66 @@ public class SmtpProbeService
         await stream.FlushAsync();
     }
 
+    public async Task<(bool isRelay, string description)> TestRelayAsync(string mxHost, string domain)
+    {
+        var cacheKey = $"relay:{mxHost.ToLowerInvariant()}|{domain.ToLowerInvariant()}";
+        if (_relayCache.TryGetValue(cacheKey, out var cached))
+            return cached;
+
+        var result = await PerformRelayTestAsync(mxHost, domain);
+        _relayCache.TryAdd(cacheKey, result);
+        return result;
+    }
+
+    private async Task<(bool isRelay, string description)> PerformRelayTestAsync(string mxHost, string domain)
+    {
+        TcpClient? client = null;
+        try
+        {
+            client = new TcpClient();
+            var connectTask = client.ConnectAsync(mxHost, 25);
+            if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
+                return (false, "Connection timed out");
+            await connectTask;
+
+            var stream = client.GetStream();
+            stream.ReadTimeout = (int)_timeout.TotalMilliseconds;
+            stream.WriteTimeout = (int)_timeout.TotalMilliseconds;
+
+            await ReadLineAsync(stream); // banner
+            await WriteLineAsync(stream, "EHLO ednsv-relay-test.invalid");
+            await ReadMultiLineAsync(stream);
+
+            // Use a clearly non-existent external sender and recipient
+            await WriteLineAsync(stream, "MAIL FROM:<relay-test@ednsv-probe.invalid>");
+            var mailResp = await ReadLineAsync(stream);
+            if (!mailResp.StartsWith("250"))
+            {
+                await WriteLineAsync(stream, "QUIT");
+                return (false, $"MAIL FROM rejected ({mailResp.Substring(0, Math.Min(50, mailResp.Length))}) — not an open relay");
+            }
+
+            // Try to relay to an external domain (not the target domain)
+            await WriteLineAsync(stream, "RCPT TO:<relay-test@ednsv-probe.invalid>");
+            var rcptResp = await ReadLineAsync(stream);
+
+            await WriteLineAsync(stream, "QUIT");
+
+            if (rcptResp.StartsWith("250") || rcptResp.StartsWith("251"))
+                return (true, $"RCPT TO for external address ACCEPTED ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))})");
+
+            return (false, $"RCPT TO for external address rejected ({rcptResp.Substring(0, Math.Min(50, rcptResp.Length))}) — not an open relay");
+        }
+        catch (Exception ex)
+        {
+            return (false, $"Error: {ex.Message}");
+        }
+        finally
+        {
+            client?.Dispose();
+        }
+    }
+
     // ── Cache export/import for disk persistence ─────────────────────────
 
     public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
@@ -463,5 +525,34 @@ public class SmtpProbeService
     {
         foreach (var key in _importedRcptKeys.Keys)
             if (predicate(key)) { _rcptCache.TryRemove(key, out _); _importedRcptKeys.TryRemove(key, out _); }
+    }
+
+    public Dictionary<string, RelayCacheEntry> ExportRelayCache()
+    {
+        var result = new Dictionary<string, RelayCacheEntry>();
+        foreach (var kvp in _relayCache)
+        {
+            result[kvp.Key] = new RelayCacheEntry
+            {
+                IsRelay = kvp.Value.isRelay,
+                Description = kvp.Value.description
+            };
+        }
+        return result;
+    }
+
+    public void ImportRelayCache(Dictionary<string, RelayCacheEntry> entries)
+    {
+        foreach (var kvp in entries)
+        {
+            _relayCache.TryAdd(kvp.Key, (kvp.Value.IsRelay, kvp.Value.Description));
+            _importedRelayKeys.TryAdd(kvp.Key, true);
+        }
+    }
+
+    public void RemoveImportedRelayEntries(Func<string, bool> predicate)
+    {
+        foreach (var key in _importedRelayKeys.Keys)
+            if (predicate(key)) { _relayCache.TryRemove(key, out _); _importedRelayKeys.TryRemove(key, out _); }
     }
 }
