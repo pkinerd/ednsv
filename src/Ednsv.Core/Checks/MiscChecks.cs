@@ -170,7 +170,7 @@ public class WildcardDnsCheck : ICheck
 
         try
         {
-            var randomSub = $"ednsv-wildcard-test-{Guid.NewGuid():N}.{domain}";
+            var randomSub = $"ednsv-wildcard-probe.{domain}";
 
             var aResp = await ctx.Dns.ResolveAAsync(randomSub);
             var mxResp = await ctx.Dns.GetMxRecordsAsync(randomSub);
