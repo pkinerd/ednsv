@@ -22,6 +22,7 @@ public class DnsResolverService
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
+    private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
     // Track keys loaded from disk cache (vs. generated during this run)
     private readonly ConcurrentDictionary<(string domain, QueryType type), bool> _importedQueryKeys = new();
@@ -299,16 +300,8 @@ public class DnsResolverService
         if (_axfrCache.TryGetValue(key, out var cached))
             return cached;
 
-        bool vulnerable;
-        try
-        {
-            var result = await PerformZoneTransferAsync(nsIp, domain);
-            vulnerable = result.Answers.Count > 0;
-        }
-        catch
-        {
-            vulnerable = false;
-        }
+        var response = await CachedAxfrAsync(nsIp, domain);
+        var vulnerable = response.Answers.Count > 0;
         _axfrCache.TryAdd(key, vulnerable);
         return vulnerable;
     }
@@ -319,11 +312,17 @@ public class DnsResolverService
     public async Task<List<string>> ExtractDkimSelectorsFromAxfrAsync(IPAddress nsIp, string domain)
     {
         var selectors = new List<string>();
+
+        // If we already know AXFR was denied from disk cache, skip the TCP attempt
+        var boolKey = (nsIp.ToString(), domain.ToLowerInvariant());
+        if (_axfrCache.TryGetValue(boolKey, out var wasDenied) && !wasDenied)
+            return selectors;
+
         try
         {
-            var result = await PerformZoneTransferAsync(nsIp, domain);
+            var response = await CachedAxfrAsync(nsIp, domain);
             var domainkeySuffix = $"._domainkey.{domain}".ToLowerInvariant();
-            foreach (var record in result.Answers)
+            foreach (var record in response.Answers)
             {
                 var name = record.DomainName.Value.TrimEnd('.').ToLowerInvariant();
                 if (name.EndsWith(domainkeySuffix))
@@ -337,6 +336,25 @@ public class DnsResolverService
         }
         catch { }
         return selectors.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private async Task<IDnsQueryResponse> CachedAxfrAsync(IPAddress nsIp, string domain)
+    {
+        var key = (nsIp.ToString(), domain.ToLowerInvariant());
+        if (_axfrResponseCache.TryGetValue(key, out var cached))
+            return cached;
+
+        try
+        {
+            var result = await PerformZoneTransferAsync(nsIp, domain);
+            _axfrResponseCache.TryAdd(key, result);
+            return result;
+        }
+        catch
+        {
+            _axfrResponseCache.TryAdd(key, EmptyResponse.Instance);
+            return EmptyResponse.Instance;
+        }
     }
 
     private async Task<IDnsQueryResponse> PerformZoneTransferAsync(IPAddress nsIp, string domain)
