@@ -27,7 +27,7 @@ public class SmtpTlsCertCheck : ICheck
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                if (probe.Certificate != null)
+                if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}:");
                     result.Details.Add($"  Subject: {probe.CertSubject}");
@@ -104,7 +104,7 @@ public class DaneTlsaCertMatchCheck : ICheck
 
                 anyTlsa = true;
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                if (probe.Certificate != null)
+                if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}: TLSA records found, certificate available");
 
@@ -152,10 +152,13 @@ public class DaneTlsaCertMatchCheck : ICheck
 
                         // Compute digest from cert and compare
                         byte[]? dataToHash = null;
-                        if ((int)tlsa.Selector == 0) // Full certificate
-                            dataToHash = probe.Certificate.RawData;
-                        else if ((int)tlsa.Selector == 1) // SubjectPublicKeyInfo
-                            dataToHash = probe.Certificate.PublicKey.ExportSubjectPublicKeyInfo();
+                        if (probe.Certificate != null)
+                        {
+                            if ((int)tlsa.Selector == 0) // Full certificate
+                                dataToHash = probe.Certificate.RawData;
+                            else if ((int)tlsa.Selector == 1) // SubjectPublicKeyInfo
+                                dataToHash = probe.Certificate.PublicKey.ExportSubjectPublicKeyInfo();
+                        }
 
                         if (dataToHash != null)
                         {
