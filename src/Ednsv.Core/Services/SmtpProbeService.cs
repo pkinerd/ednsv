@@ -359,6 +359,7 @@ public class SmtpProbeService
                 CertIssuer = kvp.Value.CertIssuer,
                 CertExpiry = kvp.Value.CertExpiry,
                 CertSans = kvp.Value.CertSans,
+                CertRawBase64 = kvp.Value.Certificate != null ? Convert.ToBase64String(kvp.Value.Certificate.RawData) : null,
                 TlsProtocol = kvp.Value.TlsProtocol.ToString(),
                 TlsCipherSuite = kvp.Value.TlsCipherSuite,
                 SmtpMaxSize = kvp.Value.SmtpMaxSize,
@@ -378,12 +379,19 @@ public class SmtpProbeService
         foreach (var kvp in entries)
         {
             Enum.TryParse<System.Security.Authentication.SslProtocols>(kvp.Value.TlsProtocol, out var proto);
+            X509Certificate2? cert = null;
+            if (kvp.Value.CertRawBase64 != null)
+            {
+                try { cert = new X509Certificate2(Convert.FromBase64String(kvp.Value.CertRawBase64)); }
+                catch { /* ignore corrupt cached cert data */ }
+            }
             _probeCache.TryAdd(kvp.Key, new SmtpProbeResult
             {
                 Connected = kvp.Value.Connected,
                 Banner = kvp.Value.Banner,
                 SupportsStartTls = kvp.Value.SupportsStartTls,
                 EhloCapabilities = kvp.Value.EhloCapabilities,
+                Certificate = cert,
                 CertSubject = kvp.Value.CertSubject,
                 CertIssuer = kvp.Value.CertIssuer,
                 CertExpiry = kvp.Value.CertExpiry,

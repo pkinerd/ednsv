@@ -303,6 +303,7 @@ public class SmtpProbeCacheEntry : ICacheEntry
     public string? CertIssuer { get; set; }
     public DateTime? CertExpiry { get; set; }
     public List<string>? CertSans { get; set; }
+    public string? CertRawBase64 { get; set; }
     public string? TlsProtocol { get; set; }
     public string? TlsCipherSuite { get; set; }
     public int? SmtpMaxSize { get; set; }
