@@ -21,6 +21,7 @@ public class DnsResolverService
     // Tracks servers that are completely unreachable (network/timeout failures).
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
+    private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
 
     // Track keys loaded from disk cache (vs. generated during this run)
     private readonly ConcurrentDictionary<(string domain, QueryType type), bool> _importedQueryKeys = new();
@@ -294,15 +295,22 @@ public class DnsResolverService
 
     public async Task<bool> TestZoneTransferAsync(IPAddress nsIp, string domain)
     {
+        var key = (nsIp.ToString(), domain.ToLowerInvariant());
+        if (_axfrCache.TryGetValue(key, out var cached))
+            return cached;
+
+        bool vulnerable;
         try
         {
             var result = await PerformZoneTransferAsync(nsIp, domain);
-            return result.Answers.Count > 0;
+            vulnerable = result.Answers.Count > 0;
         }
         catch
         {
-            return false;
+            vulnerable = false;
         }
+        _axfrCache.TryAdd(key, vulnerable);
+        return vulnerable;
     }
 
     /// <summary>
