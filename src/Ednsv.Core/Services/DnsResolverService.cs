@@ -42,46 +42,56 @@ public class DnsResolverService
 
     /// <summary>
     /// Creates a resolver using the specified DNS server(s).
-    /// Pass null or empty to use Google Public DNS (default).
+    /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
     public DnsResolverService(IReadOnlyList<IPAddress>? nameservers) : this(nameservers, tokensPerSecond: 25, maxConcurrency: 40) { }
+
+    /// <summary>
+    /// Creates a resolver that uses the OS-configured DNS resolvers.
+    /// </summary>
+    public static DnsResolverService CreateWithSystemResolvers(int tokensPerSecond = 25, int maxConcurrency = 40)
+        => new(useSystemResolvers: true, nameservers: null, tokensPerSecond, maxConcurrency);
 
     /// <summary>
     /// Creates a resolver with custom rate limiting parameters.
     /// </summary>
     public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency)
-    {
-        var endpoints = nameservers?.Count > 0
-            ? nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray()
-            : new[] { NameServer.GooglePublicDns, NameServer.GooglePublicDns2 };
+        : this(useSystemResolvers: false, nameservers, tokensPerSecond, maxConcurrency) { }
 
-        var options = new LookupClientOptions(endpoints)
-        {
-            UseCache = true,
-            Timeout = TimeSpan.FromSeconds(15),
-            Retries = 2,
-            ThrowDnsErrors = false
-        };
+    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency)
+    {
+        IPEndPoint[]? endpoints = null;
+        if (nameservers?.Count > 0)
+            endpoints = nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray();
+        else if (!useSystemResolvers)
+            endpoints = new[] { NameServer.GooglePublicDns, NameServer.GooglePublicDns2 };
+        // else endpoints stays null → LookupClientOptions() uses OS resolvers
+
+        var options = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        options.UseCache = true;
+        options.Timeout = TimeSpan.FromSeconds(15);
+        options.Retries = 2;
+        options.ThrowDnsErrors = false;
         _client = new LookupClient(options);
 
         // DNSBL client — short timeout (3s), 1 retry (2 attempts total).
         // DNSBL failures are best-effort and don't produce error reports.
-        var dnsblOptions = new LookupClientOptions(endpoints)
-        {
-            UseCache = true,
-            Timeout = TimeSpan.FromSeconds(3),
-            Retries = 1,
-            ThrowDnsErrors = false
-        };
+        var dnsblOptions = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        dnsblOptions.UseCache = true;
+        dnsblOptions.Timeout = TimeSpan.FromSeconds(3);
+        dnsblOptions.Retries = 1;
+        dnsblOptions.ThrowDnsErrors = false;
         _dnsblClient = new LookupClient(dnsblOptions);
 
-        var directOptions = new LookupClientOptions
-        {
-            UseCache = false,
-            Timeout = TimeSpan.FromSeconds(15),
-            Retries = 2,
-            ThrowDnsErrors = false
-        };
+        var directOptions = new LookupClientOptions();
+        directOptions.UseCache = false;
+        directOptions.Timeout = TimeSpan.FromSeconds(15);
+        directOptions.Retries = 2;
+        directOptions.ThrowDnsErrors = false;
         _directClient = new LookupClient(directOptions);
 
         // Rate limiting

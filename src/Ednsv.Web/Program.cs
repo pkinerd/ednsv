@@ -17,15 +17,20 @@ var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
-var dnsServers = new List<IPAddress>();
+// Use OS-configured resolvers by default; override with DnsServer env var.
+DnsResolverService dns;
 if (!string.IsNullOrEmpty(dnsServerStr))
 {
+    var dnsServers = new List<IPAddress>();
     foreach (var s in dnsServerStr.Split(',', StringSplitOptions.RemoveEmptyEntries))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
+    dns = dnsServers.Count > 0 ? new DnsResolverService(dnsServers) : DnsResolverService.CreateWithSystemResolvers();
 }
-
-var dns = dnsServers.Count > 0 ? new DnsResolverService(dnsServers) : new DnsResolverService();
+else
+{
+    dns = DnsResolverService.CreateWithSystemResolvers();
+}
 var smtp = new SmtpProbeService();
 var http = new HttpProbeService();
 
