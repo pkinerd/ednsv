@@ -140,8 +140,11 @@ public class DnsResolverService
     // Cache hit/miss counters for diagnostics (reset per domain)
     private int _cacheHits;
     private int _cacheMisses;
+    private int _responsesReceived;
     public int CacheHits => _cacheHits;
     public int CacheMisses => _cacheMisses;
+    /// <summary>Number of network DNS queries that have completed (success or error).</summary>
+    public int ResponsesReceived => _responsesReceived;
     public int CacheSize => _queryCache.Count;
 
     /// <summary>
@@ -152,6 +155,7 @@ public class DnsResolverService
         QueryErrors = new ConcurrentBag<string>();
         Interlocked.Exchange(ref _cacheHits, 0);
         Interlocked.Exchange(ref _cacheMisses, 0);
+        Interlocked.Exchange(ref _responsesReceived, 0);
     }
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
@@ -167,30 +171,35 @@ public class DnsResolverService
         try
         {
             var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type));
+            Interlocked.Increment(ref _responsesReceived);
             // Always cache — errors are filtered out by --retry-errors on load
             _queryCache.TryAdd(key, result);
             return result;
         }
         catch (DnsResponseException ex)
         {
+            Interlocked.Increment(ref _responsesReceived);
             QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
             CacheFailureIfExhausted(key);
             return EmptyResponse.Instance;
         }
         catch (OperationCanceledException)
         {
+            Interlocked.Increment(ref _responsesReceived);
             QueryErrors.Add($"DNS timeout querying {type} for {domain}");
             CacheFailureIfExhausted(key);
             return EmptyResponse.Instance;
         }
         catch (SocketException ex)
         {
+            Interlocked.Increment(ref _responsesReceived);
             QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
             CacheFailureIfExhausted(key);
             return EmptyResponse.Instance;
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref _responsesReceived);
             QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
             CacheFailureIfExhausted(key);
             return EmptyResponse.Instance;
@@ -216,11 +225,13 @@ public class DnsResolverService
         try
         {
             var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type));
+            Interlocked.Increment(ref _responsesReceived);
             _queryCache.TryAdd(key, result);
             return result;
         }
         catch
         {
+            Interlocked.Increment(ref _responsesReceived);
             _queryCache.TryAdd(key, EmptyResponse.Instance);
             return EmptyResponse.Instance;
         }
@@ -257,6 +268,7 @@ public class DnsResolverService
             };
             var client = new LookupClient(opts);
             var result = await RateLimitedAsync(() => client.QueryAsync(domain, type));
+            Interlocked.Increment(ref _responsesReceived);
             _serverQueryCache.TryAdd(key, result);
             if (!result.HasError)
             {
@@ -267,6 +279,7 @@ public class DnsResolverService
         }
         catch (Exception ex)
         {
+            Interlocked.Increment(ref _responsesReceived);
             QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
             _serverQueryCache.TryAdd(key, EmptyResponse.Instance);
             // Track server-level unreachability
@@ -296,12 +309,14 @@ public class DnsResolverService
         {
             var parsedIp = IPAddress.Parse(ip);
             var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp));
+            Interlocked.Increment(ref _responsesReceived);
             var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             _ptrCache.TryAdd(ip, ptrs);
             return ptrs;
         }
         catch
         {
+            Interlocked.Increment(ref _responsesReceived);
             _ptrCache.TryAdd(ip, new List<string>());
             return new List<string>();
         }

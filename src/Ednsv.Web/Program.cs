@@ -129,8 +129,8 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         {
             queries = job.Dns.CacheHits + job.Dns.CacheMisses,
             cacheHits = job.Dns.CacheHits,
-            cacheMisses = job.Dns.CacheMisses,
-            cacheSize = job.Dns.CacheSize,
+            sent = job.Dns.CacheMisses,
+            received = job.Dns.ResponsesReceived,
             errors = job.Dns.QueryErrors.Count
         } : null,
         smtp = job.Smtp != null ? new

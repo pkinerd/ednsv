@@ -133,7 +133,10 @@ function pollJob(jobId, domain) {
         const parts = [];
         if (d) {
           if (d.queries) parts.push(`${d.queries} DNS`);
-          if (d.cacheMisses) parts.push(`${d.cacheMisses} sent`);
+          if (d.sent) {
+            const inflight = d.sent - d.received;
+            parts.push(`${d.received}/${d.sent} responded` + (inflight > 0 ? ` (${inflight} pending)` : ''));
+          }
           if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
           if (d.errors) parts.push(`${d.errors} err`);
         }
