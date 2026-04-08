@@ -152,10 +152,24 @@ function pollJob(jobId, domain) {
         } else {
           line1 = `Prefetching DNS &amp; SMTP for ${esc(domain)}...`;
         }
+
+        // Live severity counts
+        const r = data.results;
+        let sevLine = '';
+        if (r && data.completedChecks > 0) {
+          const sevParts = [];
+          if (r.critical) sevParts.push(`<span class="sev-Critical">${r.critical} critical</span>`);
+          if (r.error) sevParts.push(`<span class="sev-Error">${r.error} error</span>`);
+          if (r.warning) sevParts.push(`<span class="sev-Warning">${r.warning} warn</span>`);
+          if (r.pass) sevParts.push(`<span class="sev-Pass">${r.pass} pass</span>`);
+          if (r.info) sevParts.push(`<span class="sev-Info">${r.info} info</span>`);
+          if (sevParts.length) sevLine = `<br><span style="font-size:0.82rem">${sevParts.join(' &nbsp; ')}</span>`;
+        }
+
         const line2 = elapsed || stats
           ? `<br><span style="color:var(--muted);font-size:0.78rem">${[elapsed, stats].filter(Boolean).join(' — ')}</span>`
           : '';
-        statusEl.innerHTML = line1 + line2;
+        statusEl.innerHTML = line1 + sevLine + line2;
       } else {
         clearInterval(pollTimer);
         pollTimer = null;

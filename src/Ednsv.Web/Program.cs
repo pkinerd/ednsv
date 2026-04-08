@@ -117,6 +117,14 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         status = job.Status.ToString().ToLowerInvariant(),
         currentCheck = job.CurrentCheck,
         completedChecks = job.CompletedChecks,
+        results = new
+        {
+            pass = job.PassCount,
+            info = job.InfoCount,
+            warning = job.WarningCount,
+            error = job.ErrorCount,
+            critical = job.CriticalCount
+        },
         dns = job.Dns != null ? new
         {
             queries = job.Dns.CacheHits + job.Dns.CacheMisses,
@@ -203,13 +211,19 @@ class ValidationJob
     public string Domain { get; set; } = "";
     public JobStatus Status { get; set; } = JobStatus.Running;
     public string? CurrentCheck { get; set; }
-    public int CompletedChecks { get; set; }
+    public int CompletedChecks;
     public ValidationReport? Report { get; set; }
     public string? Error { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     // Live stats from services during validation
     public DnsResolverService? Dns { get; set; }
     public SmtpProbeService? Smtp { get; set; }
+    // Live severity counts — updated as each check result arrives
+    public int PassCount;
+    public int InfoCount;
+    public int WarningCount;
+    public int ErrorCount;
+    public int CriticalCount;
 }
 
 class ValidationTracker
@@ -237,7 +251,18 @@ class ValidationTracker
 
                 var validator = new DomainValidator(dns, smtp, http);
                 validator.OnCheckStarted += name => job.CurrentCheck = name;
-                validator.OnCheckCompleted += (_, _) => job.CompletedChecks++;
+                validator.OnCheckCompleted += (_, result) =>
+                {
+                    Interlocked.Increment(ref job.CompletedChecks);
+                    switch (result.Severity)
+                    {
+                        case CheckSeverity.Pass: Interlocked.Increment(ref job.PassCount); break;
+                        case CheckSeverity.Info: Interlocked.Increment(ref job.InfoCount); break;
+                        case CheckSeverity.Warning: Interlocked.Increment(ref job.WarningCount); break;
+                        case CheckSeverity.Error: Interlocked.Increment(ref job.ErrorCount); break;
+                        case CheckSeverity.Critical: Interlocked.Increment(ref job.CriticalCount); break;
+                    }
+                };
 
                 var report = await validator.ValidateAsync(domain, options);
                 job.Report = report;
