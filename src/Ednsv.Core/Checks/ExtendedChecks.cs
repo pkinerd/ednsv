@@ -26,6 +26,7 @@ public class SmtpSizeCheck : ICheck
             return new List<CheckResult> { result };
         }
 
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
@@ -43,12 +44,14 @@ public class SmtpSizeCheck : ICheck
             }
             else
             {
+                unreachable++;
                 result.Details.Add($"{mxHost}: Could not connect");
             }
         }
 
         result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Info;
         result.Summary = "SMTP SIZE extension check completed";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         return new List<CheckResult> { result };
     }
 
@@ -359,6 +362,7 @@ public class SmtpRequireTlsCheck : ICheck
         }
 
         int supported = 0;
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
@@ -374,6 +378,7 @@ public class SmtpRequireTlsCheck : ICheck
             }
             else
             {
+                unreachable++;
                 result.Details.Add($"{mxHost}: Could not connect");
             }
         }
@@ -382,6 +387,7 @@ public class SmtpRequireTlsCheck : ICheck
         result.Summary = supported > 0 ?
             $"REQUIRETLS supported by {supported}/{ctx.MxHosts.Count} MX host(s) — verify DANE/MTA-STS prerequisites" :
             "REQUIRETLS not supported (optional RFC 8689 extension)";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
 
         return new List<CheckResult> { result };
     }

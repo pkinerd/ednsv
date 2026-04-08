@@ -97,11 +97,13 @@ public class SmtpTlsVersionCheck : ICheck
         }
 
         bool anyDeprecated = false;
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
             if (!probe.Connected || !probe.SupportsStartTls)
             {
+                if (!probe.Connected) unreachable++;
                 result.Details.Add($"{mxHost}: {(probe.Connected ? "No STARTTLS" : "Could not connect")}");
                 continue;
             }
@@ -126,6 +128,7 @@ public class SmtpTlsVersionCheck : ICheck
 
         result.Severity = anyDeprecated ? CheckSeverity.Warning : CheckSeverity.Pass;
         result.Summary = anyDeprecated ? "Deprecated TLS version(s) detected" : "TLS versions acceptable";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         return new List<CheckResult> { result };
     }
 

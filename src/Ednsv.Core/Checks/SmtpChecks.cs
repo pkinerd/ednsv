@@ -24,6 +24,7 @@ public class SmtpTlsCertCheck : ICheck
                 return new List<CheckResult> { result };
             }
 
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -65,6 +66,7 @@ public class SmtpTlsCertCheck : ICheck
                 }
                 else
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect ({probe.Error ?? "unknown error"})");
                 }
             }
@@ -72,6 +74,7 @@ public class SmtpTlsCertCheck : ICheck
             result.Severity = result.Errors.Any() ? CheckSeverity.Error :
                              result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
             result.Summary = $"Checked TLS certificates for {ctx.MxHosts.Count} MX host(s)";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
@@ -222,6 +225,7 @@ public class SmtpBannerCheck : ICheck
 
         try
         {
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -258,12 +262,14 @@ public class SmtpBannerCheck : ICheck
                 }
                 else
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect");
                 }
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
             result.Summary = $"Checked SMTP banners for {ctx.MxHosts.Count} MX host(s)";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
@@ -414,6 +420,7 @@ public class SmtpTransactionTimingCheck : ICheck
             }
 
             bool anySlow = false;
+            int unreachable = 0;
 
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -428,6 +435,7 @@ public class SmtpTransactionTimingCheck : ICheck
 
                 if (!probe.Connected)
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect ({probe.Error ?? "timeout"})");
                     continue;
                 }
@@ -484,6 +492,7 @@ public class SmtpTransactionTimingCheck : ICheck
             }
 
             result.Severity = anySlow ? CheckSeverity.Warning : CheckSeverity.Pass;
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
             result.Summary = anySlow
                 ? "Slow SMTP response times detected"
                 : $"SMTP timing acceptable for {ctx.MxHosts.Count} MX host(s)";
@@ -510,6 +519,7 @@ public class EhloCapabilitiesCheck : ICheck
 
         try
         {
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -542,12 +552,14 @@ public class EhloCapabilitiesCheck : ICheck
                 }
                 else
                 {
+                    if (!probe.Connected) unreachable++;
                     result.Details.Add($"{mxHost}: Could not retrieve EHLO capabilities");
                 }
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Info : CheckSeverity.Pass;
             result.Summary = "EHLO capabilities retrieved";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
