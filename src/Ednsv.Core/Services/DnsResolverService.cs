@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using DnsClient;
@@ -21,6 +22,12 @@ public class DnsResolverService
     private readonly Timer _refillTimer;
     private readonly int _tokensPerSecond;
     private readonly int _maxTokens;
+
+    /// <summary>
+    /// Optional trace callback for detailed timing diagnostics.
+    /// Set to a non-null action to enable trace output.
+    /// </summary>
+    public Action<string>? Trace { get; set; }
 
     // Application-level cache for DNS queries (survives across domains)
     private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
@@ -117,13 +124,26 @@ public class DnsResolverService
     /// The token bucket limits sustained QPS; the concurrency cap prevents runaway
     /// in-flight queries when the resolver is slow.
     /// </summary>
-    private async Task<T> RateLimitedAsync<T>(Func<Task<T>> query)
+    private async Task<T> RateLimitedAsync<T>(Func<Task<T>> query, string? traceLabel = null)
     {
+        Stopwatch? sw = null;
+        if (Trace != null) { sw = Stopwatch.StartNew(); }
         await _rateLimiter.WaitAsync();
+        var rateLimitMs = sw?.ElapsedMilliseconds ?? 0;
         await _concurrencyLimiter.WaitAsync();
+        var concurrencyMs = sw?.ElapsedMilliseconds ?? 0;
         try
         {
-            return await query();
+            var result = await query();
+            if (Trace != null && sw != null)
+                Trace($"[DNS] {traceLabel ?? "query"}: {sw.ElapsedMilliseconds}ms (rate-wait:{rateLimitMs}ms concurrency-wait:{concurrencyMs - rateLimitMs}ms network:{sw.ElapsedMilliseconds - concurrencyMs}ms)");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            if (Trace != null && sw != null)
+                Trace($"[DNS] {traceLabel ?? "query"} FAILED: {sw.ElapsedMilliseconds}ms ({ex.GetType().Name}: {ex.Message})");
+            throw;
         }
         finally
         {
@@ -164,13 +184,14 @@ public class DnsResolverService
         if (_queryCache.TryGetValue(key, out var cached))
         {
             Interlocked.Increment(ref _cacheHits);
+            Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
             return cached;
         }
 
         Interlocked.Increment(ref _cacheMisses);
         try
         {
-            var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type));
+            var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type), $"{type} {domain}");
             Interlocked.Increment(ref _responsesReceived);
             // Always cache — errors are filtered out by --retry-errors on load
             _queryCache.TryAdd(key, result);
@@ -224,7 +245,7 @@ public class DnsResolverService
         Interlocked.Increment(ref _cacheMisses);
         try
         {
-            var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type));
+            var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type), $"DNSBL {query}");
             Interlocked.Increment(ref _responsesReceived);
             _queryCache.TryAdd(key, result);
             return result;
@@ -267,7 +288,7 @@ public class DnsResolverService
                 ThrowDnsErrors = false
             };
             var client = new LookupClient(opts);
-            var result = await RateLimitedAsync(() => client.QueryAsync(domain, type));
+            var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
             Interlocked.Increment(ref _responsesReceived);
             _serverQueryCache.TryAdd(key, result);
             if (!result.HasError)
@@ -308,7 +329,7 @@ public class DnsResolverService
         try
         {
             var parsedIp = IPAddress.Parse(ip);
-            var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp));
+            var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
             Interlocked.Increment(ref _responsesReceived);
             var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             _ptrCache.TryAdd(ip, ptrs);
@@ -445,7 +466,7 @@ public class DnsResolverService
             ThrowDnsErrors = false
         };
         var client = new LookupClient(opts);
-        return await RateLimitedAsync(() => client.QueryAsync(domain, QueryType.AXFR));
+        return await RateLimitedAsync(() => client.QueryAsync(domain, QueryType.AXFR), $"AXFR {nsIp} {domain}");
     }
 
     /// <summary>

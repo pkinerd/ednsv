@@ -44,6 +44,7 @@ var retryErrorsOption = new Option<bool>("--retry-errors", "When using --cache, 
 var recheckOption = new Option<string?>("--recheck", "Revalidate checks that previously reported issues at the specified severity or above (warning, error, critical). Only clears stale cached probes — fresh results from earlier in the same run are preserved.");
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
+var traceOption = new Option<bool>("--trace", "Show detailed trace output for DNS queries, SMTP probes, and check timing");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
@@ -67,6 +68,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     recheckOption,
     listChecksOption,
     verboseOption,
+    traceOption,
     liveIndexOption
 };
 
@@ -191,6 +193,9 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         EnablePrivateDnsbl = enablePrivateDnsbl
     };
 
+    // --trace: detailed timing diagnostics
+    var enableTrace = parseResult.GetValueForOption(traceOption);
+
     // --retry: double all retry counts
     var enableRetry = parseResult.GetValueForOption(retryOption);
     if (enableRetry)
@@ -256,7 +261,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
 
         var liveIndex = parseResult.GetValueForOption(liveIndexOption);
         Directory.CreateDirectory(outputDir);
-        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn, cachePath, cacheTtlHours, retryErrors, recheckSeverity);
+        await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn, cachePath, cacheTtlHours, retryErrors, recheckSeverity, enableTrace);
         return;
     }
 
@@ -281,17 +286,17 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         switch (fmt)
         {
             case "json":
-                await RunJsonAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity);
+                await RunJsonAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity, trace: enableTrace);
                 break;
             case "html":
-                await RunHtmlAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity);
+                await RunHtmlAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity, trace: enableTrace);
                 break;
             case "markdown":
             case "md":
-                await RunMarkdownAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity);
+                await RunMarkdownAsync(domains, options, writer, showProgress, verbose, dnsServers: dnsServers, cachePath: cachePath, cacheTtlHours: cacheTtlHours, retryErrors: retryErrors, recheckSeverity: recheckSeverity, trace: enableTrace);
                 break;
             default:
-                await RunInteractiveAsync(domains, options, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity);
+                await RunInteractiveAsync(domains, options, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity, enableTrace);
                 break;
         }
     }
@@ -445,7 +450,7 @@ static List<string> CsvSplitLine(string line)
     return fields;
 }
 
-static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task RunInteractiveAsync(List<string> domains, ValidationOptions options, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
@@ -508,6 +513,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         AnsiConsole.WriteLine();
 
         var validator = new DomainValidator(dns, smtp, http);
+        if (trace) validator.Trace = msg => Console.Error.WriteLine(msg);
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
@@ -725,7 +731,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 /// category headers, details, warnings, and errors. When false, shows
 /// a compact one-line-per-check view.
 /// </summary>
-static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains, ValidationOptions options, bool showProgress, bool verbose = false, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
     var reports = new List<ValidationReport>();
     // Share services across domains so cached lookups are reused
@@ -755,6 +761,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     {
         var domain = domains[i];
         var validator = new DomainValidator(dns, smtp, http);
+        if (trace) validator.Trace = msg => Console.Error.WriteLine(msg);
 
         // --recheck: clear stale cached probes for domains with previous issues
         if (recheckSeverity != null && previousResults2 != null &&
@@ -952,7 +959,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 /// with progressive console output, then generates an index file with
 /// the summary and links to each domain report.
 /// </summary>
-static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null, Dictionary<string, DomainMeta>? domainMeta = null, List<string>? csvExtraColumns = null, string? csvVolumeColumn = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task RunOutputDirAsync(List<string> domains, ValidationOptions options, string fmt, string outputDir, bool verbose, bool liveIndex = false, List<IPAddress>? dnsServers = null, Dictionary<string, DomainMeta>? domainMeta = null, List<string>? csvExtraColumns = null, string? csvVolumeColumn = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
     var ext = fmt switch { "json" => "json", "html" => "html", "markdown" or "md" => "md", _ => fmt };
     var reports = new List<ValidationReport>();
@@ -984,6 +991,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     {
         var domain = domains[i];
         var validator = new DomainValidator(dns, smtp, http);
+        if (trace) validator.Trace = msg => Console.Error.WriteLine(msg);
 
         // --recheck: clear stale cached probes for domains with previous issues
         if (recheckSeverity != null && previousResults3 != null &&
@@ -1790,9 +1798,9 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     writer.Write(sb.ToString());
 }
 
-static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task RunJsonAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity, trace);
 
     var jsonOptions = new JsonSerializerOptions
     {
@@ -1820,9 +1828,9 @@ static async Task RunJsonAsync(List<string> domains, ValidationOptions options, 
     }
 }
 
-static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task RunMarkdownAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity, trace);
 
     var sb = new StringBuilder();
 
@@ -1963,9 +1971,9 @@ static async Task RunMarkdownAsync(List<string> domains, ValidationOptions optio
     await writer.WriteAsync(sb.ToString());
 }
 
-static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null)
+static async Task RunHtmlAsync(List<string> domains, ValidationOptions options, TextWriter writer, bool showProgress = false, bool verbose = false, List<ValidationReport>? reports = null, List<IPAddress>? dnsServers = null, string? cachePath = null, int cacheTtlHours = 24, bool retryErrors = false, CheckSeverity? recheckSeverity = null, bool trace = false)
 {
-    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity);
+    reports ??= await ValidateAllAsync(domains, options, showProgress, verbose, dnsServers, cachePath, cacheTtlHours, retryErrors, recheckSeverity, trace);
 
     var sb = new StringBuilder();
     var e = (string s) => HttpUtility.HtmlEncode(s);

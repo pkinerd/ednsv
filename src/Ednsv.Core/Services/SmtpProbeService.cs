@@ -55,6 +55,9 @@ public class SmtpProbeService
     public int PortsStarted => _portsStarted;
     public int PortsCompleted => _portsCompleted;
 
+    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    public Action<string>? Trace { get; set; }
+
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
         var cacheKey = $"{host.ToLowerInvariant()}:{port}";
@@ -62,15 +65,20 @@ public class SmtpProbeService
             return cached;
 
         Interlocked.Increment(ref _probesStarted);
+        Trace?.Invoke($"[SMTP] PROBE START {host}:{port}");
+        var sw = Trace != null ? Stopwatch.StartNew() : null;
         SmtpProbeResult result = null!;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
             result = await ProbeSmtpAttemptAsync(host, port);
             if (result.Connected) break; // Got a real connection — no need to retry
+            Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
         }
 
         _probeCache.TryAdd(cacheKey, result);
         Interlocked.Increment(ref _probesCompleted);
+        if (Trace != null && sw != null)
+            Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
         return result;
     }
 
@@ -192,6 +200,8 @@ public class SmtpProbeService
             return cached;
 
         Interlocked.Increment(ref _portsStarted);
+        Trace?.Invoke($"[PORT] PROBE START {host}:{port}");
+        var portSw = Trace != null ? Stopwatch.StartNew() : null;
         bool reachable = false;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -216,6 +226,8 @@ public class SmtpProbeService
 
         _portCache.TryAdd(cacheKey, reachable);
         Interlocked.Increment(ref _portsCompleted);
+        if (Trace != null && portSw != null)
+            Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
         return reachable;
     }
 

@@ -15,6 +15,7 @@ var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
+var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
@@ -99,7 +100,7 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity);
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 });
 
@@ -162,6 +163,7 @@ app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
         cache.ClearForRecheck(domain, recheckSev);
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
+    if (enableTrace) validator.Trace = msg => app.Logger.LogDebug("{Trace}", msg);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
     cts.CancelAfter(TimeSpan.FromMinutes(3));
@@ -234,7 +236,8 @@ class ValidationTracker
 
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
-        CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null)
+        CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null,
+        bool trace = false)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
@@ -252,6 +255,7 @@ class ValidationTracker
                 }
 
                 var validator = new DomainValidator(dns, smtp, http);
+                if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
                 validator.OnCheckStarted += name => job.CurrentCheck = name;
                 validator.OnCheckCompleted += (_, result) =>
                 {
