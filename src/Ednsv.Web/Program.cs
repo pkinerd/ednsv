@@ -14,6 +14,7 @@ var cacheDir = builder.Configuration.GetValue<string>("CacheDir") ?? ".ednsv-cac
 var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
+var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 var dnsServers = new List<IPAddress>();
@@ -31,6 +32,14 @@ var http = new HttpProbeService();
 builder.Services.AddSingleton(dns);
 builder.Services.AddSingleton(smtp);
 builder.Services.AddSingleton(http);
+
+// ── Default validation options ────────────────────────────────────────────
+var defaultOptions = new ValidationOptions();
+if (!string.IsNullOrEmpty(dkimSelectorsStr))
+    defaultOptions.AdditionalDkimSelectors = dkimSelectorsStr
+        .Split(',', StringSplitOptions.RemoveEmptyEntries)
+        .Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+builder.Services.AddSingleton(defaultOptions);
 
 // ── Cache manager ────────────────────────────────────────────────────────
 var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
@@ -69,7 +78,7 @@ app.UseStaticFiles();
 // Starts an async validation and returns a job ID.
 app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, ILogger<Program> logger) =>
+    CacheManager cache, ValidationOptions defaults, ILogger<Program> logger) =>
 {
     var domain = req.Domain?.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -80,7 +89,12 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, req.Options, cache, logger, recheckSeverity);
+    // Merge request options with server defaults (request takes precedence)
+    var options = req.Options ?? new ValidationOptions();
+    if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
+        options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
+
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 });
 
@@ -108,7 +122,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 // Times out after 3 minutes.
 app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, CancellationToken ct) =>
+    CacheManager cache, ValidationOptions defaults, CancellationToken ct) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -125,7 +139,7 @@ app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
 
     try
     {
-        var report = await validator.ValidateAsync(domain);
+        var report = await validator.ValidateAsync(domain, defaults);
         _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
         cache.RequestFlush();
         return Results.Ok(report);
