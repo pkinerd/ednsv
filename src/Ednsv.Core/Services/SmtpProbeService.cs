@@ -46,10 +46,14 @@ public class SmtpProbeService
     private readonly ConcurrentDictionary<string, bool> _importedRelayKeys = new();
 
     // Counters for diagnostics
+    private int _probesStarted;
     private int _probesCompleted;
-    private int _portsProbed;
+    private int _portsStarted;
+    private int _portsCompleted;
+    public int ProbesStarted => _probesStarted;
     public int ProbesCompleted => _probesCompleted;
-    public int PortsProbed => _portsProbed;
+    public int PortsStarted => _portsStarted;
+    public int PortsCompleted => _portsCompleted;
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
@@ -57,6 +61,7 @@ public class SmtpProbeService
         if (_probeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
+        Interlocked.Increment(ref _probesStarted);
         SmtpProbeResult result = null!;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -186,6 +191,7 @@ public class SmtpProbeService
         if (_portCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
+        Interlocked.Increment(ref _portsStarted);
         bool reachable = false;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
@@ -209,7 +215,7 @@ public class SmtpProbeService
         }
 
         _portCache.TryAdd(cacheKey, reachable);
-        Interlocked.Increment(ref _portsProbed);
+        Interlocked.Increment(ref _portsCompleted);
         return reachable;
     }
 

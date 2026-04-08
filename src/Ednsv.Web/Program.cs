@@ -135,8 +135,10 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         } : null,
         smtp = job.Smtp != null ? new
         {
-            probes = job.Smtp.ProbesCompleted,
-            ports = job.Smtp.PortsProbed
+            probesStarted = job.Smtp.ProbesStarted,
+            probesDone = job.Smtp.ProbesCompleted,
+            portsStarted = job.Smtp.PortsStarted,
+            portsDone = job.Smtp.PortsCompleted
         } : null,
         elapsed = (DateTime.UtcNow - job.StartedAt).TotalSeconds,
         report = job.Report,

@@ -140,9 +140,15 @@ function pollJob(jobId, domain) {
           if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
           if (d.errors) parts.push(`${d.errors} err`);
         }
-        if (s && (s.probes || s.ports)) {
-          parts.push(`${s.probes} SMTP`);
-          if (s.ports) parts.push(`${s.ports} ports`);
+        if (s) {
+          if (s.probesStarted) {
+            const smtpPending = s.probesStarted - s.probesDone;
+            parts.push(`${s.probesDone}/${s.probesStarted} SMTP` + (smtpPending > 0 ? ` (${smtpPending} probing)` : ''));
+          }
+          if (s.portsStarted) {
+            const portPending = s.portsStarted - s.portsDone;
+            parts.push(`${s.portsDone}/${s.portsStarted} ports` + (portPending > 0 ? ` (${portPending} probing)` : ''));
+          }
         }
         const stats = parts.join(' / ');
 
