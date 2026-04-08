@@ -62,9 +62,12 @@ public class ProbeCache<TValue> where TValue : class
     /// Get a cached value or create it using the factory. Only one factory call
     /// runs per key — concurrent callers await the same Task. On failure, the
     /// in-flight entry is removed so the next caller retries.
+    /// The optional shouldCache predicate controls whether the result is stored;
+    /// if it returns false, the result is returned but not cached (next caller retries).
     /// </summary>
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
-        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
+        Func<TValue, bool>? shouldCache = null)
     {
         // 1. Check cache (respects recheck bypass)
         if (TryGet(key, out var cached, recheckFlag))
@@ -75,7 +78,7 @@ public class ProbeCache<TValue> where TValue : class
         var task = _inflight.GetOrAdd(key, _ =>
         {
             weStartedIt = true;
-            return RunFactory(key, factory);
+            return RunFactory(key, factory, shouldCache);
         });
 
         try
@@ -90,19 +93,21 @@ public class ProbeCache<TValue> where TValue : class
             if (!weStartedIt)
             {
                 var result = await factory();
-                Set(key, result);
+                if (shouldCache == null || shouldCache(result))
+                    Set(key, result);
                 return result;
             }
             throw;
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
     {
         try
         {
             var result = await factory();
-            Set(key, result);
+            if (shouldCache == null || shouldCache(result))
+                Set(key, result);
             return result;
         }
         finally

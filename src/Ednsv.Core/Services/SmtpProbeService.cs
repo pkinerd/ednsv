@@ -90,7 +90,17 @@ public class SmtpProbeService
             if (Trace != null && sw != null)
                 Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
             return result;
-        }, RecheckHelper.CacheDep.Smtp);
+        }, RecheckHelper.CacheDep.Smtp,
+        // Only cache definitive results — not transient TLS failures
+        shouldCache: result =>
+        {
+            // Cache: successful probe (connected, no error)
+            if (result.Connected && result.Error == null) return true;
+            // Cache: completely unreachable (server is down)
+            if (!result.Connected) return true;
+            // Don't cache: connected but TLS failed (transient — retry next time)
+            return false;
+        });
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
