@@ -141,14 +141,14 @@ public class HttpProbeService
     {
         var keys = importedOnly ? _importedGetKeys.Keys : (ICollection<string>)_getCache.Keys;
         foreach (var key in keys)
-            if (predicate(key)) { _getCache.TryRemove(key, out _); _importedGetKeys.TryRemove(key, out _); }
+            if (predicate(key)) { _getCache.TryRemove(key, out _); _importedGetKeys.TryRemove(key, out _); _memCache?.Remove($"get:{key}"); }
     }
 
     public void RemoveGetWithHeadersEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
         var keys = importedOnly ? _importedGetWithHeadersKeys.Keys : (ICollection<string>)_getWithHeadersCache.Keys;
         foreach (var key in keys)
-            if (predicate(key)) { _getWithHeadersCache.TryRemove(key, out _); _importedGetWithHeadersKeys.TryRemove(key, out _); }
+            if (predicate(key)) { _getWithHeadersCache.TryRemove(key, out _); _importedGetWithHeadersKeys.TryRemove(key, out _); _memCache?.Remove($"gwh:{key}"); }
     }
 
     // Backward-compatible aliases for CLI code

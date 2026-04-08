@@ -736,6 +736,7 @@ public class DnsResolverService
                 {
                     _queryCache.TryRemove(key, out _);
                     _importedQueryKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"q:{key.domain}:{key.type}");
                 }
             }
         }
@@ -747,6 +748,7 @@ public class DnsResolverService
                 {
                     _queryCache.TryRemove(key, out _);
                     _importedQueryKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"q:{key.domain}:{key.type}");
                 }
             }
         }
@@ -765,6 +767,7 @@ public class DnsResolverService
                 {
                     _serverQueryCache.TryRemove(key, out _);
                     _importedServerQueryKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"sq:{key.server}:{key.domain}:{key.type}");
                 }
             }
         }
@@ -776,6 +779,7 @@ public class DnsResolverService
                 {
                     _serverQueryCache.TryRemove(key, out _);
                     _importedServerQueryKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"sq:{key.server}:{key.domain}:{key.type}");
                 }
             }
         }
@@ -794,6 +798,7 @@ public class DnsResolverService
                 {
                     _ptrCache.TryRemove(key, out _);
                     _importedPtrKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"ptr:{key}");
                 }
             }
         }
@@ -805,6 +810,7 @@ public class DnsResolverService
                 {
                     _ptrCache.TryRemove(key, out _);
                     _importedPtrKeys.TryRemove(key, out _);
+                    _memCache?.Remove($"ptr:{key}");
                 }
             }
         }

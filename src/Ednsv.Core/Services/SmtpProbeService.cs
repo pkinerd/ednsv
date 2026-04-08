@@ -568,14 +568,14 @@ public class SmtpProbeService
     {
         var keys = importedOnly ? _importedProbeKeys.Keys : (ICollection<string>)_probeCache.Keys;
         foreach (var key in keys)
-            if (predicate(key)) { _probeCache.TryRemove(key, out _); _importedProbeKeys.TryRemove(key, out _); }
+            if (predicate(key)) { _probeCache.TryRemove(key, out _); _importedProbeKeys.TryRemove(key, out _); _memCache?.Remove($"smtp:{key}"); }
     }
 
     public void RemovePortEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
         var keys = importedOnly ? _importedPortKeys.Keys : (ICollection<string>)_portCache.Keys;
         foreach (var key in keys)
-            if (predicate(key)) { _portCache.TryRemove(key, out _); _importedPortKeys.TryRemove(key, out _); }
+            if (predicate(key)) { _portCache.TryRemove(key, out _); _importedPortKeys.TryRemove(key, out _); _memCache?.Remove($"p:{key}"); }
     }
 
     public void RemoveRcptEntries(Func<string, bool> predicate, bool importedOnly = true)
