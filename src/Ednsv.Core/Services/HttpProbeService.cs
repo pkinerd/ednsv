@@ -41,56 +41,50 @@ public class HttpProbeService
 
     public async Task<(bool success, string content, int statusCode)> GetAsync(string url, int? maxRetries = null)
     {
-        if (_getCache.TryGet(url, out var cached, RecheckHelper.CacheDep.Http))
-            return cached.ToTuple();
-
         var retries = maxRetries ?? MaxRetries;
-        (bool success, string content, int statusCode) lastResult = default;
-        for (int attempt = 0; attempt < retries; attempt++)
+        var result = await _getCache.GetOrCreateAsync(url, async () =>
         {
-            try
+            (bool success, string content, int statusCode) lastResult = default;
+            for (int attempt = 0; attempt < retries; attempt++)
             {
-                var response = await _client.GetAsync(url);
-                var content = await response.Content.ReadAsStringAsync();
-                var result = new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
-                _getCache.Set(url, result);
-                return result.ToTuple();
+                try
+                {
+                    var response = await _client.GetAsync(url);
+                    var content = await response.Content.ReadAsStringAsync();
+                    return new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
+                }
+                catch (Exception ex)
+                {
+                    lastResult = (false, ex.Message, 0);
+                }
             }
-            catch (Exception ex)
-            {
-                lastResult = (false, ex.Message, 0);
-            }
-        }
-
-        _getCache.Set(url, new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode });
-        return lastResult;
+            return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
+        }, RecheckHelper.CacheDep.Http);
+        return result.ToTuple();
     }
 
     public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
     {
-        if (_getWithHeadersCache.TryGet(url, out var cached, RecheckHelper.CacheDep.Http))
-            return cached.ToTuple();
-
-        (bool success, string content, int statusCode, string? contentType) lastResult = default;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        var result = await _getWithHeadersCache.GetOrCreateAsync(url, async () =>
         {
-            try
+            (bool success, string content, int statusCode, string? contentType) lastResult = default;
+            for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
-                var response = await _client.GetAsync(url);
-                var content = await response.Content.ReadAsStringAsync();
-                var contentType = response.Content.Headers.ContentType?.MediaType;
-                var result = new GetWithHeadersResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode, ContentType = contentType };
-                _getWithHeadersCache.Set(url, result);
-                return result.ToTuple();
+                try
+                {
+                    var response = await _client.GetAsync(url);
+                    var content = await response.Content.ReadAsStringAsync();
+                    var contentType = response.Content.Headers.ContentType?.MediaType;
+                    return new GetWithHeadersResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode, ContentType = contentType };
+                }
+                catch (Exception ex)
+                {
+                    lastResult = (false, ex.Message, 0, (string?)null);
+                }
             }
-            catch (Exception ex)
-            {
-                lastResult = (false, ex.Message, 0, (string?)null);
-            }
-        }
-
-        _getWithHeadersCache.Set(url, new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType });
-        return lastResult;
+            return new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType };
+        }, RecheckHelper.CacheDep.Http);
+        return result.ToTuple();
     }
 
     // ── Cache export/import for disk persistence ─────────────────────────

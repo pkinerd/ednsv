@@ -73,28 +73,24 @@ public class SmtpProbeService
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
         var cacheKey = $"smtp:{host.ToLowerInvariant()}:{port}";
-        if (_probeCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Smtp))
-            return cached;
-
-        Interlocked.Increment(ref _probesStarted);
-        Trace?.Invoke($"[SMTP] PROBE START {host}:{port}");
-        var sw = Trace != null ? Stopwatch.StartNew() : null;
-        SmtpProbeResult result = null!;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        return await _probeCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            result = await ProbeSmtpAttemptAsync(host, port);
-            // Retry if connection failed OR if connected but TLS handshake failed
-            // (transient TLS failures are common with load-balanced mail servers)
-            if (result.Connected && result.Error == null) break;
-            if (result.Connected && result.SupportsStartTls && result.CertSubject != null) break;
-            Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
-        }
-
-        _probeCache.Set(cacheKey, result);
-        Interlocked.Increment(ref _probesCompleted);
-        if (Trace != null && sw != null)
-            Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
-        return result;
+            Interlocked.Increment(ref _probesStarted);
+            Trace?.Invoke($"[SMTP] PROBE START {host}:{port}");
+            var sw = Trace != null ? Stopwatch.StartNew() : null;
+            SmtpProbeResult result = null!;
+            for (int attempt = 0; attempt < MaxRetries; attempt++)
+            {
+                result = await ProbeSmtpAttemptAsync(host, port);
+                if (result.Connected && result.Error == null) break;
+                if (result.Connected && result.SupportsStartTls && result.CertSubject != null) break;
+                Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
+            }
+            Interlocked.Increment(ref _probesCompleted);
+            if (Trace != null && sw != null)
+                Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
+            return result;
+        }, RecheckHelper.CacheDep.Smtp);
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
@@ -219,39 +215,37 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
-        if (_portCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Port))
-            return cached;
-
-        Interlocked.Increment(ref _portsStarted);
-        Trace?.Invoke($"[PORT] PROBE START {host}:{port}");
-        var portSw = Trace != null ? Stopwatch.StartNew() : null;
-        bool reachable = false;
-        for (int attempt = 0; attempt < PortMaxRetries; attempt++)
+        return await _portCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            try
+            Interlocked.Increment(ref _portsStarted);
+            Trace?.Invoke($"[PORT] PROBE START {host}:{port}");
+            var portSw = Trace != null ? Stopwatch.StartNew() : null;
+            bool reachable = false;
+            for (int attempt = 0; attempt < PortMaxRetries; attempt++)
             {
-                using var client = new TcpClient();
-                var connectTask = client.ConnectAsync(host, port);
-                if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
-                    reachable = false;
-                else
+                try
                 {
-                    await connectTask;
-                    reachable = true;
+                    using var client = new TcpClient();
+                    var connectTask = client.ConnectAsync(host, port);
+                    if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
+                        reachable = false;
+                    else
+                    {
+                        await connectTask;
+                        reachable = true;
+                    }
                 }
+                catch
+                {
+                    reachable = false;
+                }
+                if (reachable) break;
             }
-            catch
-            {
-                reachable = false;
-            }
-            if (reachable) break;
-        }
-
-        _portCache.Set(cacheKey, reachable);
-        Interlocked.Increment(ref _portsCompleted);
-        if (Trace != null && portSw != null)
-            Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
-        return reachable;
+            Interlocked.Increment(ref _portsCompleted);
+            if (Trace != null && portSw != null)
+                Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
+            return reachable;
+        }, RecheckHelper.CacheDep.Port);
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)

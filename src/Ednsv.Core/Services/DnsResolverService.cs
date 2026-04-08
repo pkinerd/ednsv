@@ -215,51 +215,41 @@ public class DnsResolverService
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
-        var key = (domain.ToLowerInvariant(), type);
-        if (TryGetQueryCache(key, out var cached))
+        var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
+        return await _queryCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            Interlocked.Increment(ref _cacheHits);
-            Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
-            return cached;
-        }
-
-        Interlocked.Increment(ref _cacheMisses);
-        try
-        {
-            var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type), $"{type} {domain}");
-            Interlocked.Increment(ref _responsesReceived);
-            // Always cache — errors are filtered out by --retry-errors on load
-            SetQueryCache(key, result);
-            return result;
-        }
-        catch (DnsResponseException ex)
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (OperationCanceledException)
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            QueryErrors.Add($"DNS timeout querying {type} for {domain}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (SocketException ex)
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (Exception ex)
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
+            Interlocked.Increment(ref _cacheMisses);
+            try
+            {
+                var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type), $"{type} {domain}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result;
+            }
+            catch (DnsResponseException ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS timeout querying {type} for {domain}");
+                return EmptyResponse.Instance;
+            }
+            catch (SocketException ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.Dns);
     }
 
     /// <summary>
@@ -270,27 +260,22 @@ public class DnsResolverService
     /// </summary>
     public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
     {
-        var key = (query.ToLowerInvariant(), type);
-        if (TryGetQueryCache(key, out var cached))
+        var cacheKey = $"q:{query.ToLowerInvariant()}:{type}";
+        return await _queryCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            Interlocked.Increment(ref _cacheHits);
-            return cached;
-        }
-
-        Interlocked.Increment(ref _cacheMisses);
-        try
-        {
-            var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type), $"DNSBL {query}");
-            Interlocked.Increment(ref _responsesReceived);
-            SetQueryCache(key, result);
-            return result;
-        }
-        catch
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            SetQueryCache(key, EmptyResponse.Instance);
-            return EmptyResponse.Instance;
-        }
+            Interlocked.Increment(ref _cacheMisses);
+            try
+            {
+                var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type), $"DNSBL {query}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result;
+            }
+            catch
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.Dns);
     }
 
     /// <summary>
@@ -301,8 +286,9 @@ public class DnsResolverService
     /// </summary>
     public async Task<IDnsQueryResponse> QuerySpeculativeAsync(string domain, QueryType type)
     {
-        var key = (domain.ToLowerInvariant(), type);
-        if (TryGetQueryCache(key, out var cached))
+        var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
+        // Check cache — if a standard query already populated it, use that
+        if (_queryCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Dns))
         {
             Interlocked.Increment(ref _cacheHits);
             Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
@@ -314,8 +300,9 @@ public class DnsResolverService
         {
             var result = await RateLimitedAsync(() => _speculativeClient.QueryAsync(domain, type), $"SPEC {type} {domain}");
             Interlocked.Increment(ref _responsesReceived);
-            // Cache successful responses (including NXDOMAIN — that's a valid "not found")
-            SetQueryCache(key, result);
+            // Cache successful responses — but timeouts return EmptyResponse which
+            // we intentionally cache (short TTL will expire it, or standard query overwrites)
+            _queryCache.Set(cacheKey, result);
             return result;
         }
         catch
@@ -326,17 +313,11 @@ public class DnsResolverService
         }
     }
 
-    private void CacheFailureIfExhausted((string domain, QueryType type) key)
-    {
-        SetQueryCache(key, EmptyResponse.Instance);
-    }
 
     public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type)
     {
         var serverStr = server.ToString();
-        var key = (serverStr, domain.ToLowerInvariant(), type);
-        if (TryGetServerQueryCache(key, out var cached))
-            return cached;
+        var cacheKey = $"sq:{serverStr}:{domain.ToLowerInvariant()}:{type}";
 
         // If this server has been unreachable too many times, skip immediately
         if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachCount) && unreachCount >= MaxRetries)
@@ -345,36 +326,33 @@ public class DnsResolverService
             return EmptyResponse.Instance;
         }
 
-        try
+        return await _serverQueryCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            var serverEndpoint = new IPEndPoint(server, 53);
-            var opts = new LookupClientOptions(serverEndpoint)
+            try
             {
-                UseCache = false,
-                Timeout = TimeSpan.FromSeconds(15),
-                Retries = 2,
-                ThrowDnsErrors = false
-            };
-            var client = new LookupClient(opts);
-            var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
-            Interlocked.Increment(ref _responsesReceived);
-            SetServerQueryCache(key, result);
-            if (!result.HasError)
-            {
-                // Server responded — clear unreachable tracking
-                _unreachableServerCounts.TryRemove(serverStr, out _);
+                var serverEndpoint = new IPEndPoint(server, 53);
+                var opts = new LookupClientOptions(serverEndpoint)
+                {
+                    UseCache = false,
+                    Timeout = TimeSpan.FromSeconds(15),
+                    Retries = 2,
+                    ThrowDnsErrors = false
+                };
+                var client = new LookupClient(opts);
+                var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
+                Interlocked.Increment(ref _responsesReceived);
+                if (!result.HasError)
+                    _unreachableServerCounts.TryRemove(serverStr, out _);
+                return result;
             }
-            return result;
-        }
-        catch (Exception ex)
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
-            SetServerQueryCache(key, EmptyResponse.Instance);
-            // Track server-level unreachability
-            _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
-            return EmptyResponse.Instance;
-        }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
+                _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.ServerDns);
     }
 
     public async Task<List<string>> ResolveAAsync(string hostname)
@@ -391,24 +369,22 @@ public class DnsResolverService
 
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
-        if (TryGetPtrCache(ip, out var cached))
-            return cached;
-
-        try
+        var cacheKey = $"ptr:{ip}";
+        return await _ptrCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            var parsedIp = IPAddress.Parse(ip);
-            var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
-            Interlocked.Increment(ref _responsesReceived);
-            var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
-            SetPtrCache(ip, ptrs);
-            return ptrs;
-        }
-        catch
-        {
-            Interlocked.Increment(ref _responsesReceived);
-            SetPtrCache(ip, new List<string>());
-            return new List<string>();
-        }
+            try
+            {
+                var parsedIp = IPAddress.Parse(ip);
+                var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
+            }
+            catch
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                return new List<string>();
+            }
+        }, RecheckHelper.CacheDep.Ptr);
     }
 
     public async Task<List<string>> ResolveCnameChainAsync(string hostname)
