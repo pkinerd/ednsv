@@ -128,18 +128,18 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         },
         dns = job.Dns != null ? new
         {
-            queries = job.Dns.CacheHits + job.Dns.CacheMisses,
-            cacheHits = job.Dns.CacheHits,
-            sent = job.Dns.CacheMisses,
-            received = job.Dns.ResponsesReceived,
-            errors = job.Dns.QueryErrors.Count
+            queries = (job.Dns.CacheHits - job.DnsHitsBaseline) + (job.Dns.CacheMisses - job.DnsMissesBaseline),
+            cacheHits = job.Dns.CacheHits - job.DnsHitsBaseline,
+            sent = job.Dns.CacheMisses - job.DnsMissesBaseline,
+            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline,
+            errors = job.Dns.QueryErrors.Count - job.DnsErrorsBaseline
         } : null,
         smtp = job.Smtp != null ? new
         {
-            probesStarted = job.Smtp.ProbesStarted,
-            probesDone = job.Smtp.ProbesCompleted,
-            portsStarted = job.Smtp.PortsStarted,
-            portsDone = job.Smtp.PortsCompleted
+            probesStarted = job.Smtp.ProbesStarted - job.SmtpProbesStartedBaseline,
+            probesDone = job.Smtp.ProbesCompleted - job.SmtpProbesCompletedBaseline,
+            portsStarted = job.Smtp.PortsStarted - job.PortsStartedBaseline,
+            portsDone = job.Smtp.PortsCompleted - job.PortsCompletedBaseline
         } : null,
         elapsed = (DateTime.UtcNow - job.StartedAt).TotalSeconds,
         report = job.Report,
@@ -219,15 +219,42 @@ class ValidationJob
     public ValidationReport? Report { get; set; }
     public string? Error { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
-    // Live stats from services during validation
+    // References to services for live stats (read-only, shared singletons)
     public DnsResolverService? Dns { get; set; }
     public SmtpProbeService? Smtp { get; set; }
+    // Baseline snapshots taken at job start — deltas computed at read time
+    public int DnsHitsBaseline;
+    public int DnsMissesBaseline;
+    public int DnsResponsesBaseline;
+    public int DnsErrorsBaseline;
+    public int SmtpProbesStartedBaseline;
+    public int SmtpProbesCompletedBaseline;
+    public int PortsStartedBaseline;
+    public int PortsCompletedBaseline;
     // Live severity counts — updated as each check result arrives
     public int PassCount;
     public int InfoCount;
     public int WarningCount;
     public int ErrorCount;
     public int CriticalCount;
+
+    public void SnapshotBaselines()
+    {
+        if (Dns != null)
+        {
+            DnsHitsBaseline = Dns.CacheHits;
+            DnsMissesBaseline = Dns.CacheMisses;
+            DnsResponsesBaseline = Dns.ResponsesReceived;
+            DnsErrorsBaseline = Dns.QueryErrors.Count;
+        }
+        if (Smtp != null)
+        {
+            SmtpProbesStartedBaseline = Smtp.ProbesStarted;
+            SmtpProbesCompletedBaseline = Smtp.ProbesCompleted;
+            PortsStartedBaseline = Smtp.PortsStarted;
+            PortsCompletedBaseline = Smtp.PortsCompleted;
+        }
+    }
 }
 
 class ValidationTracker
@@ -241,6 +268,7 @@ class ValidationTracker
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
+        job.SnapshotBaselines();
         _jobs[jobId] = job;
 
         _ = Task.Run(async () =>
