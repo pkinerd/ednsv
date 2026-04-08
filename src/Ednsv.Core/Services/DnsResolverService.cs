@@ -52,12 +52,12 @@ public class DnsResolverService
     /// Creates a resolver using the specified DNS server(s).
     /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers) : this(nameservers, tokensPerSecond: 25, maxConcurrency: 40) { }
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers) : this(nameservers, tokensPerSecond: 40, maxConcurrency: 50) { }
 
     /// <summary>
     /// Creates a resolver that uses the OS-configured DNS resolvers.
     /// </summary>
-    public static DnsResolverService CreateWithSystemResolvers(int tokensPerSecond = 25, int maxConcurrency = 40)
+    public static DnsResolverService CreateWithSystemResolvers(int tokensPerSecond = 40, int maxConcurrency = 50)
         => new(useSystemResolvers: true, nameservers: null, tokensPerSecond, maxConcurrency);
 
     /// <summary>

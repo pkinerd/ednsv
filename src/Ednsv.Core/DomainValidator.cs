@@ -520,8 +520,10 @@ public class DomainValidator
             foreach (var ip in domainIps)
                 allTasks.Add(_dns.ResolvePtrAsync(ip));
 
-            // SMTP probes + PTR for MX hosts — start immediately, don't wait for DNS phase
-            var smtpSemaphore = new SemaphoreSlim(3);
+            // SMTP probes + PTR for MX hosts — each host probed in parallel since
+            // they go to different servers. Only limit to avoid overwhelming a single
+            // provider's fleet (cap at 6 concurrent SMTP probes).
+            var smtpSemaphore = new SemaphoreSlim(Math.Min(mxHosts.Count, 6));
             foreach (var host in mxHosts)
             {
                 // Resolve MX host IPs then probe — chained but non-blocking to other tasks
@@ -544,6 +546,12 @@ public class DomainValidator
                 allTasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 587)));
                 allTasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 465)));
             }
+
+            // HTTP prefetch — prime the cache for checks that fetch well-known URLs.
+            // These go to different servers so all can run in parallel.
+            allTasks.Add(Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt")));
+            allTasks.Add(Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt")));
+            allTasks.Add(Task.Run(() => _http.GetWithHeadersAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json")));
 
             await Task.WhenAll(allTasks);
         }
