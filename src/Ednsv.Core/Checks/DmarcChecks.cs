@@ -17,16 +17,27 @@ public class DmarcRecordCheck : ICheck
         try
         {
             var dmarcDomain = $"_dmarc.{domain}";
-            var txts = await ctx.Dns.GetTxtRecordsAsync(dmarcDomain);
+            var dmarcResponse = await ctx.Dns.QueryAsync(dmarcDomain, QueryType.TXT);
+            var txts = dmarcResponse.Answers.OfType<TxtRecord>().ToList();
             var dmarcRecords = txts
                 .Where(t => t.Text.Any(s => s.TrimStart().StartsWith("v=DMARC1", StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             if (!dmarcRecords.Any())
             {
-                result.Severity = CheckSeverity.Error;
-                result.Summary = "No DMARC record found";
-                result.Errors.Add("No DMARC record at _dmarc." + domain + " — required by Gmail and Yahoo for bulk senders since Feb 2024");
+                if (dmarcResponse.HasError)
+                {
+                    ctx.DmarcLookupFailed = true;
+                    result.Severity = CheckSeverity.Warning;
+                    result.Summary = "Could not query DMARC record — status unknown";
+                    result.Warnings.Add($"DNS query for TXT at {dmarcDomain} failed — cannot determine DMARC configuration");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Error;
+                    result.Summary = "No DMARC record found";
+                    result.Errors.Add("No DMARC record at _dmarc." + domain + " — required by Gmail and Yahoo for bulk senders since Feb 2024");
+                }
                 return new List<CheckResult> { result };
             }
 
@@ -400,7 +411,7 @@ public class DmarcExternalReportAuthCheck : ICheck
         {
             if (ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
                 result.Summary = "No DMARC record to check";
                 return new List<CheckResult> { result };
             }
@@ -476,7 +487,7 @@ public class DmarcReportTargetMxCheck : ICheck
         {
             if (ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
                 result.Summary = "No DMARC record";
                 return new List<CheckResult> { result };
             }
@@ -533,7 +544,7 @@ public class SpfDmarcCombinedCheck : ICheck
 
         if (ctx.SpfRecord == null || ctx.DmarcRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed || ctx.DmarcLookupFailed);
             result.Summary = "Cannot check combo - missing SPF or DMARC";
             return new List<CheckResult> { result };
         }
@@ -611,7 +622,7 @@ public class SubdomainDmarcOverrideCheck : ICheck
         {
             if (ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
                 result.Summary = "No DMARC to check for subdomain overrides";
                 return new List<CheckResult> { result };
             }
@@ -693,7 +704,7 @@ public class DmarcSubdomainPolicyCheck : ICheck
         {
             if (ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
                 result.Summary = "No DMARC record to analyze subdomain policy";
                 return new List<CheckResult> { result };
             }
@@ -811,7 +822,7 @@ public class DmarcReportUriValidationCheck : ICheck
         {
             if (ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
                 result.Summary = "No DMARC record to validate report URIs";
                 return new List<CheckResult> { result };
             }

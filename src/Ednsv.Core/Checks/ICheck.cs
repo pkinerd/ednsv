@@ -27,6 +27,21 @@ public class CheckContext
     public string? DmarcRecord { get; set; }
     public List<string> DomainARecords { get; set; } = new();
     public List<string> DomainAAAARecords { get; set; } = new();
+
+    // Flags indicating whether foundation lookups failed (DNS error/timeout)
+    // vs simply returned empty results (record not configured). When true,
+    // downstream checks should report Warning instead of Info.
+    public bool MxLookupFailed { get; set; }
+    public bool NsLookupFailed { get; set; }
+    public bool SpfLookupFailed { get; set; }
+    public bool DmarcLookupFailed { get; set; }
+
+    /// <summary>
+    /// Returns Warning if the lookup for this prerequisite failed (DNS error),
+    /// or Info if the record simply doesn't exist.
+    /// </summary>
+    public CheckSeverity SeverityForMissing(bool lookupFailed) =>
+        lookupFailed ? CheckSeverity.Warning : CheckSeverity.Info;
     // Cached SMTP probe results (avoid probing same host multiple times)
     public Dictionary<string, Services.SmtpProbeResult> SmtpProbeCache { get; set; } = new();
 }

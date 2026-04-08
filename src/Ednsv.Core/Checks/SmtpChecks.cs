@@ -19,7 +19,7 @@ public class SmtpTlsCertCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check TLS certificates";
                 return new List<CheckResult> { result };
             }
@@ -298,7 +298,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check banner/rDNS match";
                 return new List<CheckResult> { result };
             }
@@ -414,7 +414,7 @@ public class SmtpTransactionTimingCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to measure timing";
                 return new List<CheckResult> { result };
             }
@@ -680,7 +680,7 @@ public class PostmasterAddressCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check postmaster";
                 return new List<CheckResult> { result };
             }
@@ -758,7 +758,7 @@ public class AbuseAddressCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check abuse@";
                 return new List<CheckResult> { result };
             }
@@ -841,7 +841,7 @@ public class OpenRelayCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to test";
             return new List<CheckResult> { result };
         }
@@ -904,7 +904,7 @@ public class CatchAllDetectionCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to test";
             return new List<CheckResult> { result };
         }
@@ -956,7 +956,7 @@ public class SmtpStarttlsEnforcementCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check STARTTLS";
                 return new List<CheckResult> { result };
             }
@@ -1018,7 +1018,7 @@ public class SmtpIpv6ConnectivityCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check IPv6 connectivity";
                 return new List<CheckResult> { result };
             }

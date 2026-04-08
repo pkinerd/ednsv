@@ -130,7 +130,10 @@ public class DnssecCheck : ICheck
                         {
                             coveredTypes.Add(rrsig.CoveredType.ToString());
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            result.Details.Add($"Could not read RRSIG CoveredType: {ex.Message}");
+                        }
                     }
                     foreach (var criticalType in new[] { "A", "MX", "TXT", "NS" })
                     {
@@ -335,7 +338,10 @@ public class MtaStsCheck : ICheck
                         if (tlsaFound)
                             result.Details.Add("Both MTA-STS and DANE/TLSA are configured — conforming MTAs that support both will prefer DANE when DNSSEC is validated (RFC 8461 §10.1)");
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        result.Details.Add($"Could not check for coexisting DANE/TLSA records: {ex.Message}");
+                    }
 
                     result.Severity = CheckSeverity.Pass;
                     result.Summary = "MTA-STS configured";
@@ -917,7 +923,10 @@ public class DaneCheck : ICheck
                                 result.Errors.Add($"TLSA records found for {mxHost} but DNSSEC is not enabled — DANE requires DNSSEC validation (RFC 7672 §2.1). Records will be ignored by conforming MTAs.");
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Could not verify DNSSEC for {mxHost} TLSA records: {ex.Message}");
+                    }
                 }
                 else
                 {

@@ -16,7 +16,10 @@ public class MxRecordsCheck : ICheck
 
         try
         {
-            var mxRecords = await ctx.Dns.GetMxRecordsAsync(domain);
+            var mxResponse = await ctx.Dns.QueryAsync(domain, QueryType.MX);
+            if (mxResponse.HasError && !mxResponse.Answers.MxRecords().Any())
+                ctx.MxLookupFailed = true;
+            var mxRecords = mxResponse.Answers.MxRecords().OrderBy(m => m.Preference).ToList();
             if (mxRecords.Any())
             {
                 result.Severity = CheckSeverity.Pass;

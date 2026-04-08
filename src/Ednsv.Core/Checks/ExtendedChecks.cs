@@ -21,7 +21,7 @@ public class SmtpSizeCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts";
             return new List<CheckResult> { result };
         }
@@ -78,7 +78,7 @@ public class SpfOverlapCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return Task.FromResult(new List<CheckResult> { result });
         }
@@ -356,7 +356,7 @@ public class SmtpRequireTlsCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts";
             return new List<CheckResult> { result };
         }
@@ -563,17 +563,23 @@ public class CertificateTransparencyCheck : ICheck
                     result.Details.Add($"Certificate Authorities: {string.Join(", ", issuers)}");
                 }
             }
-            else
+            else if (success)
             {
                 result.Severity = CheckSeverity.Info;
-                result.Summary = "No CT log entries found (or crt.sh unreachable)";
+                result.Summary = "No CT log entries found for this domain";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Could not query CT logs — crt.sh unreachable";
+                result.Warnings.Add($"HTTP request to crt.sh failed (status {statusCode}) — CT coverage unknown");
             }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Info;
-            result.Summary = "CT check skipped";
-            result.Details.Add($"Could not query CT logs: {ex.Message}");
+            result.Severity = CheckSeverity.Warning;
+            result.Summary = "CT log query failed";
+            result.Warnings.Add($"Could not query CT logs: {ex.Message}");
         }
 
         return new List<CheckResult> { result };
@@ -593,7 +599,7 @@ public class MxReverseDnsCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check PTR records";
                 return new List<CheckResult> { result };
             }
@@ -849,7 +855,7 @@ public class SubdomainSpfGapCheck : ICheck
         {
             if (ctx.SpfRecord == null && ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed || ctx.DmarcLookupFailed);
                 result.Summary = "No parent SPF/DMARC — subdomain gap check not applicable";
                 return new List<CheckResult> { result };
             }

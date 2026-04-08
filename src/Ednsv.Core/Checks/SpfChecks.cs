@@ -32,16 +32,27 @@ public class SpfRecordCheck : ICheck
 
         try
         {
-            var txtRecords = await ctx.Dns.GetTxtRecordsAsync(domain);
+            var txtResponse = await ctx.Dns.QueryAsync(domain, QueryType.TXT);
+            var txtRecords = txtResponse.Answers.OfType<DnsClient.Protocol.TxtRecord>().ToList();
             var spfRecords = txtRecords
                 .Where(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)))
                 .ToList();
 
             if (spfRecords.Count == 0)
             {
-                result.Severity = CheckSeverity.Error;
-                result.Summary = "No SPF record found";
-                result.Errors.Add("No SPF record — any server can claim to send email for this domain. Gmail, Outlook, and Yahoo may reject or junk mail without SPF");
+                if (txtResponse.HasError)
+                {
+                    ctx.SpfLookupFailed = true;
+                    result.Severity = CheckSeverity.Warning;
+                    result.Summary = "Could not query TXT records — SPF status unknown";
+                    result.Warnings.Add("DNS query for TXT records failed — cannot determine SPF configuration");
+                }
+                else
+                {
+                    result.Severity = CheckSeverity.Error;
+                    result.Summary = "No SPF record found";
+                    result.Errors.Add("No SPF record — any server can claim to send email for this domain. Gmail, Outlook, and Yahoo may reject or junk mail without SPF");
+                }
                 return new List<CheckResult> { result };
             }
 
@@ -262,7 +273,7 @@ public class SpfExpansionCheck : ICheck
         {
             if (ctx.SpfRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
                 result.Summary = "No SPF record to expand";
                 return new List<CheckResult> { result };
             }
@@ -472,7 +483,7 @@ public class SpfLookupCountCheck : ICheck
         {
             if (ctx.SpfRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
                 result.Summary = "No SPF record to check";
                 return new List<CheckResult> { result };
             }
@@ -580,7 +591,7 @@ public class SpfIncludeDepthCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return new List<CheckResult> { result };
         }
@@ -642,7 +653,7 @@ public class SpfRecordSizeCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return new List<CheckResult> { result };
         }
@@ -684,7 +695,7 @@ public class SpfMacrosCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return new List<CheckResult> { result };
         }

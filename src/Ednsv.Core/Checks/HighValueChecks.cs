@@ -91,7 +91,7 @@ public class SmtpTlsVersionCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to check TLS version";
             return new List<CheckResult> { result };
         }
@@ -155,7 +155,7 @@ public class MxCoveredBySpfCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record to check MX coverage";
             return new List<CheckResult> { result };
         }
@@ -325,7 +325,7 @@ public class SpfIncludesAllCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return new List<CheckResult> { result };
         }
@@ -391,7 +391,7 @@ public class DmarcPctAnalysisCheck : ICheck
 
         if (ctx.DmarcRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
             result.Summary = "No DMARC record";
             return Task.FromResult(new List<CheckResult> { result });
         }
