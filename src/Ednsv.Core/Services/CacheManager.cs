@@ -65,16 +65,24 @@ public sealed class CacheManager : IAsyncDisposable
 
     /// <summary>
     /// Saves a domain's validation result summary for future recheck decisions.
+    /// Updates both the in-memory map (for subsequent rechecks within this process)
+    /// and the on-disk cache (for persistence across restarts).
     /// </summary>
     public Task SaveDomainResultAsync(string domain, DomainResultSummary summary)
-        => DiskCacheService.SaveDomainResultAsync(_cacheDir, domain, summary);
+    {
+        _previousResults ??= new Dictionary<string, DomainResultSummary>();
+        _previousResults[domain.ToLowerInvariant()] = summary;
+        return DiskCacheService.SaveDomainResultAsync(_cacheDir, domain, summary);
+    }
 
     /// <summary>
     /// Clears cached probes for a domain that previously had issues at or above
     /// the specified severity, so those checks are re-run with fresh data.
+    /// When importedOnly is true (CLI default), only disk-loaded entries are cleared.
+    /// When false (web API), all matching in-memory entries are cleared.
     /// Returns true if any cache entries were cleared.
     /// </summary>
-    public bool ClearForRecheck(string domain, CheckSeverity minSeverity)
+    public bool ClearForRecheck(string domain, CheckSeverity minSeverity, bool importedOnly = false)
     {
         if (_previousResults == null ||
             !_previousResults.TryGetValue(domain.ToLowerInvariant(), out var summary))
@@ -84,7 +92,7 @@ public sealed class CacheManager : IAsyncDisposable
         if (deps == RecheckHelper.CacheDep.None)
             return false;
 
-        RecheckHelper.ClearImportedEntriesForDomain(domain, deps, _dns, _smtp, _http);
+        RecheckHelper.ClearEntriesForDomain(domain, deps, _dns, _smtp, _http, importedOnly);
         return true;
     }
 

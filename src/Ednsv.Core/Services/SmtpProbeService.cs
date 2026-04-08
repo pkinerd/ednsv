@@ -509,23 +509,39 @@ public class SmtpProbeService
 
     // ── Recheck support ─────────────────────────────────────────────────
 
-    public void RemoveImportedProbeEntries(Func<string, bool> predicate)
+    public void RemoveProbeEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedProbeKeys.Keys)
+        var keys = importedOnly ? _importedProbeKeys.Keys : (ICollection<string>)_probeCache.Keys;
+        foreach (var key in keys)
             if (predicate(key)) { _probeCache.TryRemove(key, out _); _importedProbeKeys.TryRemove(key, out _); }
     }
 
-    public void RemoveImportedPortEntries(Func<string, bool> predicate)
+    public void RemovePortEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedPortKeys.Keys)
+        var keys = importedOnly ? _importedPortKeys.Keys : (ICollection<string>)_portCache.Keys;
+        foreach (var key in keys)
             if (predicate(key)) { _portCache.TryRemove(key, out _); _importedPortKeys.TryRemove(key, out _); }
     }
 
-    public void RemoveImportedRcptEntries(Func<string, bool> predicate)
+    public void RemoveRcptEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedRcptKeys.Keys)
+        var keys = importedOnly ? _importedRcptKeys.Keys : (ICollection<string>)_rcptCache.Keys;
+        foreach (var key in keys)
             if (predicate(key)) { _rcptCache.TryRemove(key, out _); _importedRcptKeys.TryRemove(key, out _); }
     }
+
+    public void RemoveRelayEntries(Func<string, bool> predicate, bool importedOnly = true)
+    {
+        var keys = importedOnly ? _importedRelayKeys.Keys : (ICollection<string>)_relayCache.Keys;
+        foreach (var key in keys)
+            if (predicate(key)) { _relayCache.TryRemove(key, out _); _importedRelayKeys.TryRemove(key, out _); }
+    }
+
+    // Backward-compatible aliases for CLI code
+    public void RemoveImportedProbeEntries(Func<string, bool> predicate) => RemoveProbeEntries(predicate, importedOnly: true);
+    public void RemoveImportedPortEntries(Func<string, bool> predicate) => RemovePortEntries(predicate, importedOnly: true);
+    public void RemoveImportedRcptEntries(Func<string, bool> predicate) => RemoveRcptEntries(predicate, importedOnly: true);
+    public void RemoveImportedRelayEntries(Func<string, bool> predicate) => RemoveRelayEntries(predicate, importedOnly: true);
 
     public Dictionary<string, RelayCacheEntry> ExportRelayCache()
     {
@@ -550,9 +566,4 @@ public class SmtpProbeService
         }
     }
 
-    public void RemoveImportedRelayEntries(Func<string, bool> predicate)
-    {
-        foreach (var key in _importedRelayKeys.Keys)
-            if (predicate(key)) { _relayCache.TryRemove(key, out _); _importedRelayKeys.TryRemove(key, out _); }
-    }
 }

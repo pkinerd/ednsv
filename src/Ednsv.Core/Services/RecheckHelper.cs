@@ -82,13 +82,16 @@ public static class RecheckHelper
     }
 
     /// <summary>
-    /// Clears imported cache entries for a domain based on the cache dependency flags.
-    /// Only removes entries loaded from disk (not freshly generated this run).
-    /// For SMTP/Port/RCPT, first looks up cached MX hosts to clear by hostname.
+    /// Clears cache entries for a domain based on the cache dependency flags.
+    /// When importedOnly is true (default, used by CLI), only entries loaded from
+    /// disk are cleared — entries generated during the current process run are
+    /// preserved. When false (used by web API), all matching entries are cleared
+    /// including those from previous requests in the same long-lived process.
     /// </summary>
-    public static void ClearImportedEntriesForDomain(
+    public static void ClearEntriesForDomain(
         string domain, CacheDep deps,
-        DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http)
+        DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http,
+        bool importedOnly = true)
     {
         var domainLower = domain.ToLowerInvariant();
 
@@ -113,58 +116,74 @@ public static class RecheckHelper
         // DNS query cache: clear entries where the query domain matches or is a subdomain
         if (deps.HasFlag(CacheDep.Dns))
         {
-            dns.RemoveImportedQueryEntries((d, _) =>
+            dns.RemoveQueryEntries((d, _) =>
                 d.Equals(domainLower, StringComparison.OrdinalIgnoreCase) ||
                 d.EndsWith("." + domainLower, StringComparison.OrdinalIgnoreCase) ||
-                d.EndsWith("._domainkey." + domainLower, StringComparison.OrdinalIgnoreCase));
+                d.EndsWith("._domainkey." + domainLower, StringComparison.OrdinalIgnoreCase),
+                importedOnly);
         }
 
         // Server-specific DNS queries
         if (deps.HasFlag(CacheDep.ServerDns))
         {
-            dns.RemoveImportedServerQueryEntries((_, d, _2) =>
+            dns.RemoveServerQueryEntries((_, d, _2) =>
                 d.Equals(domainLower, StringComparison.OrdinalIgnoreCase) ||
-                d.EndsWith("." + domainLower, StringComparison.OrdinalIgnoreCase));
+                d.EndsWith("." + domainLower, StringComparison.OrdinalIgnoreCase),
+                importedOnly);
         }
 
         // PTR lookups for MX IPs
         if (deps.HasFlag(CacheDep.Ptr) && mxIps.Count > 0)
         {
-            dns.RemoveImportedPtrEntries(ip => mxIps.Contains(ip));
+            dns.RemovePtrEntries(ip => mxIps.Contains(ip), importedOnly);
         }
 
         // SMTP probes for MX hosts (keyed as "host:port")
         if (deps.HasFlag(CacheDep.Smtp) && mxHosts.Count > 0)
         {
-            smtp.RemoveImportedProbeEntries(key =>
-                mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase)));
-            smtp.RemoveImportedRelayEntries(key =>
+            smtp.RemoveProbeEntries(key =>
+                mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase)),
+                importedOnly);
+            smtp.RemoveRelayEntries(key =>
                 key.Contains("|" + domainLower, StringComparison.OrdinalIgnoreCase) ||
-                mxHosts.Any(h => key.Contains(h, StringComparison.OrdinalIgnoreCase)));
+                mxHosts.Any(h => key.Contains(h, StringComparison.OrdinalIgnoreCase)),
+                importedOnly);
         }
 
         // Port probes for MX hosts
         if (deps.HasFlag(CacheDep.Port) && mxHosts.Count > 0)
         {
-            smtp.RemoveImportedPortEntries(key =>
-                mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase)));
+            smtp.RemovePortEntries(key =>
+                mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase)),
+                importedOnly);
         }
 
         // RCPT probes (keyed as "host:email")
         if (deps.HasFlag(CacheDep.Rcpt))
         {
-            smtp.RemoveImportedRcptEntries(key =>
+            smtp.RemoveRcptEntries(key =>
                 key.Contains("@" + domainLower, StringComparison.OrdinalIgnoreCase) ||
-                (mxHosts.Count > 0 && mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase))));
+                (mxHosts.Count > 0 && mxHosts.Any(h => key.StartsWith(h + ":", StringComparison.OrdinalIgnoreCase))),
+                importedOnly);
         }
 
         // HTTP entries for URLs containing the domain
         if (deps.HasFlag(CacheDep.Http))
         {
-            http.RemoveImportedGetEntries(url =>
-                url.Contains(domainLower, StringComparison.OrdinalIgnoreCase));
-            http.RemoveImportedGetWithHeadersEntries(url =>
-                url.Contains(domainLower, StringComparison.OrdinalIgnoreCase));
+            http.RemoveGetEntries(url =>
+                url.Contains(domainLower, StringComparison.OrdinalIgnoreCase),
+                importedOnly);
+            http.RemoveGetWithHeadersEntries(url =>
+                url.Contains(domainLower, StringComparison.OrdinalIgnoreCase),
+                importedOnly);
         }
     }
+
+    /// <summary>
+    /// Backward-compatible alias — clears only imported (from-disk) entries.
+    /// </summary>
+    public static void ClearImportedEntriesForDomain(
+        string domain, CacheDep deps,
+        DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http)
+        => ClearEntriesForDomain(domain, deps, dns, smtp, http, importedOnly: true);
 }

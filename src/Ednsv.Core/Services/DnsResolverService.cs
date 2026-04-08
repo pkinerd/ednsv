@@ -539,54 +539,101 @@ public class DnsResolverService
         }
     }
 
-    // ── Recheck support: remove imported entries matching a predicate ────
+    // ── Recheck support: remove entries matching a predicate ──────────────
 
     /// <summary>
-    /// Removes imported DNS query cache entries matching the predicate.
-    /// Only entries loaded from disk cache are affected; entries generated
-    /// during this run are preserved.
+    /// Removes DNS query cache entries matching the predicate.
+    /// When importedOnly is true, only entries loaded from disk are affected;
+    /// when false, all matching entries are removed (for long-lived processes).
     /// </summary>
-    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate)
+    public void RemoveQueryEntries(Func<string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedQueryKeys.Keys)
+        if (importedOnly)
         {
-            if (predicate(key.domain, key.type))
+            foreach (var key in _importedQueryKeys.Keys)
             {
-                _queryCache.TryRemove(key, out _);
-                _importedQueryKeys.TryRemove(key, out _);
+                if (predicate(key.domain, key.type))
+                {
+                    _queryCache.TryRemove(key, out _);
+                    _importedQueryKeys.TryRemove(key, out _);
+                }
+            }
+        }
+        else
+        {
+            foreach (var key in _queryCache.Keys)
+            {
+                if (predicate(key.domain, key.type))
+                {
+                    _queryCache.TryRemove(key, out _);
+                    _importedQueryKeys.TryRemove(key, out _);
+                }
             }
         }
     }
 
     /// <summary>
-    /// Removes imported server query cache entries matching the predicate.
+    /// Removes server query cache entries matching the predicate.
     /// </summary>
-    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate)
+    public void RemoveServerQueryEntries(Func<string, string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedServerQueryKeys.Keys)
+        if (importedOnly)
         {
-            if (predicate(key.server, key.domain, key.type))
+            foreach (var key in _importedServerQueryKeys.Keys)
             {
-                _serverQueryCache.TryRemove(key, out _);
-                _importedServerQueryKeys.TryRemove(key, out _);
+                if (predicate(key.server, key.domain, key.type))
+                {
+                    _serverQueryCache.TryRemove(key, out _);
+                    _importedServerQueryKeys.TryRemove(key, out _);
+                }
+            }
+        }
+        else
+        {
+            foreach (var key in _serverQueryCache.Keys)
+            {
+                if (predicate(key.server, key.domain, key.type))
+                {
+                    _serverQueryCache.TryRemove(key, out _);
+                    _importedServerQueryKeys.TryRemove(key, out _);
+                }
             }
         }
     }
 
     /// <summary>
-    /// Removes imported PTR cache entries matching the predicate.
+    /// Removes PTR cache entries matching the predicate.
     /// </summary>
-    public void RemoveImportedPtrEntries(Func<string, bool> predicate)
+    public void RemovePtrEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedPtrKeys.Keys)
+        if (importedOnly)
         {
-            if (predicate(key))
+            foreach (var key in _importedPtrKeys.Keys)
             {
-                _ptrCache.TryRemove(key, out _);
-                _importedPtrKeys.TryRemove(key, out _);
+                if (predicate(key))
+                {
+                    _ptrCache.TryRemove(key, out _);
+                    _importedPtrKeys.TryRemove(key, out _);
+                }
+            }
+        }
+        else
+        {
+            foreach (var key in _ptrCache.Keys)
+            {
+                if (predicate(key))
+                {
+                    _ptrCache.TryRemove(key, out _);
+                    _importedPtrKeys.TryRemove(key, out _);
+                }
             }
         }
     }
+
+    // Backward-compatible aliases for CLI code
+    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate) => RemoveQueryEntries(predicate, importedOnly: true);
+    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate) => RemoveServerQueryEntries(predicate, importedOnly: true);
+    public void RemoveImportedPtrEntries(Func<string, bool> predicate) => RemovePtrEntries(predicate, importedOnly: true);
 
     /// <summary>
     /// Returns MX hostnames from the query cache for a domain, if available.
