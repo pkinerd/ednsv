@@ -192,6 +192,12 @@ public class SmtpProbeService
                             result.CertExpiry = cert2.NotAfter;
                             result.CertSans = GetSans(cert2);
                         }
+                        else
+                        {
+                            result.Error = "TLS succeeded but server did not provide a certificate";
+                            result.TlsTimeMs = sw.ElapsedMilliseconds;
+                            return result; // Allow retry
+                        }
                         result.TlsTimeMs = sw.ElapsedMilliseconds;
                     }
                     catch (Exception ex)

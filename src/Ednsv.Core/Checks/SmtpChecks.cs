@@ -60,9 +60,13 @@ public class SmtpTlsCertCheck : ICheck
                     if (probe.TlsProtocol != default)
                         result.Details.Add($"  TLS Protocol: {probe.TlsProtocol}");
                 }
+                else if (probe.Connected && probe.SupportsStartTls)
+                {
+                    result.Warnings.Add($"{mxHost}: STARTTLS supported but TLS certificate could not be obtained ({probe.Error ?? "handshake failed"})");
+                }
                 else if (probe.Connected)
                 {
-                    result.Errors.Add($"{mxHost}: Connected but no TLS certificate obtained — TLS handshake failed");
+                    result.Details.Add($"{mxHost}: Connected but STARTTLS not offered — no TLS certificate to check");
                 }
                 else
                 {
