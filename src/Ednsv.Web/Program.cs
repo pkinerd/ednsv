@@ -131,8 +131,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
             queries = (job.Dns.CacheHits - job.DnsHitsBaseline) + (job.Dns.CacheMisses - job.DnsMissesBaseline),
             cacheHits = job.Dns.CacheHits - job.DnsHitsBaseline,
             sent = job.Dns.CacheMisses - job.DnsMissesBaseline,
-            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline,
-            errors = job.Dns.QueryErrors.Count - job.DnsErrorsBaseline
+            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline
         } : null,
         smtp = job.Smtp != null ? new
         {
@@ -232,7 +231,6 @@ class ValidationJob
     public int DnsHitsBaseline;
     public int DnsMissesBaseline;
     public int DnsResponsesBaseline;
-    public int DnsErrorsBaseline;
     public int SmtpProbesStartedBaseline;
     public int SmtpProbesCompletedBaseline;
     public int PortsStartedBaseline;
@@ -251,7 +249,6 @@ class ValidationJob
             DnsHitsBaseline = Dns.CacheHits;
             DnsMissesBaseline = Dns.CacheMisses;
             DnsResponsesBaseline = Dns.ResponsesReceived;
-            DnsErrorsBaseline = Dns.QueryErrors.Count;
         }
         if (Smtp != null)
         {
@@ -274,7 +271,6 @@ class ValidationTracker
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
-        job.SnapshotBaselines();
         _jobs[jobId] = job;
 
         _ = Task.Run(async () =>
@@ -290,6 +286,11 @@ class ValidationTracker
 
                 var validator = new DomainValidator(dns, smtp, http);
                 if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
+
+                // Snapshot baselines AFTER validator is created but BEFORE ValidateAsync
+                // runs (which calls ResetErrors and starts incrementing counters).
+                job.SnapshotBaselines();
+
                 validator.OnCheckStarted += name => job.CurrentCheck = name;
                 validator.OnCheckCompleted += (_, result) =>
                 {
