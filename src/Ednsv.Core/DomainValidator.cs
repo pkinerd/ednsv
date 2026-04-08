@@ -236,8 +236,9 @@ public class DomainValidator
         var report = new ValidationReport { Domain = domain };
         _validationSw = Stopwatch.StartNew();
 
-        // Reset per-validation state while keeping shared caches
+        // Reset per-validation counters while keeping shared caches
         _dns.ResetErrors();
+        _smtp.ResetCounters();
 
         var context = new CheckContext
         {

@@ -57,6 +57,15 @@ public class SmtpProbeService
     public int PortsStarted => _portsStarted;
     public int PortsCompleted => _portsCompleted;
 
+    /// <summary>Resets per-validation diagnostic counters.</summary>
+    public void ResetCounters()
+    {
+        Interlocked.Exchange(ref _probesStarted, 0);
+        Interlocked.Exchange(ref _probesCompleted, 0);
+        Interlocked.Exchange(ref _portsStarted, 0);
+        Interlocked.Exchange(ref _portsCompleted, 0);
+    }
+
     /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
     public Action<string>? Trace { get; set; }
 
