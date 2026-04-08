@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using Microsoft.Extensions.Caching.Memory;
 
 namespace Ednsv.Core.Services;
 
@@ -9,20 +8,25 @@ public class HttpProbeService
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
 
-    private readonly MemoryCache? _memCache;
-    private readonly TimeSpan _cacheTtl;
-    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
-    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
+    // Wrapper classes so value tuples can be stored in ProbeCache<T> (requires class constraint)
+    private sealed class GetResult
+    {
+        public bool Success; public string Content = ""; public int StatusCode;
+        public (bool, string, int) ToTuple() => (Success, Content, StatusCode);
+    }
+    private sealed class GetWithHeadersResult
+    {
+        public bool Success; public string Content = ""; public int StatusCode; public string? ContentType;
+        public (bool, string, int, string?) ToTuple() => (Success, Content, StatusCode, ContentType);
+    }
 
-    // Track keys loaded from disk cache
-    private readonly ConcurrentDictionary<string, bool> _importedGetKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedGetWithHeadersKeys = new();
+    private readonly ProbeCache<GetResult> _getCache;
+    private readonly ProbeCache<GetWithHeadersResult> _getWithHeadersCache;
 
     public HttpProbeService(TimeSpan? cacheTtl = null)
     {
-        _cacheTtl = cacheTtl ?? TimeSpan.Zero;
-        if (_cacheTtl > TimeSpan.Zero)
-            _memCache = new MemoryCache(new MemoryCacheOptions());
+        _getCache = new ProbeCache<GetResult>(cacheTtl);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true,
@@ -37,14 +41,8 @@ public class HttpProbeService
 
     public async Task<(bool success, string content, int statusCode)> GetAsync(string url, int? maxRetries = null)
     {
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Http))
-        {
-            if (_memCache.TryGetValue($"get:{url}", out (bool, string, int) memVal))
-                return memVal;
-        }
-        if (_getCache.TryGetValue(url, out var cached))
-            return cached;
+        if (_getCache.TryGet(url, out var cached, RecheckHelper.CacheDep.Http))
+            return cached.ToTuple();
 
         var retries = maxRetries ?? MaxRetries;
         (bool success, string content, int statusCode) lastResult = default;
@@ -54,11 +52,9 @@ public class HttpProbeService
             {
                 var response = await _client.GetAsync(url);
                 var content = await response.Content.ReadAsStringAsync();
-                var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
-                // Any HTTP response (even 4xx/5xx) is a real answer — cache immediately
-                _getCache[url] = result;
-                if (_memCache != null) _memCache.Set($"get:{url}", result, _cacheTtl);
-                return result;
+                var result = new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
+                _getCache.Set(url, result);
+                return result.ToTuple();
             }
             catch (Exception ex)
             {
@@ -66,22 +62,14 @@ public class HttpProbeService
             }
         }
 
-        // All attempts failed — cache the failure
-        _getCache[url] = lastResult;
-        if (_memCache != null) _memCache.Set($"get:{url}", lastResult, _cacheTtl);
+        _getCache.Set(url, new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode });
         return lastResult;
     }
 
     public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
     {
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Http))
-        {
-            if (_memCache.TryGetValue($"gwh:{url}", out (bool, string, int, string?) memVal))
-                return memVal;
-        }
-        if (_getWithHeadersCache.TryGetValue(url, out var cached))
-            return cached;
+        if (_getWithHeadersCache.TryGet(url, out var cached, RecheckHelper.CacheDep.Http))
+            return cached.ToTuple();
 
         (bool success, string content, int statusCode, string? contentType) lastResult = default;
         for (int attempt = 0; attempt < MaxRetries; attempt++)
@@ -91,10 +79,9 @@ public class HttpProbeService
                 var response = await _client.GetAsync(url);
                 var content = await response.Content.ReadAsStringAsync();
                 var contentType = response.Content.Headers.ContentType?.MediaType;
-                var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
-                _getWithHeadersCache[url] = result;
-                if (_memCache != null) _memCache.Set($"gwh:{url}", result, _cacheTtl);
-                return result;
+                var result = new GetWithHeadersResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode, ContentType = contentType };
+                _getWithHeadersCache.Set(url, result);
+                return result.ToTuple();
             }
             catch (Exception ex)
             {
@@ -102,8 +89,7 @@ public class HttpProbeService
             }
         }
 
-        _getWithHeadersCache[url] = lastResult;
-        if (_memCache != null) _memCache.Set($"gwh:{url}", lastResult, _cacheTtl);
+        _getWithHeadersCache.Set(url, new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType });
         return lastResult;
     }
 
@@ -112,52 +98,38 @@ public class HttpProbeService
     public Dictionary<string, HttpGetCacheEntry> ExportGetCache()
     {
         var result = new Dictionary<string, HttpGetCacheEntry>();
-        foreach (var kvp in _getCache)
-            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.success, Content = kvp.Value.content, StatusCode = kvp.Value.statusCode };
+        foreach (var kvp in _getCache.Export())
+            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode };
         return result;
     }
 
     public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
-            _getCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode));
-            _importedGetKeys.TryAdd(kvp.Key, true);
-        }
+            _getCache.Import(kvp.Key, new GetResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode });
     }
 
     public Dictionary<string, HttpGetWithHeadersCacheEntry> ExportGetWithHeadersCache()
     {
         var result = new Dictionary<string, HttpGetWithHeadersCacheEntry>();
-        foreach (var kvp in _getWithHeadersCache)
-            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.success, Content = kvp.Value.content, StatusCode = kvp.Value.statusCode, ContentType = kvp.Value.contentType };
+        foreach (var kvp in _getWithHeadersCache.Export())
+            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType };
         return result;
     }
 
     public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
-            _getWithHeadersCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode, kvp.Value.ContentType));
-            _importedGetWithHeadersKeys.TryAdd(kvp.Key, true);
-        }
+            _getWithHeadersCache.Import(kvp.Key, new GetWithHeadersResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType });
     }
 
     // ── Recheck support ─────────────────────────────────────────────────
 
     public void RemoveGetEntries(Func<string, bool> predicate, bool importedOnly = true)
-    {
-        var keys = importedOnly ? _importedGetKeys.Keys : (ICollection<string>)_getCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _getCache.TryRemove(key, out _); _importedGetKeys.TryRemove(key, out _); _memCache?.Remove($"get:{key}"); }
-    }
+        => _getCache.Remove(predicate, importedOnly);
 
     public void RemoveGetWithHeadersEntries(Func<string, bool> predicate, bool importedOnly = true)
-    {
-        var keys = importedOnly ? _importedGetWithHeadersKeys.Keys : (ICollection<string>)_getWithHeadersCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _getWithHeadersCache.TryRemove(key, out _); _importedGetWithHeadersKeys.TryRemove(key, out _); _memCache?.Remove($"gwh:{key}"); }
-    }
+        => _getWithHeadersCache.Remove(predicate, importedOnly);
 
     // Backward-compatible aliases for CLI code
     public void RemoveImportedGetEntries(Func<string, bool> predicate) => RemoveGetEntries(predicate, importedOnly: true);

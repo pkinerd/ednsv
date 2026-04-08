@@ -32,25 +32,17 @@ public class DnsResolverService
     public Action<string>? Trace { get; set; }
 
     /// <summary>In-memory cache with per-entry TTL. Null = no expiry (CLI default).</summary>
-    private readonly MemoryCache? _memCache;
-    private readonly TimeSpan _cacheTtl;
+    private readonly TimeSpan? _cacheTtl;
 
-    // Application-level cache for DNS queries — also used for disk persistence export.
-    // When _memCache is set, reads check MemoryCache first (TTL-aware).
-    private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
-    private readonly ConcurrentDictionary<string, List<string>> _ptrCache = new();
-    // Cache for direct server queries (keyed by server+domain+type)
-    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), IDnsQueryResponse> _serverQueryCache = new();
+    // Unified caches — single source of truth (MemoryCache) with export log
+    private readonly ProbeCache<IDnsQueryResponse> _queryCache;
+    private readonly ProbeCache<List<string>> _ptrCache;
+    private readonly ProbeCache<IDnsQueryResponse> _serverQueryCache;
     // Tracks servers that are completely unreachable (network/timeout failures).
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
-
-    // Track keys loaded from disk cache (vs. generated during this run)
-    private readonly ConcurrentDictionary<(string domain, QueryType type), bool> _importedQueryKeys = new();
-    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), bool> _importedServerQueryKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedPtrKeys = new();
 
     public DnsResolverService() : this(null) { }
 
@@ -128,77 +120,30 @@ public class DnsResolverService
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         _refillTimer = new Timer(_ => RefillTokens(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
-        // In-memory cache TTL — when set, entries expire after the specified duration.
-        _cacheTtl = cacheTtl ?? TimeSpan.Zero;
-        if (_cacheTtl > TimeSpan.Zero)
-            _memCache = new MemoryCache(new MemoryCacheOptions());
+        // In-memory caches with optional TTL
+        _cacheTtl = cacheTtl;
+        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
+        _ptrCache = new ProbeCache<List<string>>(cacheTtl);
+        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
     }
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
-    {
-        // Check MemoryCache (cross-validation TTL cache) — skip if rechecking DNS
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Dns))
-        {
-            var memKey = $"q:{key.domain}:{key.type}";
-            if (_memCache.TryGetValue(memKey, out IDnsQueryResponse? memVal) && memVal != null)
-            {
-                value = memVal;
-                return true;
-            }
-        }
-        // Always check ConcurrentDictionary for within-validation dedup
-        return _queryCache.TryGetValue(key, out value!);
-    }
+        => _queryCache.TryGet($"q:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.Dns);
 
     private void SetQueryCache((string domain, QueryType type) key, IDnsQueryResponse value)
-    {
-        _queryCache[key] = value;
-        if (_memCache != null)
-            _memCache.Set($"q:{key.domain}:{key.type}", value, _cacheTtl);
-    }
+        => _queryCache.Set($"q:{key.domain}:{key.type}", value);
 
     private bool TryGetPtrCache(string ip, out List<string> value)
-    {
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Ptr))
-        {
-            if (_memCache.TryGetValue($"ptr:{ip}", out List<string>? memVal) && memVal != null)
-            {
-                value = memVal;
-                return true;
-            }
-        }
-        return _ptrCache.TryGetValue(ip, out value!);
-    }
+        => _ptrCache.TryGet($"ptr:{ip}", out value, RecheckHelper.CacheDep.Ptr);
 
     private void SetPtrCache(string ip, List<string> value)
-    {
-        _ptrCache[ip] = value;
-        if (_memCache != null)
-            _memCache.Set($"ptr:{ip}", value, _cacheTtl);
-    }
+        => _ptrCache.Set($"ptr:{ip}", value);
 
     private bool TryGetServerQueryCache((string server, string domain, QueryType type) key, out IDnsQueryResponse value)
-    {
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.ServerDns))
-        {
-            if (_memCache.TryGetValue($"sq:{key.server}:{key.domain}:{key.type}", out IDnsQueryResponse? memVal) && memVal != null)
-            {
-                value = memVal;
-                return true;
-            }
-        }
-        return _serverQueryCache.TryGetValue(key, out value!);
-    }
+        => _serverQueryCache.TryGet($"sq:{key.server}:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.ServerDns);
 
     private void SetServerQueryCache((string server, string domain, QueryType type) key, IDnsQueryResponse value)
-    {
-        _serverQueryCache[key] = value;
-        if (_memCache != null)
-            _memCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value, _cacheTtl);
-    }
+        => _serverQueryCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value);
 
     private void RefillTokens()
     {
@@ -257,7 +202,7 @@ public class DnsResolverService
     public int CacheMisses => _cacheMisses;
     /// <summary>Number of network DNS queries that have completed (success or error).</summary>
     public int ResponsesReceived => _responsesReceived;
-    public int CacheSize => _queryCache.Count;
+    public int CacheSize => _queryCache.Count + _ptrCache.Count + _serverQueryCache.Count;
 
     /// <summary>
     /// Resets per-validation error list for CLI use. Does NOT reset cumulative
@@ -640,37 +585,38 @@ public class DnsResolverService
     }
 
     public Dictionary<string, List<string>> ExportPtrCache()
-        => _ptrCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-    public void ImportPtrCache(Dictionary<string, List<string>> entries)
     {
-        foreach (var kvp in entries)
+        var result = new Dictionary<string, List<string>>();
+        foreach (var kvp in _ptrCache.Export())
         {
-            _ptrCache.TryAdd(kvp.Key, kvp.Value);
-            _importedPtrKeys.TryAdd(kvp.Key, true);
-        }
-    }
-
-    /// <summary>
-    /// Exports the DNS query cache as serializable DTOs.
-    /// Queries containing unsupported record types (DNSSEC, TLSA, etc.) are skipped.
-    /// </summary>
-    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
-    {
-        var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _queryCache)
-        {
-            var key = $"{kvp.Key.domain}|{kvp.Key.type}";
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
-            if (entry != null)
-                result[key] = entry;
+            // ProbeCache key is "ptr:ip", disk format is just "ip"
+            var ip = kvp.Key.StartsWith("ptr:") ? kvp.Key[4..] : kvp.Key;
+            result[ip] = kvp.Value;
         }
         return result;
     }
 
-    /// <summary>
-    /// Imports DNS query cache from serialized DTOs.
-    /// </summary>
+    public void ImportPtrCache(Dictionary<string, List<string>> entries)
+    {
+        foreach (var kvp in entries)
+            _ptrCache.Import($"ptr:{kvp.Key}", kvp.Value);
+    }
+
+    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
+    {
+        var result = new Dictionary<string, DnsCacheEntry>();
+        foreach (var kvp in _queryCache.Export())
+        {
+            // ProbeCache key is "q:domain:type", disk format is "domain|type"
+            var cacheKey = kvp.Key.StartsWith("q:") ? kvp.Key[2..] : kvp.Key;
+            var diskKey = cacheKey.Replace(':', '|');
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            if (entry != null)
+                result[diskKey] = entry;
+        }
+        return result;
+    }
+
     public void ImportQueryCache(Dictionary<string, DnsCacheEntry> entries)
     {
         foreach (var kvp in entries)
@@ -678,32 +624,26 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 2);
             if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
                 continue;
-            var key = (parts[0].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _queryCache.TryAdd(key, response);
-            _importedQueryKeys.TryAdd(key, true);
+            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response);
         }
     }
 
-    /// <summary>
-    /// Exports the per-server DNS query cache as serializable DTOs.
-    /// </summary>
     public Dictionary<string, DnsCacheEntry> ExportServerQueryCache()
     {
         var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _serverQueryCache)
+        foreach (var kvp in _serverQueryCache.Export())
         {
-            var key = $"{kvp.Key.server}|{kvp.Key.domain}|{kvp.Key.type}";
+            // ProbeCache key is "sq:server:domain:type", disk format is "server|domain|type"
+            var cacheKey = kvp.Key.StartsWith("sq:") ? kvp.Key[3..] : kvp.Key;
+            var diskKey = cacheKey.Replace(':', '|');
             var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
             if (entry != null)
-                result[key] = entry;
+                result[diskKey] = entry;
         }
         return result;
     }
 
-    /// <summary>
-    /// Imports per-server DNS query cache from serialized DTOs.
-    /// </summary>
     public void ImportServerQueryCache(Dictionary<string, DnsCacheEntry> entries)
     {
         foreach (var kvp in entries)
@@ -711,10 +651,8 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 3);
             if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
                 continue;
-            var key = (parts[0], parts[1].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _serverQueryCache.TryAdd(key, response);
-            _importedServerQueryKeys.TryAdd(key, true);
+            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response);
         }
     }
 
@@ -727,92 +665,36 @@ public class DnsResolverService
     /// </summary>
     public void RemoveQueryEntries(Func<string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        if (importedOnly)
+        _queryCache.Remove(key =>
         {
-            foreach (var key in _importedQueryKeys.Keys)
-            {
-                if (predicate(key.domain, key.type))
-                {
-                    _queryCache.TryRemove(key, out _);
-                    _importedQueryKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"q:{key.domain}:{key.type}");
-                }
-            }
-        }
-        else
-        {
-            foreach (var key in _queryCache.Keys)
-            {
-                if (predicate(key.domain, key.type))
-                {
-                    _queryCache.TryRemove(key, out _);
-                    _importedQueryKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"q:{key.domain}:{key.type}");
-                }
-            }
-        }
+            // Key format: "q:domain:type"
+            if (!key.StartsWith("q:")) return false;
+            var rest = key[2..];
+            var sep = rest.LastIndexOf(':');
+            if (sep < 0) return false;
+            var domain = rest[..sep];
+            return Enum.TryParse<QueryType>(rest[(sep + 1)..], out var type) && predicate(domain, type);
+        }, importedOnly);
     }
 
-    /// <summary>
-    /// Removes server query cache entries matching the predicate.
-    /// </summary>
     public void RemoveServerQueryEntries(Func<string, string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        if (importedOnly)
+        _serverQueryCache.Remove(key =>
         {
-            foreach (var key in _importedServerQueryKeys.Keys)
-            {
-                if (predicate(key.server, key.domain, key.type))
-                {
-                    _serverQueryCache.TryRemove(key, out _);
-                    _importedServerQueryKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"sq:{key.server}:{key.domain}:{key.type}");
-                }
-            }
-        }
-        else
-        {
-            foreach (var key in _serverQueryCache.Keys)
-            {
-                if (predicate(key.server, key.domain, key.type))
-                {
-                    _serverQueryCache.TryRemove(key, out _);
-                    _importedServerQueryKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"sq:{key.server}:{key.domain}:{key.type}");
-                }
-            }
-        }
+            // Key format: "sq:server:domain:type"
+            if (!key.StartsWith("sq:")) return false;
+            var parts = key[3..].Split(':', 3);
+            return parts.Length == 3 && Enum.TryParse<QueryType>(parts[2], out var type) && predicate(parts[0], parts[1], type);
+        }, importedOnly);
     }
 
-    /// <summary>
-    /// Removes PTR cache entries matching the predicate.
-    /// </summary>
     public void RemovePtrEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        if (importedOnly)
+        _ptrCache.Remove(key =>
         {
-            foreach (var key in _importedPtrKeys.Keys)
-            {
-                if (predicate(key))
-                {
-                    _ptrCache.TryRemove(key, out _);
-                    _importedPtrKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"ptr:{key}");
-                }
-            }
-        }
-        else
-        {
-            foreach (var key in _ptrCache.Keys)
-            {
-                if (predicate(key))
-                {
-                    _ptrCache.TryRemove(key, out _);
-                    _importedPtrKeys.TryRemove(key, out _);
-                    _memCache?.Remove($"ptr:{key}");
-                }
-            }
-        }
+            // Key format: "ptr:ip"
+            return key.StartsWith("ptr:") && predicate(key[4..]);
+        }, importedOnly);
     }
 
     // Backward-compatible aliases for CLI code

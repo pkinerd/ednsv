@@ -37,27 +37,16 @@ public class SmtpProbeService
     private const int PortMaxRetries = 2;
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
-    private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
-    private readonly ConcurrentDictionary<string, bool> _portCache = new();
-
-    /// <summary>In-memory cache with per-entry TTL. Null = no expiry.</summary>
-    private readonly MemoryCache? _memCache;
-    private readonly TimeSpan _cacheTtl;
+    private readonly ProbeCache<SmtpProbeResult> _probeCache;
+    private readonly ProbeCacheValue<bool> _portCache;
 
     public SmtpProbeService(TimeSpan? cacheTtl = null)
     {
-        _cacheTtl = cacheTtl ?? TimeSpan.Zero;
-        if (_cacheTtl > TimeSpan.Zero)
-            _memCache = new MemoryCache(new MemoryCacheOptions());
+        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl);
+        _portCache = new ProbeCacheValue<bool>(cacheTtl);
     }
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
     private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
-
-    // Track keys loaded from disk cache
-    private readonly ConcurrentDictionary<string, bool> _importedProbeKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedPortKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedRcptKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedRelayKeys = new();
 
     // Counters for diagnostics
     private int _probesStarted;
@@ -83,19 +72,8 @@ public class SmtpProbeService
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
-        var cacheKey = $"{host.ToLowerInvariant()}:{port}";
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-
-        // Check MemoryCache first (cross-validation TTL cache) — skip if rechecking SMTP
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Smtp))
-        {
-            if (_memCache.TryGetValue($"smtp:{cacheKey}", out SmtpProbeResult? memVal) && memVal != null)
-                return memVal;
-        }
-
-        // Check ConcurrentDictionary (within-validation dedup) — always check, even during recheck.
-        // This prevents multiple concurrent checks from probing the same host simultaneously.
-        if (_probeCache.TryGetValue(cacheKey, out var cached))
+        var cacheKey = $"smtp:{host.ToLowerInvariant()}:{port}";
+        if (_probeCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Smtp))
             return cached;
 
         Interlocked.Increment(ref _probesStarted);
@@ -112,8 +90,7 @@ public class SmtpProbeService
             Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
         }
 
-        _probeCache[cacheKey] = result;
-        if (_memCache != null) _memCache.Set($"smtp:{cacheKey}", result, _cacheTtl);
+        _probeCache.Set(cacheKey, result);
         Interlocked.Increment(ref _probesCompleted);
         if (Trace != null && sw != null)
             Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
@@ -242,13 +219,7 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
-        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
-        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Port))
-        {
-            if (_memCache.TryGetValue($"p:{cacheKey}", out bool memVal))
-                return memVal;
-        }
-        if (_portCache.TryGetValue(cacheKey, out var cached))
+        if (_portCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Port))
             return cached;
 
         Interlocked.Increment(ref _portsStarted);
@@ -276,8 +247,7 @@ public class SmtpProbeService
             if (reachable) break;
         }
 
-        _portCache[cacheKey] = reachable;
-        if (_memCache != null) _memCache.Set($"p:{cacheKey}", reachable, _cacheTtl);
+        _portCache.Set(cacheKey, reachable);
         Interlocked.Increment(ref _portsCompleted);
         if (Trace != null && portSw != null)
             Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
@@ -488,27 +458,20 @@ public class SmtpProbeService
     public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
     {
         var result = new Dictionary<string, SmtpProbeCacheEntry>();
-        foreach (var kvp in _probeCache)
+        foreach (var kvp in _probeCache.Export())
         {
-            result[kvp.Key] = new SmtpProbeCacheEntry
+            var diskKey = kvp.Key.StartsWith("smtp:") ? kvp.Key[5..] : kvp.Key;
+            result[diskKey] = new SmtpProbeCacheEntry
             {
-                Connected = kvp.Value.Connected,
-                Banner = kvp.Value.Banner,
-                SupportsStartTls = kvp.Value.SupportsStartTls,
-                EhloCapabilities = kvp.Value.EhloCapabilities,
-                CertSubject = kvp.Value.CertSubject,
-                CertIssuer = kvp.Value.CertIssuer,
-                CertExpiry = kvp.Value.CertExpiry,
-                CertSans = kvp.Value.CertSans,
+                Connected = kvp.Value.Connected, Banner = kvp.Value.Banner,
+                SupportsStartTls = kvp.Value.SupportsStartTls, EhloCapabilities = kvp.Value.EhloCapabilities,
+                CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
+                CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
                 CertRawBase64 = kvp.Value.Certificate != null ? Convert.ToBase64String(kvp.Value.Certificate.RawData) : null,
-                TlsProtocol = kvp.Value.TlsProtocol.ToString(),
-                TlsCipherSuite = kvp.Value.TlsCipherSuite,
-                SmtpMaxSize = kvp.Value.SmtpMaxSize,
-                SupportsRequireTls = kvp.Value.SupportsRequireTls,
-                ConnectTimeMs = kvp.Value.ConnectTimeMs,
-                BannerTimeMs = kvp.Value.BannerTimeMs,
-                EhloTimeMs = kvp.Value.EhloTimeMs,
-                TlsTimeMs = kvp.Value.TlsTimeMs,
+                TlsProtocol = kvp.Value.TlsProtocol.ToString(), TlsCipherSuite = kvp.Value.TlsCipherSuite,
+                SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,
+                ConnectTimeMs = kvp.Value.ConnectTimeMs, BannerTimeMs = kvp.Value.BannerTimeMs,
+                EhloTimeMs = kvp.Value.EhloTimeMs, TlsTimeMs = kvp.Value.TlsTimeMs,
                 Error = kvp.Value.Error
             };
         }
@@ -526,94 +489,64 @@ public class SmtpProbeService
                 try { cert = new X509Certificate2(Convert.FromBase64String(kvp.Value.CertRawBase64)); }
                 catch { /* ignore corrupt cached cert data */ }
             }
-            _probeCache.TryAdd(kvp.Key, new SmtpProbeResult
+            _probeCache.Import($"smtp:{kvp.Key}", new SmtpProbeResult
             {
-                Connected = kvp.Value.Connected,
-                Banner = kvp.Value.Banner,
-                SupportsStartTls = kvp.Value.SupportsStartTls,
-                EhloCapabilities = kvp.Value.EhloCapabilities,
-                Certificate = cert,
-                CertSubject = kvp.Value.CertSubject,
-                CertIssuer = kvp.Value.CertIssuer,
-                CertExpiry = kvp.Value.CertExpiry,
-                CertSans = kvp.Value.CertSans,
-                TlsProtocol = proto,
-                TlsCipherSuite = kvp.Value.TlsCipherSuite,
-                SmtpMaxSize = kvp.Value.SmtpMaxSize,
-                SupportsRequireTls = kvp.Value.SupportsRequireTls,
-                ConnectTimeMs = kvp.Value.ConnectTimeMs,
-                BannerTimeMs = kvp.Value.BannerTimeMs,
-                EhloTimeMs = kvp.Value.EhloTimeMs,
-                TlsTimeMs = kvp.Value.TlsTimeMs,
+                Connected = kvp.Value.Connected, Banner = kvp.Value.Banner,
+                SupportsStartTls = kvp.Value.SupportsStartTls, EhloCapabilities = kvp.Value.EhloCapabilities,
+                Certificate = cert, CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
+                CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
+                TlsProtocol = proto, TlsCipherSuite = kvp.Value.TlsCipherSuite,
+                SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,
+                ConnectTimeMs = kvp.Value.ConnectTimeMs, BannerTimeMs = kvp.Value.BannerTimeMs,
+                EhloTimeMs = kvp.Value.EhloTimeMs, TlsTimeMs = kvp.Value.TlsTimeMs,
                 Error = kvp.Value.Error
             });
-            _importedProbeKeys.TryAdd(kvp.Key, true);
         }
     }
 
     public Dictionary<string, bool> ExportPortCache()
-        => _portCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        => _portCache.Export();
 
     public void ImportPortCache(Dictionary<string, bool> entries)
     {
         foreach (var kvp in entries)
-        {
-            _portCache.TryAdd(kvp.Key, kvp.Value);
-            _importedPortKeys.TryAdd(kvp.Key, true);
-        }
+            _portCache.Import(kvp.Key, kvp.Value);
     }
 
     public Dictionary<string, RcptCacheEntry> ExportRcptCache()
     {
         var result = new Dictionary<string, RcptCacheEntry>();
         foreach (var kvp in _rcptCache)
-        {
-            result[kvp.Key] = new RcptCacheEntry
-            {
-                Accepted = kvp.Value.accepted,
-                Response = kvp.Value.response
-            };
-        }
+            result[kvp.Key] = new RcptCacheEntry { Accepted = kvp.Value.accepted, Response = kvp.Value.response };
         return result;
     }
 
     public void ImportRcptCache(Dictionary<string, RcptCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
             _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
-            _importedRcptKeys.TryAdd(kvp.Key, true);
-        }
     }
 
     // ── Recheck support ─────────────────────────────────────────────────
 
     public void RemoveProbeEntries(Func<string, bool> predicate, bool importedOnly = true)
-    {
-        var keys = importedOnly ? _importedProbeKeys.Keys : (ICollection<string>)_probeCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _probeCache.TryRemove(key, out _); _importedProbeKeys.TryRemove(key, out _); _memCache?.Remove($"smtp:{key}"); }
-    }
+        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]), importedOnly);
 
     public void RemovePortEntries(Func<string, bool> predicate, bool importedOnly = true)
-    {
-        var keys = importedOnly ? _importedPortKeys.Keys : (ICollection<string>)_portCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _portCache.TryRemove(key, out _); _importedPortKeys.TryRemove(key, out _); _memCache?.Remove($"p:{key}"); }
-    }
+        => _portCache.Remove(predicate, importedOnly);
 
     public void RemoveRcptEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        var keys = importedOnly ? _importedRcptKeys.Keys : (ICollection<string>)_rcptCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _rcptCache.TryRemove(key, out _); _importedRcptKeys.TryRemove(key, out _); }
+        var toRemove = _rcptCache.Keys.Where(predicate).ToList();
+        foreach (var key in toRemove)
+            _rcptCache.TryRemove(key, out _);
     }
 
     public void RemoveRelayEntries(Func<string, bool> predicate, bool importedOnly = true)
     {
-        var keys = importedOnly ? _importedRelayKeys.Keys : (ICollection<string>)_relayCache.Keys;
-        foreach (var key in keys)
-            if (predicate(key)) { _relayCache.TryRemove(key, out _); _importedRelayKeys.TryRemove(key, out _); }
+        var toRemove = _relayCache.Keys.Where(predicate).ToList();
+        foreach (var key in toRemove)
+            _relayCache.TryRemove(key, out _);
     }
 
     // Backward-compatible aliases for CLI code
@@ -639,10 +572,7 @@ public class SmtpProbeService
     public void ImportRelayCache(Dictionary<string, RelayCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
             _relayCache.TryAdd(kvp.Key, (kvp.Value.IsRelay, kvp.Value.Description));
-            _importedRelayKeys.TryAdd(kvp.Key, true);
-        }
     }
 
 }
