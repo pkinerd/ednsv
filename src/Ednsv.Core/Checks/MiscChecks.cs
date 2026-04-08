@@ -105,8 +105,9 @@ public class AutodiscoverCheck : ICheck
             }
             else if (srvResp.HasError)
             {
-                result.Severity = CheckSeverity.Warning;
+                result.Severity = CheckSeverity.Info;
                 result.Summary = "Could not query autodiscover DNS records";
+                result.Details.Add("DNS query for autodiscover SRV records failed");
             }
             else
             {
@@ -116,8 +117,8 @@ public class AutodiscoverCheck : ICheck
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Error;
-            result.Errors.Add(ex.Message);
+            result.Severity = CheckSeverity.Info;
+            result.Details.Add($"Autodiscover check failed: {ex.Message}");
         }
 
         return new List<CheckResult> { result };

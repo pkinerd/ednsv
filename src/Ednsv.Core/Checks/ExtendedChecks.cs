@@ -570,16 +570,16 @@ public class CertificateTransparencyCheck : ICheck
             }
             else
             {
-                result.Severity = CheckSeverity.Warning;
+                result.Severity = CheckSeverity.Info;
                 result.Summary = "Could not query CT logs — crt.sh unreachable";
-                result.Warnings.Add($"HTTP request to crt.sh failed (status {statusCode}) — CT coverage unknown");
+                result.Details.Add($"HTTP request to crt.sh failed (status {statusCode})");
             }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Warning;
-            result.Summary = "CT log query failed";
-            result.Warnings.Add($"Could not query CT logs: {ex.Message}");
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "CT log query skipped";
+            result.Details.Add($"Could not query CT logs: {ex.Message}");
         }
 
         return new List<CheckResult> { result };
@@ -708,14 +708,14 @@ public class NsecZoneWalkCheck : ICheck
                 result.Details.Add($"NSEC3 in use (algorithm={param.HashAlgorithm}, iterations={param.Iterations})");
 
                 if (param.Iterations > 100)
-                    result.Warnings.Add($"NSEC3 iterations={param.Iterations} — RFC 9276 recommends 0 for performance");
+                    result.Details.Add($"NSEC3 iterations={param.Iterations} — RFC 9276 recommends 0 for performance");
                 else
                     result.Details.Add($"Iterations={param.Iterations} (RFC 9276 recommends 0)");
 
                 if (param.Flags == 1)
                     result.Details.Add("Opt-out flag set (unsigned delegations not covered)");
 
-                result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+                result.Severity = CheckSeverity.Pass;
                 result.Summary = "NSEC3 protects against zone enumeration";
             }
             else
@@ -726,9 +726,9 @@ public class NsecZoneWalkCheck : ICheck
 
                 if (nsecRecords.Any())
                 {
-                    result.Severity = CheckSeverity.Warning;
+                    result.Severity = CheckSeverity.Info;
                     result.Summary = "NSEC (not NSEC3) — zone contents can be enumerated";
-                    result.Warnings.Add("Zone uses NSEC instead of NSEC3 — attackers can walk the zone to discover all hostnames");
+                    result.Details.Add("Zone uses NSEC instead of NSEC3 — zone walking possible but does not affect email delivery");
                     result.Warnings.Add("Consider migrating to NSEC3 to prevent zone enumeration (RFC 5155)");
                     foreach (var nsec in nsecRecords)
                         result.Details.Add($"NSEC: {nsec.DomainName} → {nsec.NextDomainName}");

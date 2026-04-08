@@ -1101,16 +1101,16 @@ public class SecurityTxtCheck : ICheck
             }
             else
             {
-                result.Severity = CheckSeverity.Warning;
+                result.Severity = CheckSeverity.Info;
                 result.Summary = "Could not fetch security.txt";
-                result.Warnings.Add($"HTTP request to {domain}/.well-known/security.txt failed (status {statusCode}) — cannot verify");
+                result.Details.Add($"HTTP request to {domain}/.well-known/security.txt failed (status {statusCode})");
             }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Warning;
-            result.Summary = "security.txt check failed";
-            result.Warnings.Add($"Could not check security.txt: {ex.Message}");
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "security.txt check skipped";
+            result.Details.Add($"Could not check security.txt: {ex.Message}");
         }
 
         return new List<CheckResult> { result };
