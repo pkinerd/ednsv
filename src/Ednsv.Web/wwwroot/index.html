@@ -160,6 +160,7 @@ function fmtDuration(d) {
 let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
 
 function renderReport(report, domain) {
+  activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
   const r = report.results || report.Results || [];
   const counts = { Pass: 0, Info: 0, Warning: 0, Error: 0, Critical: 0 };
   r.forEach(c => counts[c.severity] = (counts[c.severity]||0) + 1);
