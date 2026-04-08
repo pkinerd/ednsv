@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Ednsv.Core.Models;
 
 namespace Ednsv.Core.Services;
@@ -17,7 +18,7 @@ public sealed class CacheManager : IAsyncDisposable
     private readonly HttpProbeService _http;
 
     private BackgroundCacheFlusher? _flusher;
-    private Dictionary<string, DomainResultSummary>? _previousResults;
+    private ConcurrentDictionary<string, DomainResultSummary> _previousResults = new();
     private bool _disposed;
 
     public CacheManager(
@@ -41,7 +42,10 @@ public sealed class CacheManager : IAsyncDisposable
     public async Task<DiskCacheService.CacheLoadResult?> LoadAsync(bool retryErrors = false)
     {
         var result = await DiskCacheService.LoadAsync(_cacheDir, _ttl, _smtp, _http, _dns, retryErrors);
-        _previousResults = await DiskCacheService.LoadDomainResultsAsync(_cacheDir);
+        var loaded = await DiskCacheService.LoadDomainResultsAsync(_cacheDir);
+        if (loaded != null)
+            foreach (var kvp in loaded)
+                _previousResults[kvp.Key] = kvp.Value;
         return result;
     }
 
@@ -70,7 +74,6 @@ public sealed class CacheManager : IAsyncDisposable
     /// </summary>
     public Task SaveDomainResultAsync(string domain, DomainResultSummary summary)
     {
-        _previousResults ??= new Dictionary<string, DomainResultSummary>();
         _previousResults[domain.ToLowerInvariant()] = summary;
         return DiskCacheService.SaveDomainResultAsync(_cacheDir, domain, summary);
     }
@@ -84,8 +87,7 @@ public sealed class CacheManager : IAsyncDisposable
     /// </summary>
     public bool ClearForRecheck(string domain, CheckSeverity minSeverity, bool importedOnly = false)
     {
-        if (_previousResults == null ||
-            !_previousResults.TryGetValue(domain.ToLowerInvariant(), out var summary))
+        if (!_previousResults.TryGetValue(domain.ToLowerInvariant(), out var summary))
             return false;
 
         var deps = RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
@@ -99,7 +101,7 @@ public sealed class CacheManager : IAsyncDisposable
     /// <summary>
     /// Previous domain results loaded from the cache (for recheck decisions).
     /// </summary>
-    public Dictionary<string, DomainResultSummary>? PreviousResults => _previousResults;
+    public ConcurrentDictionary<string, DomainResultSummary> PreviousResults => _previousResults;
 
     public async ValueTask DisposeAsync()
     {

@@ -13,7 +13,7 @@ public class DnsResolverService
     private readonly LookupClient _directClient;
     private readonly LookupClient _dnsblClient;
     private readonly LookupClient _speculativeClient;
-    private static int MaxRetries = 3;
+    private static volatile int MaxRetries = 3;
 
     // ── Rate limiting ───────────────────────────────────────────────────
     // Token bucket: limits sustained query rate independent of response times.
@@ -165,12 +165,13 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// Tracks DNS query errors that occurred during the current validation.
-    /// Reset between domains via <see cref="ResetErrors"/>.
+    /// Legacy error tracking — only used by CLI for per-domain error display.
+    /// Web API should use CheckContext.QueryErrors instead.
     /// </summary>
     public ConcurrentBag<string> QueryErrors { get; private set; } = new();
 
-    // Cache hit/miss counters for diagnostics (reset per domain)
+    // Cumulative counters — never reset, only incremented.
+    // Web API uses baseline snapshots to compute per-validation deltas.
     private int _cacheHits;
     private int _cacheMisses;
     private int _responsesReceived;
@@ -181,14 +182,12 @@ public class DnsResolverService
     public int CacheSize => _queryCache.Count;
 
     /// <summary>
-    /// Clears per-validation error tracking while preserving the shared query cache.
+    /// Resets per-validation error list for CLI use. Does NOT reset cumulative
+    /// counters (those are append-only for thread safety with concurrent web requests).
     /// </summary>
     public void ResetErrors()
     {
         QueryErrors = new ConcurrentBag<string>();
-        Interlocked.Exchange(ref _cacheHits, 0);
-        Interlocked.Exchange(ref _cacheMisses, 0);
-        Interlocked.Exchange(ref _responsesReceived, 0);
     }
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)

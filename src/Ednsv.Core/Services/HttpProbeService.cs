@@ -5,7 +5,7 @@ namespace Ednsv.Core.Services;
 public class HttpProbeService
 {
     private readonly HttpClient _client;
-    private static int MaxRetries = 3;
+    private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();

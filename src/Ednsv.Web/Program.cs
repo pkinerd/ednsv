@@ -213,11 +213,17 @@ enum JobStatus { Running, Completed, Failed }
 class ValidationJob
 {
     public string Domain { get; set; } = "";
-    public JobStatus Status { get; set; } = JobStatus.Running;
-    public string? CurrentCheck { get; set; }
+    // Fields read by status endpoint, written by background task.
+    // volatile ensures cross-thread visibility without locks.
+    private volatile string? _currentCheck;
+    private volatile int _status = (int)JobStatus.Running;
+    private volatile ValidationReport? _report;
+    private volatile string? _error;
+    public string? CurrentCheck { get => _currentCheck; set => _currentCheck = value; }
+    public JobStatus Status { get => (JobStatus)_status; set => _status = (int)value; }
+    public ValidationReport? Report { get => _report; set => _report = value; }
+    public string? Error { get => _error; set => _error = value; }
     public int CompletedChecks;
-    public ValidationReport? Report { get; set; }
-    public string? Error { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
     // References to services for live stats (read-only, shared singletons)
     public DnsResolverService? Dns { get; set; }

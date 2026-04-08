@@ -391,8 +391,12 @@ public class DomainValidator
             }
         }
 
-        // Surface any DNS query errors so users know results may be incomplete
-        var dnsErrors = _dns.QueryErrors.ToList();
+        // Surface any DNS query errors so users know results may be incomplete.
+        // Use per-validation errors from CheckContext (thread-safe), falling back
+        // to shared service errors for backward compatibility with CLI.
+        var dnsErrors = context.QueryErrors.Any()
+            ? context.QueryErrors.ToList()
+            : _dns.QueryErrors.ToList();
         if (dnsErrors.Any())
         {
             report.Results.Add(new CheckResult

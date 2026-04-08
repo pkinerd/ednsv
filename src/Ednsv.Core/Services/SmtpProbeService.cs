@@ -34,7 +34,7 @@ public class SmtpProbeService
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
     private readonly TimeSpan _portTimeout = TimeSpan.FromSeconds(5);
     private const int PortMaxRetries = 2;
-    private static int MaxRetries = 3;
+    private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
