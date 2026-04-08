@@ -100,7 +100,10 @@ public class SmtpProbeService
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
             result = await ProbeSmtpAttemptAsync(host, port);
-            if (result.Connected) break; // Got a real connection — no need to retry
+            // Retry if connection failed OR if connected but TLS handshake failed
+            // (transient TLS failures are common with load-balanced mail servers)
+            if (result.Connected && result.Error == null) break;
+            if (result.Connected && result.SupportsStartTls && result.CertSubject != null) break;
             Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
         }
 
@@ -180,7 +183,14 @@ public class SmtpProbeService
                     {
                         var sslStream = new SslStream(stream, false,
                             (sender, cert, chain, errors) => true);
-                        await sslStream.AuthenticateAsClientAsync(host);
+                        var authTask = sslStream.AuthenticateAsClientAsync(host);
+                        if (await Task.WhenAny(authTask, Task.Delay(_timeout)) != authTask)
+                        {
+                            result.Error = "TLS handshake timed out";
+                            result.TlsTimeMs = sw.ElapsedMilliseconds;
+                            return result; // Allow retry — Connected is true but TLS failed
+                        }
+                        await authTask;
 
                         result.TlsProtocol = sslStream.SslProtocol;
                         result.TlsCipherSuite = sslStream.NegotiatedCipherSuite.ToString();
@@ -200,6 +210,7 @@ public class SmtpProbeService
                     {
                         result.TlsTimeMs = sw.ElapsedMilliseconds;
                         result.Error = $"TLS negotiation failed: {ex.Message}";
+                        return result; // Allow retry
                     }
                 }
             }
