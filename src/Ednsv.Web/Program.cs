@@ -125,6 +125,11 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
             cacheSize = job.Dns.CacheSize,
             errors = job.Dns.QueryErrors.Count
         } : null,
+        smtp = job.Smtp != null ? new
+        {
+            probes = job.Smtp.ProbesCompleted,
+            ports = job.Smtp.PortsProbed
+        } : null,
         elapsed = (DateTime.UtcNow - job.StartedAt).TotalSeconds,
         report = job.Report,
         error = job.Error
@@ -202,8 +207,9 @@ class ValidationJob
     public ValidationReport? Report { get; set; }
     public string? Error { get; set; }
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
-    // Live stats from DnsResolverService during validation
+    // Live stats from services during validation
     public DnsResolverService? Dns { get; set; }
+    public SmtpProbeService? Smtp { get; set; }
 }
 
 class ValidationTracker
@@ -215,7 +221,7 @@ class ValidationTracker
         CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
-        var job = new ValidationJob { Domain = domain, Dns = dns };
+        var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
         _jobs[jobId] = job;
 
         _ = Task.Run(async () =>

@@ -39,16 +39,12 @@ public class DomainValidator
 
         // ── Foundation checks: run sequentially, populate shared state ────
         // Order matters here — later checks depend on state set by earlier ones.
+        // Only checks that WRITE to CheckContext shared state belong here.
+        // Everything else runs concurrently.
         _foundationChecks = new List<ICheck>
         {
-            // Delegation → ctx.NsHosts, ctx.NsHostIps
-            new DelegationChainCheck(),
+            // AuthoritativeNsCheck → ctx.NsHosts, ctx.NsHostIps
             new AuthoritativeNsCheck(),
-            new DelegationConsistencyCheck(),
-
-            // SOA
-            new SoaRecordCheck(),
-            new SoaSerialConsistencyCheck(),
 
             // A/AAAA → ctx.DomainARecords, ctx.DomainAAAARecords
             new ARecordCheck(),
@@ -67,6 +63,14 @@ public class DomainValidator
         // ── Concurrent checks: run in parallel, read-only on shared state ──
         _concurrentChecks = new List<ICheck>
         {
+            // Delegation (reads NsHosts)
+            new DelegationChainCheck(),
+            new DelegationConsistencyCheck(),
+
+            // SOA (reads NsHosts)
+            new SoaRecordCheck(),
+            new SoaSerialConsistencyCheck(),
+
             // Glue records
             new NsGlueRecordCheck(),
 

@@ -128,13 +128,18 @@ function pollJob(jobId, domain) {
       const data = await res.json();
       if (data.status === 'running') {
         const d = data.dns;
+        const s = data.smtp;
         const elapsed = data.elapsed != null ? `${data.elapsed.toFixed(1)}s` : '';
         const parts = [];
         if (d) {
-          if (d.queries) parts.push(`${d.queries} queries`);
+          if (d.queries) parts.push(`${d.queries} DNS`);
           if (d.cacheMisses) parts.push(`${d.cacheMisses} sent`);
           if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
           if (d.errors) parts.push(`${d.errors} err`);
+        }
+        if (s && (s.probes || s.ports)) {
+          parts.push(`${s.probes} SMTP`);
+          if (s.ports) parts.push(`${s.ports} ports`);
         }
         const stats = parts.join(' / ');
 
