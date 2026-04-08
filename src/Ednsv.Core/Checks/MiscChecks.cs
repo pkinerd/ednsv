@@ -98,8 +98,21 @@ public class AutodiscoverCheck : ICheck
                     result.Details.Add($"autodiscover.{domain}: Not found");
             }
 
-            result.Severity = (srvRecords.Any() || chain.Any()) ? CheckSeverity.Pass : CheckSeverity.Info;
-            result.Summary = srvRecords.Any() || chain.Any() ? "Autodiscover configured" : "No autodiscover found";
+            if (srvRecords.Any() || chain.Any())
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "Autodiscover configured";
+            }
+            else if (srvResp.HasError)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Could not query autodiscover DNS records";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No autodiscover found";
+            }
         }
         catch (Exception ex)
         {

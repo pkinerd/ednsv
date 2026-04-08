@@ -273,7 +273,7 @@ public class ArcCheck : ICheck
             }
         }
 
-        result.Severity = found > 0 ? CheckSeverity.Info : CheckSeverity.Info;
+        result.Severity = found > 0 ? CheckSeverity.Pass : CheckSeverity.Info;
         result.Summary = found > 0 ? $"{found} ARC-compatible DKIM key(s) found" : "No dedicated ARC selectors found (ARC uses DKIM keys)";
 
         return new List<CheckResult> { result };

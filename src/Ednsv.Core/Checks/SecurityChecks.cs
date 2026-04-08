@@ -1094,16 +1094,23 @@ public class SecurityTxtCheck : ICheck
                 result.Severity = (hasContact && hasExpires) ? CheckSeverity.Pass : CheckSeverity.Warning;
                 result.Summary = "security.txt found";
             }
-            else
+            else if (success)
             {
                 result.Severity = CheckSeverity.Info;
                 result.Summary = "No security.txt found";
             }
+            else
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Could not fetch security.txt";
+                result.Warnings.Add($"HTTP request to {domain}/.well-known/security.txt failed (status {statusCode}) — cannot verify");
+            }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Error;
-            result.Errors.Add(ex.Message);
+            result.Severity = CheckSeverity.Warning;
+            result.Summary = "security.txt check failed";
+            result.Warnings.Add($"Could not check security.txt: {ex.Message}");
         }
 
         return new List<CheckResult> { result };
