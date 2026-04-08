@@ -43,7 +43,7 @@ public class HttpProbeService
             if (_memCache.TryGetValue($"get:{url}", out (bool, string, int) memVal))
                 return memVal;
         }
-        else if (_memCache == null && _getCache.TryGetValue(url, out var cached))
+        if (_getCache.TryGetValue(url, out var cached))
             return cached;
 
         var retries = maxRetries ?? MaxRetries;
@@ -56,7 +56,7 @@ public class HttpProbeService
                 var content = await response.Content.ReadAsStringAsync();
                 var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
                 // Any HTTP response (even 4xx/5xx) is a real answer — cache immediately
-                _getCache.TryAdd(url, result);
+                _getCache[url] = result;
                 if (_memCache != null) _memCache.Set($"get:{url}", result, _cacheTtl);
                 return result;
             }
@@ -67,7 +67,7 @@ public class HttpProbeService
         }
 
         // All attempts failed — cache the failure
-        _getCache.TryAdd(url, lastResult);
+        _getCache[url] = lastResult;
         if (_memCache != null) _memCache.Set($"get:{url}", lastResult, _cacheTtl);
         return lastResult;
     }
@@ -80,7 +80,7 @@ public class HttpProbeService
             if (_memCache.TryGetValue($"gwh:{url}", out (bool, string, int, string?) memVal))
                 return memVal;
         }
-        else if (_memCache == null && _getWithHeadersCache.TryGetValue(url, out var cached))
+        if (_getWithHeadersCache.TryGetValue(url, out var cached))
             return cached;
 
         (bool success, string content, int statusCode, string? contentType) lastResult = default;
@@ -92,7 +92,7 @@ public class HttpProbeService
                 var content = await response.Content.ReadAsStringAsync();
                 var contentType = response.Content.Headers.ContentType?.MediaType;
                 var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
-                _getWithHeadersCache.TryAdd(url, result);
+                _getWithHeadersCache[url] = result;
                 if (_memCache != null) _memCache.Set($"gwh:{url}", result, _cacheTtl);
                 return result;
             }
@@ -102,7 +102,7 @@ public class HttpProbeService
             }
         }
 
-        _getWithHeadersCache.TryAdd(url, lastResult);
+        _getWithHeadersCache[url] = lastResult;
         if (_memCache != null) _memCache.Set($"gwh:{url}", lastResult, _cacheTtl);
         return lastResult;
     }

@@ -136,7 +136,7 @@ public class DnsResolverService
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
     {
-        // If this validation is rechecking DNS, bypass MemoryCache (force fresh query)
+        // Check MemoryCache (cross-validation TTL cache) — skip if rechecking DNS
         var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
         if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Dns))
         {
@@ -146,21 +146,14 @@ public class DnsResolverService
                 value = memVal;
                 return true;
             }
-            value = default!;
-            return false;
         }
-        if (_memCache != null)
-        {
-            // Recheck mode: skip MemoryCache entirely, fall through to network
-            value = default!;
-            return false;
-        }
+        // Always check ConcurrentDictionary for within-validation dedup
         return _queryCache.TryGetValue(key, out value!);
     }
 
     private void SetQueryCache((string domain, QueryType type) key, IDnsQueryResponse value)
     {
-        _queryCache.TryAdd(key, value);
+        _queryCache[key] = value;
         if (_memCache != null)
             _memCache.Set($"q:{key.domain}:{key.type}", value, _cacheTtl);
     }
@@ -175,16 +168,13 @@ public class DnsResolverService
                 value = memVal;
                 return true;
             }
-            value = default!;
-            return false;
         }
-        if (_memCache != null) { value = default!; return false; }
         return _ptrCache.TryGetValue(ip, out value!);
     }
 
     private void SetPtrCache(string ip, List<string> value)
     {
-        _ptrCache.TryAdd(ip, value);
+        _ptrCache[ip] = value;
         if (_memCache != null)
             _memCache.Set($"ptr:{ip}", value, _cacheTtl);
     }
@@ -199,16 +189,13 @@ public class DnsResolverService
                 value = memVal;
                 return true;
             }
-            value = default!;
-            return false;
         }
-        if (_memCache != null) { value = default!; return false; }
         return _serverQueryCache.TryGetValue(key, out value!);
     }
 
     private void SetServerQueryCache((string server, string domain, QueryType type) key, IDnsQueryResponse value)
     {
-        _serverQueryCache.TryAdd(key, value);
+        _serverQueryCache[key] = value;
         if (_memCache != null)
             _memCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value, _cacheTtl);
     }

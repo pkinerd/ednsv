@@ -85,12 +85,17 @@ public class SmtpProbeService
     {
         var cacheKey = $"{host.ToLowerInvariant()}:{port}";
         var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+
+        // Check MemoryCache first (cross-validation TTL cache) — skip if rechecking SMTP
         if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Smtp))
         {
             if (_memCache.TryGetValue($"smtp:{cacheKey}", out SmtpProbeResult? memVal) && memVal != null)
                 return memVal;
         }
-        else if (_memCache == null && _probeCache.TryGetValue(cacheKey, out var cached))
+
+        // Check ConcurrentDictionary (within-validation dedup) — always check, even during recheck.
+        // This prevents multiple concurrent checks from probing the same host simultaneously.
+        if (_probeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _probesStarted);
@@ -107,7 +112,7 @@ public class SmtpProbeService
             Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
         }
 
-        _probeCache.TryAdd(cacheKey, result);
+        _probeCache[cacheKey] = result;
         if (_memCache != null) _memCache.Set($"smtp:{cacheKey}", result, _cacheTtl);
         Interlocked.Increment(ref _probesCompleted);
         if (Trace != null && sw != null)
@@ -243,7 +248,7 @@ public class SmtpProbeService
             if (_memCache.TryGetValue($"p:{cacheKey}", out bool memVal))
                 return memVal;
         }
-        else if (_memCache == null && _portCache.TryGetValue(cacheKey, out var cached))
+        if (_portCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _portsStarted);
@@ -271,7 +276,7 @@ public class SmtpProbeService
             if (reachable) break;
         }
 
-        _portCache.TryAdd(cacheKey, reachable);
+        _portCache[cacheKey] = reachable;
         if (_memCache != null) _memCache.Set($"p:{cacheKey}", reachable, _cacheTtl);
         Interlocked.Increment(ref _portsCompleted);
         if (Trace != null && portSw != null)
