@@ -127,20 +127,30 @@ function pollJob(jobId, domain) {
       const res = await fetch(`/api/status/${jobId}`);
       const data = await res.json();
       if (data.status === 'running') {
-        const check = data.currentCheck ? ` [${data.currentCheck}]` : '';
         const d = data.dns;
-        const elapsed = data.elapsed ? `${data.elapsed.toFixed(1)}s` : '';
-        let stats = '';
+        const elapsed = data.elapsed != null ? `${data.elapsed.toFixed(1)}s` : '';
+        const parts = [];
         if (d) {
-          const parts = [];
           if (d.queries) parts.push(`${d.queries} queries`);
           if (d.cacheMisses) parts.push(`${d.cacheMisses} sent`);
           if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
-          if (d.errors) parts.push(`${d.errors} errors`);
-          stats = parts.length ? ` (${parts.join(', ')})` : '';
+          if (d.errors) parts.push(`${d.errors} err`);
         }
-        statusEl.innerHTML = `Validating ${esc(domain)}... <b>${data.completedChecks}</b> checks done${check}` +
-          (stats || elapsed ? `<br><span style="color:var(--muted);font-size:0.78rem">${elapsed}${stats}</span>` : '');
+        const stats = parts.join(' / ');
+
+        let line1;
+        if (data.completedChecks > 0) {
+          const check = data.currentCheck ? ` [${data.currentCheck}]` : '';
+          line1 = `Validating ${esc(domain)}... <b>${data.completedChecks}</b> checks done${check}`;
+        } else if (data.currentCheck) {
+          line1 = `Validating ${esc(domain)}... [${esc(data.currentCheck)}]`;
+        } else {
+          line1 = `Prefetching DNS &amp; SMTP for ${esc(domain)}...`;
+        }
+        const line2 = elapsed || stats
+          ? `<br><span style="color:var(--muted);font-size:0.78rem">${[elapsed, stats].filter(Boolean).join(' — ')}</span>`
+          : '';
+        statusEl.innerHTML = line1 + line2;
       } else {
         clearInterval(pollTimer);
         pollTimer = null;
