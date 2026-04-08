@@ -546,7 +546,7 @@ public class CertificateTransparencyCheck : ICheck
         try
         {
             var url = $"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json";
-            var (success, content, statusCode) = await ctx.Http.GetAsync(url);
+            var (success, content, statusCode) = await ctx.Http.GetAsync(url, maxRetries: 1);
 
             if (success && content.Length > 10)
             {

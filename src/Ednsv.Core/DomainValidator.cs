@@ -250,9 +250,10 @@ public class DomainValidator
         // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
         // These prime the HTTP cache for checks that will need them later.
         // They run alongside prefetch + foundation + concurrent checks.
+        // MTA-STS is email-critical (3 retries); security.txt and CT are info-only (1 retry).
         _ = Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt"));
-        _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt"));
-        _ = Task.Run(() => _http.GetWithHeadersAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json"));
+        _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt", maxRetries: 1));
+        _ = Task.Run(() => _http.GetAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
 
         // ── Prefetch phase: fire DNS queries and SMTP probes in parallel ──
         TraceLog($"[PHASE] PREFETCH START for {domain}");

@@ -28,13 +28,14 @@ public class HttpProbeService
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("ednsv/1.0");
     }
 
-    public async Task<(bool success, string content, int statusCode)> GetAsync(string url)
+    public async Task<(bool success, string content, int statusCode)> GetAsync(string url, int? maxRetries = null)
     {
         if (_getCache.TryGetValue(url, out var cached))
             return cached;
 
+        var retries = maxRetries ?? MaxRetries;
         (bool success, string content, int statusCode) lastResult = default;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        for (int attempt = 0; attempt < retries; attempt++)
         {
             try
             {

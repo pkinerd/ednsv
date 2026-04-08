@@ -28,7 +28,7 @@ public class SrvRecordsCheck : ICheck
             foreach (var srv in SrvNames)
             {
                 var srvDomain = $"{srv}.{domain}";
-                var resp = await ctx.Dns.QueryRawAsync(srvDomain, QueryType.SRV);
+                var resp = await ctx.Dns.QuerySpeculativeAsync(srvDomain, QueryType.SRV);
                 var srvRecords = resp.Answers.SrvRecords().ToList();
 
                 if (srvRecords.Any())
@@ -69,7 +69,7 @@ public class AutodiscoverCheck : ICheck
         {
             // Check SRV
             var srvDomain = $"_autodiscover._tcp.{domain}";
-            var srvResp = await ctx.Dns.QueryRawAsync(srvDomain, QueryType.SRV);
+            var srvResp = await ctx.Dns.QuerySpeculativeAsync(srvDomain, QueryType.SRV);
             var srvRecords = srvResp.Answers.SrvRecords().ToList();
 
             if (srvRecords.Any())

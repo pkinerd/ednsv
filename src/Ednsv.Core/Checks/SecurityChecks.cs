@@ -1054,7 +1054,7 @@ public class SecurityTxtCheck : ICheck
         try
         {
             var url = $"https://{domain}/.well-known/security.txt";
-            var (success, content, statusCode) = await ctx.Http.GetAsync(url);
+            var (success, content, statusCode) = await ctx.Http.GetAsync(url, maxRetries: 1);
 
             if (success && !string.IsNullOrWhiteSpace(content))
             {
