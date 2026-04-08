@@ -962,12 +962,14 @@ public class SmtpStarttlsEnforcementCheck : ICheck
             }
 
             var missingTls = new List<string>();
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
 
                 if (!probe.Connected)
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect");
                     continue;
                 }
@@ -993,6 +995,7 @@ public class SmtpStarttlsEnforcementCheck : ICheck
             {
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = "All MX hosts support STARTTLS";
+                result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
             }
         }
         catch (Exception ex)
