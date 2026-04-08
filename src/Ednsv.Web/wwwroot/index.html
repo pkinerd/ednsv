@@ -127,8 +127,20 @@ function pollJob(jobId, domain) {
       const res = await fetch(`/api/status/${jobId}`);
       const data = await res.json();
       if (data.status === 'running') {
-        const info = data.currentCheck ? ` [${data.currentCheck}]` : '';
-        statusEl.textContent = `Validating ${domain}... ${data.completedChecks} checks done${info}`;
+        const check = data.currentCheck ? ` [${data.currentCheck}]` : '';
+        const d = data.dns;
+        const elapsed = data.elapsed ? `${data.elapsed.toFixed(1)}s` : '';
+        let stats = '';
+        if (d) {
+          const parts = [];
+          if (d.queries) parts.push(`${d.queries} queries`);
+          if (d.cacheMisses) parts.push(`${d.cacheMisses} sent`);
+          if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
+          if (d.errors) parts.push(`${d.errors} errors`);
+          stats = parts.length ? ` (${parts.join(', ')})` : '';
+        }
+        statusEl.innerHTML = `Validating ${esc(domain)}... <b>${data.completedChecks}</b> checks done${check}` +
+          (stats || elapsed ? `<br><span style="color:var(--muted);font-size:0.78rem">${elapsed}${stats}</span>` : '');
       } else {
         clearInterval(pollTimer);
         pollTimer = null;
