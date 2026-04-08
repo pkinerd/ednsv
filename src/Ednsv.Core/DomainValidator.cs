@@ -247,6 +247,13 @@ public class DomainValidator
             Options = options ?? new ValidationOptions()
         };
 
+        // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
+        // These prime the HTTP cache for checks that will need them later.
+        // They run alongside prefetch + foundation + concurrent checks.
+        _ = Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt"));
+        _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt"));
+        _ = Task.Run(() => _http.GetWithHeadersAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json"));
+
         // ── Prefetch phase: fire DNS queries and SMTP probes in parallel ──
         TraceLog($"[PHASE] PREFETCH START for {domain}");
         var prefetchSw = Stopwatch.StartNew();
@@ -510,10 +517,11 @@ public class DomainValidator
             allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DS));
             allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY));
 
-            // DKIM selectors — trimmed to common providers
+            // DKIM selectors — fire-and-forget, primes cache for DkimSelectorsCheck.
+            // If these aren't done by the time the check runs, it uses speculative (3s) queries.
             var selectors = new[] { "default", "google", "selector1", "selector2" };
             foreach (var sel in selectors.Concat(ctx.Options.AdditionalDkimSelectors).Distinct())
-                allTasks.Add(_dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT));
+                _ = _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT);
 
             // PTR lookups for domain IPs
             var domainIps = await aTask;
@@ -534,7 +542,7 @@ public class DomainValidator
                     // PTR lookups for MX IPs
                     var ptrTasks = ips.Select(ip => _dns.ResolvePtrAsync(ip));
 
-                    // SMTP probe on port 25
+                    // SMTP probe on port 25 — must complete before checks
                     await smtpSemaphore.WaitAsync();
                     try { await _smtp.ProbeSmtpAsync(h, 25); }
                     finally { smtpSemaphore.Release(); }
@@ -542,16 +550,11 @@ public class DomainValidator
                     await Task.WhenAll(ptrTasks);
                 }));
 
-                // Submission port probes (independent of IP resolution)
-                allTasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 587)));
-                allTasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 465)));
+                // Submission port probes — fire-and-forget, cached by the time
+                // SubmissionPortsCheck runs in the concurrent tier
+                _ = Task.Run(() => _smtp.ProbePortAsync(h, 587));
+                _ = Task.Run(() => _smtp.ProbePortAsync(h, 465));
             }
-
-            // HTTP prefetch — prime the cache for checks that fetch well-known URLs.
-            // These go to different servers so all can run in parallel.
-            allTasks.Add(Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt")));
-            allTasks.Add(Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt")));
-            allTasks.Add(Task.Run(() => _http.GetWithHeadersAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json")));
 
             await Task.WhenAll(allTasks);
         }
