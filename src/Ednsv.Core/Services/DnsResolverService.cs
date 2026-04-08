@@ -12,6 +12,7 @@ public class DnsResolverService
     private readonly LookupClient _client;
     private readonly LookupClient _directClient;
     private readonly LookupClient _dnsblClient;
+    private readonly LookupClient _speculativeClient;
     private static int MaxRetries = 3;
 
     // ── Rate limiting ───────────────────────────────────────────────────
@@ -93,6 +94,18 @@ public class DnsResolverService
         dnsblOptions.Retries = 1;
         dnsblOptions.ThrowDnsErrors = false;
         _dnsblClient = new LookupClient(dnsblOptions);
+
+        // Speculative client — for optional probes (DKIM selectors, SRV, etc.)
+        // where a timeout simply means "skip this" rather than "report error".
+        // Short timeout (3s), 1 retry (2 attempts = 6s max per query).
+        var speculativeOptions = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        speculativeOptions.UseCache = true;
+        speculativeOptions.Timeout = TimeSpan.FromSeconds(3);
+        speculativeOptions.Retries = 1;
+        speculativeOptions.ThrowDnsErrors = false;
+        _speculativeClient = new LookupClient(speculativeOptions);
 
         var directOptions = new LookupClientOptions();
         directOptions.UseCache = false;
@@ -258,6 +271,39 @@ public class DnsResolverService
         }
     }
 
+    /// <summary>
+    /// Speculative query with 3s timeout and 1 retry (6s max). For optional probes
+    /// where a timeout means "skip" not "error". Uses the shared query cache so a
+    /// successful result from prefetch will be returned immediately. Timeouts are
+    /// NOT cached — a later full QueryAsync can still try with the longer timeout.
+    /// </summary>
+    public async Task<IDnsQueryResponse> QuerySpeculativeAsync(string domain, QueryType type)
+    {
+        var key = (domain.ToLowerInvariant(), type);
+        if (_queryCache.TryGetValue(key, out var cached))
+        {
+            Interlocked.Increment(ref _cacheHits);
+            Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
+            return cached;
+        }
+
+        Interlocked.Increment(ref _cacheMisses);
+        try
+        {
+            var result = await RateLimitedAsync(() => _speculativeClient.QueryAsync(domain, type), $"SPEC {type} {domain}");
+            Interlocked.Increment(ref _responsesReceived);
+            // Cache successful responses (including NXDOMAIN — that's a valid "not found")
+            _queryCache.TryAdd(key, result);
+            return result;
+        }
+        catch
+        {
+            // Timeouts are NOT cached — don't poison the cache for the main client
+            Interlocked.Increment(ref _responsesReceived);
+            return EmptyResponse.Instance;
+        }
+    }
+
     private void CacheFailureIfExhausted((string domain, QueryType type) key)
     {
         _queryCache.TryAdd(key, EmptyResponse.Instance);
@@ -377,6 +423,16 @@ public class DnsResolverService
     public async Task<List<TxtRecord>> GetTxtRecordsAsync(string domain)
     {
         var result = await QueryAsync(domain, QueryType.TXT);
+        return result.Answers.OfType<TxtRecord>().ToList();
+    }
+
+    /// <summary>
+    /// Short-timeout TXT lookup for speculative probes (DKIM selectors, etc.).
+    /// Returns empty list on timeout without caching the failure.
+    /// </summary>
+    public async Task<List<TxtRecord>> GetTxtRecordsSpeculativeAsync(string domain)
+    {
+        var result = await QuerySpeculativeAsync(domain, QueryType.TXT);
         return result.Answers.OfType<TxtRecord>().ToList();
     }
 

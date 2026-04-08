@@ -32,6 +32,8 @@ public class SmtpProbeResult
 public class SmtpProbeService
 {
     private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan _portTimeout = TimeSpan.FromSeconds(5);
+    private const int PortMaxRetries = 2;
     private static int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
@@ -203,13 +205,13 @@ public class SmtpProbeService
         Trace?.Invoke($"[PORT] PROBE START {host}:{port}");
         var portSw = Trace != null ? Stopwatch.StartNew() : null;
         bool reachable = false;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        for (int attempt = 0; attempt < PortMaxRetries; attempt++)
         {
             try
             {
                 using var client = new TcpClient();
                 var connectTask = client.ConnectAsync(host, port);
-                if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
+                if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
                     reachable = false;
                 else
                 {
