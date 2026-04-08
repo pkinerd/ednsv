@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Ednsv.Core.Services;
 
@@ -7,6 +8,9 @@ public class HttpProbeService
     private readonly HttpClient _client;
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
+
+    private readonly MemoryCache? _memCache;
+    private readonly TimeSpan _cacheTtl;
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
     private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
 
@@ -14,8 +18,11 @@ public class HttpProbeService
     private readonly ConcurrentDictionary<string, bool> _importedGetKeys = new();
     private readonly ConcurrentDictionary<string, bool> _importedGetWithHeadersKeys = new();
 
-    public HttpProbeService()
+    public HttpProbeService(TimeSpan? cacheTtl = null)
     {
+        _cacheTtl = cacheTtl ?? TimeSpan.Zero;
+        if (_cacheTtl > TimeSpan.Zero)
+            _memCache = new MemoryCache(new MemoryCacheOptions());
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true,
@@ -30,7 +37,9 @@ public class HttpProbeService
 
     public async Task<(bool success, string content, int statusCode)> GetAsync(string url, int? maxRetries = null)
     {
-        if (_getCache.TryGetValue(url, out var cached))
+        if (_memCache != null && _memCache.TryGetValue($"get:{url}", out (bool, string, int) memVal))
+            return memVal;
+        if (_memCache == null && _getCache.TryGetValue(url, out var cached))
             return cached;
 
         var retries = maxRetries ?? MaxRetries;
@@ -44,6 +53,7 @@ public class HttpProbeService
                 var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
                 // Any HTTP response (even 4xx/5xx) is a real answer — cache immediately
                 _getCache.TryAdd(url, result);
+                if (_memCache != null) _memCache.Set($"get:{url}", result, _cacheTtl);
                 return result;
             }
             catch (Exception ex)
@@ -54,12 +64,15 @@ public class HttpProbeService
 
         // All attempts failed — cache the failure
         _getCache.TryAdd(url, lastResult);
+        if (_memCache != null) _memCache.Set($"get:{url}", lastResult, _cacheTtl);
         return lastResult;
     }
 
     public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
     {
-        if (_getWithHeadersCache.TryGetValue(url, out var cached))
+        if (_memCache != null && _memCache.TryGetValue($"gwh:{url}", out (bool, string, int, string?) memVal))
+            return memVal;
+        if (_memCache == null && _getWithHeadersCache.TryGetValue(url, out var cached))
             return cached;
 
         (bool success, string content, int statusCode, string? contentType) lastResult = default;
@@ -71,8 +84,8 @@ public class HttpProbeService
                 var content = await response.Content.ReadAsStringAsync();
                 var contentType = response.Content.Headers.ContentType?.MediaType;
                 var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
-                // Any HTTP response is a real answer — cache immediately
                 _getWithHeadersCache.TryAdd(url, result);
+                if (_memCache != null) _memCache.Set($"gwh:{url}", result, _cacheTtl);
                 return result;
             }
             catch (Exception ex)
@@ -81,8 +94,8 @@ public class HttpProbeService
             }
         }
 
-        // All attempts failed — cache the failure
         _getWithHeadersCache.TryAdd(url, lastResult);
+        if (_memCache != null) _memCache.Set($"gwh:{url}", lastResult, _cacheTtl);
         return lastResult;
     }
 

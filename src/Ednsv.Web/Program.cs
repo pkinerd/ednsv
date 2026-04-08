@@ -19,6 +19,9 @@ var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
+// CacheTtlHours controls per-entry in-memory cache expiry.
+var inMemoryTtl = cacheTtlHours > 0 ? TimeSpan.FromHours(cacheTtlHours) : (TimeSpan?)null;
+
 DnsResolverService dns;
 if (!string.IsNullOrEmpty(dnsServerStr))
 {
@@ -26,14 +29,16 @@ if (!string.IsNullOrEmpty(dnsServerStr))
     foreach (var s in dnsServerStr.Split(',', StringSplitOptions.RemoveEmptyEntries))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
-    dns = dnsServers.Count > 0 ? new DnsResolverService(dnsServers) : DnsResolverService.CreateWithSystemResolvers();
+    dns = dnsServers.Count > 0
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers();
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl);
 }
-var smtp = new SmtpProbeService();
-var http = new HttpProbeService();
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl);
 
 builder.Services.AddSingleton(dns);
 builder.Services.AddSingleton(smtp);

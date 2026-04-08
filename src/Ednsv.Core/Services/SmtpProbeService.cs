@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Caching.Memory;
 using System.Text;
 
 namespace Ednsv.Core.Services;
@@ -38,6 +39,17 @@ public class SmtpProbeService
     public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ConcurrentDictionary<string, SmtpProbeResult> _probeCache = new();
     private readonly ConcurrentDictionary<string, bool> _portCache = new();
+
+    /// <summary>In-memory cache with per-entry TTL. Null = no expiry.</summary>
+    private readonly MemoryCache? _memCache;
+    private readonly TimeSpan _cacheTtl;
+
+    public SmtpProbeService(TimeSpan? cacheTtl = null)
+    {
+        _cacheTtl = cacheTtl ?? TimeSpan.Zero;
+        if (_cacheTtl > TimeSpan.Zero)
+            _memCache = new MemoryCache(new MemoryCacheOptions());
+    }
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
     private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
 
@@ -72,7 +84,9 @@ public class SmtpProbeService
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
         var cacheKey = $"{host.ToLowerInvariant()}:{port}";
-        if (_probeCache.TryGetValue(cacheKey, out var cached))
+        if (_memCache != null && _memCache.TryGetValue($"smtp:{cacheKey}", out SmtpProbeResult? memVal) && memVal != null)
+            return memVal;
+        if (_memCache == null && _probeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _probesStarted);
@@ -87,6 +101,7 @@ public class SmtpProbeService
         }
 
         _probeCache.TryAdd(cacheKey, result);
+        if (_memCache != null) _memCache.Set($"smtp:{cacheKey}", result, _cacheTtl);
         Interlocked.Increment(ref _probesCompleted);
         if (Trace != null && sw != null)
             Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
@@ -207,7 +222,9 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
-        if (_portCache.TryGetValue(cacheKey, out var cached))
+        if (_memCache != null && _memCache.TryGetValue($"p:{cacheKey}", out bool memVal))
+            return memVal;
+        if (_memCache == null && _portCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _portsStarted);
@@ -236,6 +253,7 @@ public class SmtpProbeService
         }
 
         _portCache.TryAdd(cacheKey, reachable);
+        if (_memCache != null) _memCache.Set($"p:{cacheKey}", reachable, _cacheTtl);
         Interlocked.Increment(ref _portsCompleted);
         if (Trace != null && portSw != null)
             Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
