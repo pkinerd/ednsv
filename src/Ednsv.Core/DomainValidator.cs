@@ -21,6 +21,9 @@ public class DomainValidator
     private readonly HttpProbeService _http;
     private Stopwatch? _validationSw;
 
+    /// <summary>Cache types to bypass MemoryCache for (recheck mode).</summary>
+    public RecheckHelper.CacheDep RecheckDeps { get; set; }
+
     /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
     public Action<string>? Trace
     {
@@ -244,8 +247,12 @@ public class DomainValidator
             Dns = _dns,
             Smtp = _smtp,
             Http = _http,
-            Options = options ?? new ValidationOptions()
+            Options = options ?? new ValidationOptions(),
+            RecheckDeps = RecheckDeps
         };
+
+        // ── Set per-validation recheck context (flows through async calls) ──
+        RecheckHelper.CurrentRecheckDeps.Value = RecheckDeps;
 
         // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
         // These prime the HTTP cache for checks that will need them later.
@@ -416,6 +423,10 @@ public class DomainValidator
         _validationSw.Stop();
         report.Duration = _validationSw.Elapsed;
         TraceLog($"[PHASE] VALIDATION COMPLETE: {_validationSw.ElapsedMilliseconds}ms total, {report.Results.Count} results (pass:{report.PassCount} warn:{report.WarningCount} err:{report.ErrorCount} crit:{report.CriticalCount})");
+
+        // Clear per-validation recheck context
+        RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.None;
+
         return report;
     }
 

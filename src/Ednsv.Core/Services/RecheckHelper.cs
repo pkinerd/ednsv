@@ -3,12 +3,19 @@ using Ednsv.Core.Models;
 namespace Ednsv.Core.Services;
 
 /// <summary>
-/// Orchestrates selective cache clearing for the --recheck feature.
-/// Maps check categories to cache dependencies and clears only the
-/// imported (from-disk) entries relevant to checks that previously had issues.
+/// Orchestrates selective cache bypass for the --recheck feature.
+/// Maps check categories to cache dependencies. In multi-user mode (web API),
+/// services bypass MemoryCache for the current validation's recheck deps
+/// without clearing shared entries that other users depend on.
 /// </summary>
 public static class RecheckHelper
 {
+    /// <summary>
+    /// Per-async-flow recheck context. Set by DomainValidator at validation start,
+    /// read by service cache lookups. Flows through async calls automatically.
+    /// Each concurrent validation has its own value — no cross-user bleed.
+    /// </summary>
+    public static readonly AsyncLocal<CacheDep> CurrentRecheckDeps = new();
     [Flags]
     public enum CacheDep
     {

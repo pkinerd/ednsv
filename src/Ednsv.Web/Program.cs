@@ -162,12 +162,12 @@ app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
 
-    if (!string.IsNullOrEmpty(recheck) &&
-        Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
-        cache.ClearForRecheck(domain, recheckSev);
-
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (enableTrace) validator.Trace = msg => app.Logger.LogDebug("{Trace}", msg);
+
+    if (!string.IsNullOrEmpty(recheck) &&
+        Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
+        validator.RecheckDeps = cache.GetRecheckDeps(domain, recheckSev);
 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
     cts.CancelAfter(TimeSpan.FromMinutes(3));
@@ -282,15 +282,19 @@ class ValidationTracker
         {
             try
             {
-                if (recheckSeverity != null)
-                {
-                    var cleared = cache.ClearForRecheck(domain, recheckSeverity.Value);
-                    if (cleared)
-                        logger.LogInformation("Recheck: cleared stale cache for {Domain} (>= {Severity})", domain, recheckSeverity);
-                }
-
                 var validator = new DomainValidator(dns, smtp, http);
                 if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
+
+                // Determine recheck deps (bypass MemoryCache without clearing shared entries)
+                if (recheckSeverity != null)
+                {
+                    var deps = cache.GetRecheckDeps(domain, recheckSeverity.Value);
+                    if (deps != RecheckHelper.CacheDep.None)
+                    {
+                        validator.RecheckDeps = deps;
+                        logger.LogInformation("Recheck: bypassing cache for {Domain} ({Deps})", domain, deps);
+                    }
+                }
 
                 // Snapshot baselines AFTER validator is created but BEFORE ValidateAsync
                 // runs (which calls ResetErrors and starts incrementing counters).

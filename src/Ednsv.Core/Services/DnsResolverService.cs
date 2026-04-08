@@ -136,7 +136,9 @@ public class DnsResolverService
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
     {
-        if (_memCache != null)
+        // If this validation is rechecking DNS, bypass MemoryCache (force fresh query)
+        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Dns))
         {
             var memKey = $"q:{key.domain}:{key.type}";
             if (_memCache.TryGetValue(memKey, out IDnsQueryResponse? memVal) && memVal != null)
@@ -144,6 +146,12 @@ public class DnsResolverService
                 value = memVal;
                 return true;
             }
+            value = default!;
+            return false;
+        }
+        if (_memCache != null)
+        {
+            // Recheck mode: skip MemoryCache entirely, fall through to network
             value = default!;
             return false;
         }
@@ -159,7 +167,8 @@ public class DnsResolverService
 
     private bool TryGetPtrCache(string ip, out List<string> value)
     {
-        if (_memCache != null)
+        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Ptr))
         {
             if (_memCache.TryGetValue($"ptr:{ip}", out List<string>? memVal) && memVal != null)
             {
@@ -169,6 +178,7 @@ public class DnsResolverService
             value = default!;
             return false;
         }
+        if (_memCache != null) { value = default!; return false; }
         return _ptrCache.TryGetValue(ip, out value!);
     }
 
@@ -181,7 +191,8 @@ public class DnsResolverService
 
     private bool TryGetServerQueryCache((string server, string domain, QueryType type) key, out IDnsQueryResponse value)
     {
-        if (_memCache != null)
+        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.ServerDns))
         {
             if (_memCache.TryGetValue($"sq:{key.server}:{key.domain}:{key.type}", out IDnsQueryResponse? memVal) && memVal != null)
             {
@@ -191,6 +202,7 @@ public class DnsResolverService
             value = default!;
             return false;
         }
+        if (_memCache != null) { value = default!; return false; }
         return _serverQueryCache.TryGetValue(key, out value!);
     }
 

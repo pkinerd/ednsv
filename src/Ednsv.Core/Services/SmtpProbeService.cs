@@ -84,9 +84,13 @@ public class SmtpProbeService
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {
         var cacheKey = $"{host.ToLowerInvariant()}:{port}";
-        if (_memCache != null && _memCache.TryGetValue($"smtp:{cacheKey}", out SmtpProbeResult? memVal) && memVal != null)
-            return memVal;
-        if (_memCache == null && _probeCache.TryGetValue(cacheKey, out var cached))
+        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Smtp))
+        {
+            if (_memCache.TryGetValue($"smtp:{cacheKey}", out SmtpProbeResult? memVal) && memVal != null)
+                return memVal;
+        }
+        else if (_memCache == null && _probeCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _probesStarted);
@@ -222,9 +226,13 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
-        if (_memCache != null && _memCache.TryGetValue($"p:{cacheKey}", out bool memVal))
-            return memVal;
-        if (_memCache == null && _portCache.TryGetValue(cacheKey, out var cached))
+        var recheckDeps = RecheckHelper.CurrentRecheckDeps.Value;
+        if (_memCache != null && !recheckDeps.HasFlag(RecheckHelper.CacheDep.Port))
+        {
+            if (_memCache.TryGetValue($"p:{cacheKey}", out bool memVal))
+                return memVal;
+        }
+        else if (_memCache == null && _portCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
         Interlocked.Increment(ref _portsStarted);

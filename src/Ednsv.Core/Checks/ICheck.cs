@@ -50,6 +50,12 @@ public class CheckContext
     // ConcurrentDictionary because concurrent checks may read/write simultaneously.
     public ConcurrentDictionary<string, Services.SmtpProbeResult> SmtpProbeCache { get; set; } = new();
 
+    // Per-validation recheck context — when set, service cache lookups bypass
+    // MemoryCache for matching cache types, forcing fresh queries without
+    // clearing shared cache entries that other concurrent users depend on.
+    // Uses AsyncLocal so it flows through async calls to singleton services.
+    public Services.RecheckHelper.CacheDep RecheckDeps { get; set; }
+
     // Per-validation diagnostic counters — thread-safe, not shared across validations.
     public ConcurrentBag<string> QueryErrors { get; } = new();
 }
