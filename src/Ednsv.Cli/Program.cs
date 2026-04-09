@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.Net;
 using System.Text;
@@ -530,7 +531,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
         var slowChecks = new List<(string Name, TimeSpan Duration)>();
-        var checkTimings = new Dictionary<string, TimeSpan>();
+        var checkTimings = new ConcurrentDictionary<string, TimeSpan>();
         var checkDnsHitsBefore = 0;
         var checkDnsMissesBefore = 0;
 
@@ -822,7 +823,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
             var showingRunningLine = false;
             CheckCategory? currentCategory = null;
             var shownDescriptions = new HashSet<string>();
-            var checkTimings = new Dictionary<string, TimeSpan>();
+            var checkTimings = new ConcurrentDictionary<string, TimeSpan>();
             var checkDnsHitsBefore = 0;
             var checkDnsMissesBefore = 0;
 
@@ -1051,7 +1052,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         var showingRunningLine = false;
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
-        var checkTimings = new Dictionary<string, TimeSpan>();
+        var checkTimings = new ConcurrentDictionary<string, TimeSpan>();
         var checkDnsHitsBefore = 0;
         var checkDnsMissesBefore = 0;
 
