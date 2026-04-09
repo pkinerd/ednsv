@@ -126,8 +126,15 @@ public class TraceMasker
     {
         // 1. Emails first — they embed hostnames after '@'
         message = EmailPattern.Replace(message, m => $"e:{Hash(m.Value)}");
-        // 2. DKIM selectors — selector._domainkey.domain (before hostname catches domain)
-        message = DkimSelectorPattern.Replace(message, m => $"dkim:{Hash(m.Value)}");
+        // 2. DKIM selectors — preserve structure: dkim:hash1._domainkey.h:hash2
+        message = DkimSelectorPattern.Replace(message, m =>
+        {
+            var selector = m.Groups[1].Value;
+            var domain = m.Groups[2].Value;
+            // If the domain was already masked by a prior pass, keep it as-is
+            var maskedDomain = domain.Contains(':') ? domain : $"h:{Hash(domain)}";
+            return $"dkim:{Hash(selector)}._domainkey.{maskedDomain}";
+        });
         // 3. IPs
         message = IpV6Pattern.Replace(message, m => $"ip6:{Hash(m.Value)}");
         message = IpV4Pattern.Replace(message, m => $"ip4:{Hash(m.Value)}");

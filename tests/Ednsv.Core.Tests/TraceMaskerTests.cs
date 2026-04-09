@@ -10,14 +10,16 @@ public class TraceMaskerTests
     // ── DKIM selector masking ────────────────────────────────────────────
 
     [Fact]
-    public void Mask_DkimSelector_MasksFullConstruct()
+    public void Mask_DkimSelector_PreservesStructure()
     {
-        var input = "Checking google._domainkey.example.com";
-        var output = _masker.Mask(input);
+        var output = _masker.Mask("Checking google._domainkey.example.com");
 
-        Assert.DoesNotContain("google._domainkey", output);
+        // Should produce: "Checking dkim:<hash>._domainkey.h:<hash>"
+        Assert.DoesNotContain("google", output);
         Assert.DoesNotContain("example.com", output);
         Assert.Contains("dkim:", output);
+        Assert.Contains("._domainkey.", output);
+        Assert.Matches(@"dkim:[a-zA-Z0-9_-]{10}\._domainkey\.h:[a-zA-Z0-9_-]{10}", output);
     }
 
     [Fact]
@@ -26,7 +28,12 @@ public class TraceMaskerTests
         var a = _masker.Mask("s1._domainkey.example.com");
         var b = _masker.Mask("s2._domainkey.example.com");
 
+        // Selector hashes differ, domain hashes are the same
         Assert.NotEqual(a, b);
+        // Both share the same domain hash
+        var domainHash = $"h:{_masker.Hash("example.com")}";
+        Assert.Contains(domainHash, a);
+        Assert.Contains(domainHash, b);
     }
 
     [Fact]
@@ -54,8 +61,8 @@ public class TraceMaskerTests
         var output = _masker.Mask(input);
 
         Assert.DoesNotContain("example.com", output);
-        Assert.DoesNotContain("_domainkey", output);
-        // Both should be masked
+        // Structure preserved for both
+        Assert.Equal(2, output.Split("._domainkey.").Length - 1);
         Assert.Equal(2, output.Split("dkim:").Length - 1);
     }
 
@@ -66,7 +73,21 @@ public class TraceMaskerTests
 
         Assert.DoesNotContain("selector1", output);
         Assert.DoesNotContain("example.com", output);
+        Assert.Contains("._domainkey.", output);
         Assert.Contains("dkim:", output);
+    }
+
+    [Fact]
+    public void Mask_DkimSelector_DomainHashMatchesStandaloneHostnameHash()
+    {
+        // The domain portion of a DKIM selector should hash the same as
+        // a standalone hostname — allows cross-referencing in logs
+        var dkimOutput = _masker.Mask("s1._domainkey.example.com");
+        var hostOutput = _masker.Mask("connecting to example.com");
+
+        var domainHash = $"h:{_masker.Hash("example.com")}";
+        Assert.Contains(domainHash, dkimOutput);
+        Assert.Contains(domainHash, hostOutput);
     }
 
     // ── Layered masking: DKIM + hostname interaction ─────────────────────
@@ -74,28 +95,27 @@ public class TraceMaskerTests
     [Fact]
     public void Mask_DkimAndHostname_BothMaskedInSameMessage()
     {
-        // DKIM selector and a separate hostname in the same message
         var input = "CNAME s1._domainkey.example.com -> dkim.provider.com";
         var output = _masker.Mask(input);
 
         Assert.DoesNotContain("example.com", output);
         Assert.DoesNotContain("provider.com", output);
-        Assert.DoesNotContain("s1", output);
+        Assert.DoesNotContain("s1._domainkey", output);
         Assert.Contains("dkim:", output);
+        Assert.Contains("._domainkey.", output);
         Assert.Contains("h:", output);
     }
 
     [Fact]
-    public void Mask_DkimSelector_DoesNotDoubleHash()
+    public void Mask_DkimSelector_DomainNotDoubleHashedByHostnamePass()
     {
-        // The domain in selector._domainkey.domain should NOT also be
-        // separately hashed by the hostname regex (it was consumed by DKIM)
+        // The domain in dkim:hash._domainkey.h:hash should not be
+        // re-matched by the hostname regex
         var input = "s1._domainkey.unique-test-domain.org";
         var output = _masker.Mask(input);
 
-        // Should have exactly one dkim: token, no leftover hostname masking
-        Assert.Equal(1, output.Split("dkim:").Length - 1);
-        Assert.DoesNotContain("h:", output);
+        // Count h: tokens — should be exactly one (the domain in the DKIM construct)
+        Assert.Equal(1, output.Split("h:").Length - 1);
     }
 
     [Fact]
@@ -106,9 +126,11 @@ public class TraceMaskerTests
         var input = $"sel._domainkey.h:{domainHash}";
         var output = _masker.Mask(input);
 
-        // The selector portion should be masked even though domain is already hashed
+        // The selector should be masked, already-masked domain preserved as-is
         Assert.DoesNotContain("sel._domainkey", output);
         Assert.Contains("dkim:", output);
+        Assert.Contains("._domainkey.", output);
+        Assert.Contains($"h:{domainHash}", output);
     }
 
     // ── Existing masking still works ─────────────────────────────────────
@@ -162,16 +184,17 @@ public class TraceMaskerTests
 
         _masker.MaskResult(result);
 
-        // Summary masked
+        // Summary masked — DKIM structure preserved
         Assert.DoesNotContain("example.com", result.Summary);
+        Assert.Contains("._domainkey.", result.Summary);
         // Details masked
         Assert.All(result.Details, d => Assert.DoesNotContain("example.com", d));
         // Warnings masked
         Assert.DoesNotContain("provider.com", result.Warnings[0]);
         Assert.Contains("h:", result.Warnings[0]);
-        // Errors masked
+        // Errors masked — DKIM structure preserved
         Assert.DoesNotContain("example.com", result.Errors[0]);
-        Assert.Contains("dkim:", result.Errors[0]);
+        Assert.Contains("._domainkey.", result.Errors[0]);
     }
 
     // ── Ordering: email containing domain doesn't leak to hostname pass ──
@@ -182,7 +205,6 @@ public class TraceMaskerTests
         var input = "contact admin@example.com about example.com config";
         var output = _masker.Mask(input);
 
-        // admin@example.com → e:hash, example.com → h:hash
         Assert.Contains("e:", output);
         Assert.Contains("h:", output);
         Assert.DoesNotContain("admin@", output);
