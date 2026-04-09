@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace Ednsv.Core.Services;
 
@@ -7,6 +8,19 @@ public class HttpProbeService
     private readonly HttpClient _client;
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
+
+    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    public Action<string>? Trace
+    {
+        get => _trace;
+        set
+        {
+            _trace = value;
+            _getCache.Trace = value;
+            _getWithHeadersCache.Trace = value;
+        }
+    }
+    private Action<string>? _trace;
 
     // Wrapper classes so value tuples can be stored in ProbeCache<T> (requires class constraint)
     private sealed class GetResult
@@ -44,6 +58,8 @@ public class HttpProbeService
         var retries = maxRetries ?? MaxRetries;
         var result = await _getCache.GetOrCreateAsync(url, async () =>
         {
+            Trace?.Invoke($"[HTTP] GET START {url}");
+            var sw = Trace != null ? Stopwatch.StartNew() : null;
             (bool success, string content, int statusCode) lastResult = default;
             for (int attempt = 0; attempt < retries; attempt++)
             {
@@ -51,13 +67,18 @@ public class HttpProbeService
                 {
                     var response = await _client.GetAsync(url);
                     var content = await response.Content.ReadAsStringAsync();
+                    if (Trace != null && sw != null)
+                        Trace($"[HTTP] GET DONE {url}: {sw.ElapsedMilliseconds}ms status={response.StatusCode}");
                     return new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
                 }
                 catch (Exception ex)
                 {
                     lastResult = (false, ex.Message, 0);
+                    Trace?.Invoke($"[HTTP] GET RETRY {url} attempt {attempt + 1}/{retries} ({ex.Message})");
                 }
             }
+            if (Trace != null && sw != null)
+                Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {retries} attempts");
             return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
         }, RecheckHelper.CacheDep.Http);
         return result.ToTuple();
@@ -67,6 +88,8 @@ public class HttpProbeService
     {
         var result = await _getWithHeadersCache.GetOrCreateAsync(url, async () =>
         {
+            Trace?.Invoke($"[HTTP] GET START {url} (with-headers)");
+            var sw = Trace != null ? Stopwatch.StartNew() : null;
             (bool success, string content, int statusCode, string? contentType) lastResult = default;
             for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
@@ -75,13 +98,18 @@ public class HttpProbeService
                     var response = await _client.GetAsync(url);
                     var content = await response.Content.ReadAsStringAsync();
                     var contentType = response.Content.Headers.ContentType?.MediaType;
+                    if (Trace != null && sw != null)
+                        Trace($"[HTTP] GET DONE {url}: {sw.ElapsedMilliseconds}ms status={response.StatusCode} type={contentType}");
                     return new GetWithHeadersResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode, ContentType = contentType };
                 }
                 catch (Exception ex)
                 {
                     lastResult = (false, ex.Message, 0, (string?)null);
+                    Trace?.Invoke($"[HTTP] GET RETRY {url} attempt {attempt + 1}/{MaxRetries} ({ex.Message})");
                 }
             }
+            if (Trace != null && sw != null)
+                Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {MaxRetries} attempts");
             return new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType };
         }, RecheckHelper.CacheDep.Http);
         return result.ToTuple();

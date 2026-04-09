@@ -45,6 +45,7 @@ public class DomainValidator
                 : value;
             _dns.Trace = effectiveTrace;
             _smtp.Trace = effectiveTrace;
+            _http.Trace = effectiveTrace;
         }
     }
     private Action<string>? _traceCallback;
@@ -281,7 +282,7 @@ public class DomainValidator
         var prefetchSw = Stopwatch.StartNew();
         await PrefetchAsync(domain, context);
         prefetchSw.Stop();
-        TraceLog($"[PHASE] PREFETCH DONE: {prefetchSw.ElapsedMilliseconds}ms (dns:{_dns.CacheHits}h/{_dns.CacheMisses}m smtp:{_smtp.ProbesCompleted}p/{_smtp.PortsCompleted}ports)");
+        TraceLog($"[PHASE] PREFETCH DONE: {prefetchSw.ElapsedMilliseconds}ms (dns:{_dns.CacheHits}h/{_dns.CacheMisses}m/{_dns.ResponsesReceived}net smtp:{_smtp.ProbesCompleted}p/{_smtp.PortsCompleted}ports)");
         OnCheckTiming?.Invoke("Prefetch", prefetchSw.Elapsed);
 
         // ── Foundation checks: sequential, populate shared state ──────────
@@ -338,7 +339,10 @@ public class DomainValidator
                 }
             });
 
-        TraceLog($"[PHASE] CONCURRENT DONE: all {_concurrentChecks.Count} checks finished");
+        var concurrentElapsed = concurrentResults.Any() ? (long)concurrentResults.Max(r => r.Elapsed.TotalMilliseconds) : 0;
+        var timedOutCount = concurrentResults.Count(r => r.TimedOut);
+        var errorCount = concurrentResults.Count(r => r.Error != null);
+        TraceLog($"[PHASE] CONCURRENT DONE: {_concurrentChecks.Count} checks in {concurrentElapsed}ms wall-clock (timed-out:{timedOutCount} errors:{errorCount})");
 
         // Collect results, preserving original check order for consistent output
         var concurrentMap = concurrentResults.ToDictionary(r => r.Check.Name);
@@ -564,7 +568,10 @@ public class DomainValidator
             // SMTP probes + PTR for MX hosts — each host probed in parallel since
             // they go to different servers. Only limit to avoid overwhelming a single
             // provider's fleet (cap at 6 concurrent SMTP probes).
-            var smtpSemaphore = new SemaphoreSlim(Math.Min(mxHosts.Count, 6));
+            var smtpMaxConcurrency = Math.Min(mxHosts.Count, 6);
+            var smtpSemaphore = new SemaphoreSlim(smtpMaxConcurrency);
+            TraceLog($"[SMTP] PREFETCH {mxHosts.Count} MX hosts, concurrency-limit={smtpMaxConcurrency}");
+            int smtpProbesStarted = 0;
             foreach (var host in mxHosts)
             {
                 // Resolve MX host IPs then probe — chained but non-blocking to other tasks
@@ -578,9 +585,14 @@ public class DomainValidator
                     // SMTP probe on port 25 — must complete before checks.
                     // Store result in ctx.SmtpProbeCache so concurrent checks
                     // reuse it without hitting ProbeCache (which bypasses on recheck).
+                    var semSw = Trace != null ? Stopwatch.StartNew() : null;
                     await smtpSemaphore.WaitAsync();
+                    var semWaitMs = semSw?.ElapsedMilliseconds ?? 0;
                     try
                     {
+                        if (semWaitMs > 0)
+                            TraceLog($"[SMTP] SEMAPHORE WAIT {h}:25 waited {semWaitMs}ms (slots={smtpSemaphore.CurrentCount}/{smtpMaxConcurrency})");
+                        Interlocked.Increment(ref smtpProbesStarted);
                         var probeResult = await _smtp.ProbeSmtpAsync(h, 25);
                         ctx.SmtpProbeCache.TryAdd(h, probeResult);
                     }

@@ -80,6 +80,7 @@ jobs:
       - name: Run verbose check against test domains
         if: always()
         run: |
+          mkdir -p test-output
           DOMAINS="google.com gmail.com cnn.com example.com"
 
           for domain in $DOMAINS; do
@@ -97,6 +98,7 @@ jobs:
       - name: Disk cache integration test (cold + warm run)
         if: always()
         run: |
+          mkdir -p test-output
           CACHE_DIR="test-output/integration-cache"
           DOMAIN="gmail.com"
 
@@ -180,6 +182,7 @@ jobs:
       - name: Recheck integration test (--recheck warning)
         if: always()
         run: |
+          mkdir -p test-output
           CACHE_DIR="test-output/integration-cache"
           DOMAIN="gmail.com"
 
@@ -247,6 +250,7 @@ jobs:
       - name: Multi-domain run (in-memory cache reuse across domains)
         if: always()
         run: |
+          mkdir -p test-output
           echo "============================================"
           echo "Multi-domain run: google.com gmail.com (verbose)"
           echo "============================================"

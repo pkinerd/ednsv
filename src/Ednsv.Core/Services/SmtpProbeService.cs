@@ -68,7 +68,17 @@ public class SmtpProbeService
     }
 
     /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
-    public Action<string>? Trace { get; set; }
+    public Action<string>? Trace
+    {
+        get => _trace;
+        set
+        {
+            _trace = value;
+            _probeCache.Trace = value;
+            _portCache.Trace = value;
+        }
+    }
+    private Action<string>? _trace;
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {

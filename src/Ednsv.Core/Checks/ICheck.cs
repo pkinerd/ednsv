@@ -61,7 +61,11 @@ public class CheckContext
     {
         var key = port == 25 ? host : $"{host}:{port}";
         if (SmtpProbeCache.TryGetValue(key, out var cached))
+        {
+            Smtp.Trace?.Invoke($"[SMTP] CTX-CACHE HIT {host}:{port}");
             return cached;
+        }
+        Smtp.Trace?.Invoke($"[SMTP] CTX-CACHE MISS {host}:{port} (will probe)");
         var probe = await Smtp.ProbeSmtpAsync(host, port);
         SmtpProbeCache.TryAdd(key, probe);
         return probe;

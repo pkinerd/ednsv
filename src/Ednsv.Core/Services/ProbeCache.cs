@@ -34,6 +34,9 @@ public class ProbeCache<TValue> where TValue : class
     // starts the real work) is ever accessed — guaranteeing exactly one factory call.
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
+    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
+    public Action<string>? Trace { get; set; }
+
     public ProbeCache(TimeSpan? ttl = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
@@ -70,17 +73,29 @@ public class ProbeCache<TValue> where TValue : class
     /// </summary>
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
-        Func<TValue, bool>? shouldCache = null)
+        Func<TValue, bool>? shouldCache = null,
+        Action? onHit = null)
     {
         // 1. Check cache (respects recheck bypass)
         if (TryGet(key, out var cached, recheckFlag))
+        {
+            Trace?.Invoke($"[CACHE] HIT {key}");
+            onHit?.Invoke();
             return cached;
+        }
 
         // 2. Join existing in-flight task or start a new one.
         //    Lazy ensures only one factory runs even if GetOrAdd calls
         //    the value factory on multiple threads (documented .NET behavior).
-        var lazy = _inflight.GetOrAdd(key, _ => new Lazy<Task<TValue>>(
-            () => RunFactory(key, factory, shouldCache)));
+        bool isNewEntry = false;
+        var lazy = _inflight.GetOrAdd(key, _ =>
+        {
+            isNewEntry = true;
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
+        });
+
+        if (!isNewEntry)
+            Trace?.Invoke($"[CACHE] DEDUP JOIN {key} (awaiting in-flight request)");
 
         try
         {
@@ -170,6 +185,9 @@ public class ProbeCacheValue<TValue> where TValue : struct
     private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
+    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
+    public Action<string>? Trace { get; set; }
+
     private sealed class Box { public TValue Value; }
 
     public ProbeCacheValue(TimeSpan? ttl = null)
@@ -201,10 +219,20 @@ public class ProbeCacheValue<TValue> where TValue : struct
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
         if (TryGet(key, out var cached, recheckFlag))
+        {
+            Trace?.Invoke($"[CACHE] HIT {key}");
             return cached;
+        }
 
-        var lazy = _inflight.GetOrAdd(key, _ => new Lazy<Task<TValue>>(
-            () => RunFactory(key, factory)));
+        bool isNewEntry = false;
+        var lazy = _inflight.GetOrAdd(key, _ =>
+        {
+            isNewEntry = true;
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory));
+        });
+
+        if (!isNewEntry)
+            Trace?.Invoke($"[CACHE] DEDUP JOIN {key} (awaiting in-flight request)");
 
         try
         {

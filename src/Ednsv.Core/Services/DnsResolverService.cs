@@ -29,7 +29,18 @@ public class DnsResolverService
     /// Optional trace callback for detailed timing diagnostics.
     /// Set to a non-null action to enable trace output.
     /// </summary>
-    public Action<string>? Trace { get; set; }
+    public Action<string>? Trace
+    {
+        get => _trace;
+        set
+        {
+            _trace = value;
+            _queryCache.Trace = value;
+            _ptrCache.Trace = value;
+            _serverQueryCache.Trace = value;
+        }
+    }
+    private Action<string>? _trace;
 
     /// <summary>In-memory cache with per-entry TTL. Null = no expiry (CLI default).</summary>
     private readonly TimeSpan? _cacheTtl;
@@ -249,7 +260,7 @@ public class DnsResolverService
                 QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.Dns);
+        }, RecheckHelper.CacheDep.Dns, onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     /// <summary>
@@ -275,7 +286,7 @@ public class DnsResolverService
                 Interlocked.Increment(ref _responsesReceived);
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.Dns);
+        }, RecheckHelper.CacheDep.Dns, onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     /// <summary>
@@ -328,6 +339,7 @@ public class DnsResolverService
 
         return await _serverQueryCache.GetOrCreateAsync(cacheKey, async () =>
         {
+            Interlocked.Increment(ref _cacheMisses);
             try
             {
                 var serverEndpoint = new IPEndPoint(server, 53);
@@ -352,7 +364,7 @@ public class DnsResolverService
                 _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.ServerDns);
+        }, RecheckHelper.CacheDep.ServerDns, onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     public async Task<List<string>> ResolveAAsync(string hostname)
@@ -372,6 +384,7 @@ public class DnsResolverService
         var cacheKey = $"ptr:{ip}";
         return await _ptrCache.GetOrCreateAsync(cacheKey, async () =>
         {
+            Interlocked.Increment(ref _cacheMisses);
             try
             {
                 var parsedIp = IPAddress.Parse(ip);
@@ -384,7 +397,7 @@ public class DnsResolverService
                 Interlocked.Increment(ref _responsesReceived);
                 return new List<string>();
             }
-        }, RecheckHelper.CacheDep.Ptr);
+        }, RecheckHelper.CacheDep.Ptr, onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     public async Task<List<string>> ResolveCnameChainAsync(string hostname)
