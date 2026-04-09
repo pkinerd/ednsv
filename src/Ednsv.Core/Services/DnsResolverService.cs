@@ -50,8 +50,10 @@ public class DnsResolverService
     private readonly ProbeCache<List<string>> _ptrCache;
     private readonly ProbeCache<IDnsQueryResponse> _serverQueryCache;
     // Tracks servers that are completely unreachable (network/timeout failures).
-    // Once a server fails MaxRetries times (across any domain), skip it immediately.
-    private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
+    // Once a server fails MaxRetries times within the decay window, skip it.
+    // Entries older than _unreachableDecay are ignored, allowing recovery.
+    private readonly ConcurrentDictionary<string, (int count, DateTime lastFailure)> _unreachableServerCounts = new();
+    private static readonly TimeSpan _unreachableDecay = TimeSpan.FromMinutes(5);
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
@@ -158,11 +160,14 @@ public class DnsResolverService
 
     private void RefillTokens()
     {
-        int toRelease = _maxTokens - _rateLimiter.CurrentCount;
-        if (toRelease > 0)
+        // Release tokens one at a time to avoid the TOCTOU race where reading
+        // CurrentCount then calling Release(N) could skip an entire refill cycle
+        // if the count changed between read and release (SemaphoreFullException).
+        for (int i = 0; i < _tokensPerSecond; i++)
         {
-            try { _rateLimiter.Release(toRelease); }
-            catch (SemaphoreFullException) { /* race with Release — harmless */ }
+            if (_rateLimiter.CurrentCount >= _maxTokens) break;
+            try { _rateLimiter.Release(); }
+            catch (SemaphoreFullException) { break; }
         }
     }
 
@@ -199,8 +204,14 @@ public class DnsResolverService
     }
 
     /// <summary>
-    /// Legacy error tracking — only used by CLI for per-domain error display.
-    /// Web API should use CheckContext.QueryErrors instead.
+    /// Per-async-flow error tracking. Set by DomainValidator at validation start.
+    /// DNS errors are routed here when set, otherwise to the shared QueryErrors.
+    /// Each concurrent validation has its own value — no cross-validation bleed.
+    /// </summary>
+    public static readonly AsyncLocal<ConcurrentBag<string>?> CurrentQueryErrors = new();
+
+    /// <summary>
+    /// Shared error tracking — fallback for CLI use when CurrentQueryErrors is not set.
     /// </summary>
     public ConcurrentBag<string> QueryErrors { get; private set; } = new();
 
@@ -215,8 +226,14 @@ public class DnsResolverService
     public int ResponsesReceived => _responsesReceived;
     public int CacheSize => _queryCache.Count + _ptrCache.Count + _serverQueryCache.Count;
 
+    private void AddError(string error)
+    {
+        var bag = CurrentQueryErrors.Value ?? QueryErrors;
+        bag.Add(error);
+    }
+
     /// <summary>
-    /// Resets per-validation error list for CLI use. Does NOT reset cumulative
+    /// Resets shared error list for CLI use. Does NOT reset cumulative
     /// counters (those are append-only for thread safety with concurrent web requests).
     /// </summary>
     public void ResetErrors()
@@ -239,28 +256,30 @@ public class DnsResolverService
             catch (DnsResponseException ex)
             {
                 Interlocked.Increment(ref _responsesReceived);
-                QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
+                AddError($"DNS error querying {type} for {domain}: {ex.Message}");
                 return EmptyResponse.Instance;
             }
             catch (OperationCanceledException)
             {
                 Interlocked.Increment(ref _responsesReceived);
-                QueryErrors.Add($"DNS timeout querying {type} for {domain}");
+                AddError($"DNS timeout querying {type} for {domain}");
                 return EmptyResponse.Instance;
             }
             catch (SocketException ex)
             {
                 Interlocked.Increment(ref _responsesReceived);
-                QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
+                AddError($"DNS network error querying {type} for {domain}: {ex.Message}");
                 return EmptyResponse.Instance;
             }
             catch (Exception ex)
             {
                 Interlocked.Increment(ref _responsesReceived);
-                QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
+                AddError($"DNS query failed for {type} {domain}: {ex.Message}");
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.Dns, onHit: () => Interlocked.Increment(ref _cacheHits));
+        }, RecheckHelper.CacheDep.Dns,
+        shouldCache: response => response != EmptyResponse.Instance,
+        onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     /// <summary>
@@ -286,7 +305,9 @@ public class DnsResolverService
                 Interlocked.Increment(ref _responsesReceived);
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.Dns, onHit: () => Interlocked.Increment(ref _cacheHits));
+        }, RecheckHelper.CacheDep.Dns,
+        shouldCache: response => response != EmptyResponse.Instance,
+        onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     /// <summary>
@@ -330,10 +351,13 @@ public class DnsResolverService
         var serverStr = server.ToString();
         var cacheKey = $"sq:{serverStr}:{domain.ToLowerInvariant()}:{type}";
 
-        // If this server has been unreachable too many times, skip immediately
-        if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachCount) && unreachCount >= MaxRetries)
+        // If this server has been unreachable too many times recently, skip immediately.
+        // Entries older than the decay window are ignored, allowing recovery.
+        if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachEntry)
+            && unreachEntry.count >= MaxRetries
+            && (DateTime.UtcNow - unreachEntry.lastFailure) < _unreachableDecay)
         {
-            QueryErrors.Add($"DNS query to {server} skipped for {type} {domain}: server previously unreachable");
+            AddError($"DNS query to {server} skipped for {type} {domain}: server previously unreachable");
             return EmptyResponse.Instance;
         }
 
@@ -360,11 +384,15 @@ public class DnsResolverService
             catch (Exception ex)
             {
                 Interlocked.Increment(ref _responsesReceived);
-                QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
-                _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
+                AddError($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
+                _unreachableServerCounts.AddOrUpdate(serverStr,
+                    (1, DateTime.UtcNow),
+                    (_, existing) => (existing.count + 1, DateTime.UtcNow));
                 return EmptyResponse.Instance;
             }
-        }, RecheckHelper.CacheDep.ServerDns, onHit: () => Interlocked.Increment(ref _cacheHits));
+        }, RecheckHelper.CacheDep.ServerDns,
+        shouldCache: response => response != EmptyResponse.Instance,
+        onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     public async Task<List<string>> ResolveAAsync(string hostname)
@@ -382,6 +410,7 @@ public class DnsResolverService
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
         var cacheKey = $"ptr:{ip}";
+        bool succeeded = false;
         return await _ptrCache.GetOrCreateAsync(cacheKey, async () =>
         {
             Interlocked.Increment(ref _cacheMisses);
@@ -390,6 +419,7 @@ public class DnsResolverService
                 var parsedIp = IPAddress.Parse(ip);
                 var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
                 Interlocked.Increment(ref _responsesReceived);
+                succeeded = true;
                 return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             }
             catch
@@ -397,7 +427,9 @@ public class DnsResolverService
                 Interlocked.Increment(ref _responsesReceived);
                 return new List<string>();
             }
-        }, RecheckHelper.CacheDep.Ptr, onHit: () => Interlocked.Increment(ref _cacheHits));
+        }, RecheckHelper.CacheDep.Ptr,
+        shouldCache: _ => succeeded,
+        onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
     public async Task<List<string>> ResolveCnameChainAsync(string hostname)
@@ -517,7 +549,7 @@ public class DnsResolverService
         }
         catch
         {
-            _axfrResponseCache.TryAdd(key, EmptyResponse.Instance);
+            // Don't cache transient failures — next caller retries
             return EmptyResponse.Instance;
         }
     }
@@ -552,12 +584,13 @@ public class DnsResolverService
     // ── Cache export/import for disk persistence ─────────────────────────
 
     public Dictionary<string, int> ExportUnreachableServers()
-        => _unreachableServerCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        => _unreachableServerCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.count);
 
     public void ImportUnreachableServers(Dictionary<string, int> entries)
     {
+        var now = DateTime.UtcNow;
         foreach (var kvp in entries)
-            _unreachableServerCounts.TryAdd(kvp.Key, kvp.Value);
+            _unreachableServerCounts.TryAdd(kvp.Key, (kvp.Value, now));
     }
 
     public Dictionary<string, bool> ExportAxfrCache()

@@ -8,7 +8,7 @@ public interface ICheck
 {
     string Name { get; }
     CheckCategory Category { get; }
-    Task<List<CheckResult>> RunAsync(string domain, CheckContext context);
+    Task<List<CheckResult>> RunAsync(string domain, CheckContext context, CancellationToken cancellationToken = default);
 }
 
 public class CheckContext
@@ -21,16 +21,17 @@ public class CheckContext
     public ValidationOptions Options { get; set; } = new();
 
     // Shared state between checks — written by foundation (sequential),
-    // read-only during concurrent phase. Thread-safe collections used as
-    // a safety net even though the write→read ordering is guaranteed.
-    public List<string> MxHosts { get; set; } = new();
+    // read-only during concurrent phase. IReadOnlyList ensures concurrent
+    // checks cannot accidentally mutate shared state. Foundation checks
+    // build a local List then assign the completed list to these properties.
+    public IReadOnlyList<string> MxHosts { get; set; } = Array.Empty<string>();
     public ConcurrentDictionary<string, List<string>> MxHostIps { get; set; } = new();
-    public List<string> NsHosts { get; set; } = new();
+    public IReadOnlyList<string> NsHosts { get; set; } = Array.Empty<string>();
     public ConcurrentDictionary<string, List<string>> NsHostIps { get; set; } = new();
     public string? SpfRecord { get; set; }
     public string? DmarcRecord { get; set; }
-    public List<string> DomainARecords { get; set; } = new();
-    public List<string> DomainAAAARecords { get; set; } = new();
+    public IReadOnlyList<string> DomainARecords { get; set; } = Array.Empty<string>();
+    public IReadOnlyList<string> DomainAAAARecords { get; set; } = Array.Empty<string>();
 
     // Flags indicating whether foundation lookups had transient failures
     // (SERVFAIL/timeout) vs simply returned empty results or NXDOMAIN.

@@ -280,9 +280,29 @@ class ValidationJob
     }
 }
 
-class ValidationTracker
+class ValidationTracker : IDisposable
 {
     private readonly ConcurrentDictionary<string, ValidationJob> _jobs = new();
+    private readonly Timer _cleanupTimer;
+    private static readonly TimeSpan _jobRetention = TimeSpan.FromHours(1);
+
+    public ValidationTracker()
+    {
+        _cleanupTimer = new Timer(_ => Cleanup(), null,
+            TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
+    }
+
+    private void Cleanup()
+    {
+        var cutoff = DateTime.UtcNow - _jobRetention;
+        foreach (var kvp in _jobs)
+        {
+            if (kvp.Value.Status != JobStatus.Running && kvp.Value.StartedAt < cutoff)
+                _jobs.TryRemove(kvp.Key, out _);
+        }
+    }
+
+    public void Dispose() => _cleanupTimer.Dispose();
 
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,

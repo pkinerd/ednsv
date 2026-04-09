@@ -15,7 +15,7 @@ public class SmtpSizeCheck : ICheck
     public string Name => "SMTP Max Message Size";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -65,7 +65,7 @@ public class SpfOverlapCheck : ICheck
     public string Name => "SPF IP Overlap Detection";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -176,7 +176,7 @@ public class DnsPropagationCheck : ICheck
         ("9.9.9.9", "Quad9"),
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -242,7 +242,7 @@ public class ArcCheck : ICheck
 
     private static readonly string[] ArcSelectors = { "arc", "s1", "s2", "google", "selector1", "selector2", "default" };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int found = 0;
@@ -305,7 +305,7 @@ public class ProviderVerificationTxtCheck : ICheck
         ("mailru-verification:", "Mail.ru"),
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -343,7 +343,7 @@ public class SmtpRequireTlsCheck : ICheck
     public string Name => "SMTP REQUIRETLS (RFC 8689)";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -395,7 +395,7 @@ public class NsGlueRecordCheck : ICheck
     public string Name => "NS Glue Records";
     public CheckCategory Category => CheckCategory.Delegation;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -477,7 +477,7 @@ public class MailSubdomainSurveyCheck : ICheck
         "bounce", "return", "send", "newsletter", "marketing"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -525,7 +525,7 @@ public class CertificateTransparencyCheck : ICheck
     public string Name => "Certificate Transparency";
     public CheckCategory Category => CheckCategory.CAA;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -577,7 +577,7 @@ public class MxReverseDnsCheck : ICheck
     public string Name => "MX Reverse DNS (PTR)";
     public CheckCategory Category => CheckCategory.PTR;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -667,7 +667,7 @@ public class NsecZoneWalkCheck : ICheck
     public string Name => "NSEC/NSEC3 Zone Walk";
     public CheckCategory Category => CheckCategory.DNSSEC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -741,7 +741,7 @@ public class DuplicateTxtRecordCheck : ICheck
     public string Name => "Duplicate/Conflicting TXT Records";
     public CheckCategory Category => CheckCategory.TXT;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -833,7 +833,7 @@ public class SubdomainSpfGapCheck : ICheck
         "bounce", "send", "outbound", "notifications", "transactional"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 

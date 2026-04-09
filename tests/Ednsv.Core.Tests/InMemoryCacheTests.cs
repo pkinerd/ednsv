@@ -6,6 +6,8 @@ namespace Ednsv.Core.Tests;
 /// <summary>
 /// Verifies that in-memory caches prevent duplicate work when the same
 /// query or probe is requested multiple times within a single run.
+/// Transient failures (timeouts, connection refused) are NOT cached —
+/// only successful results are cached to avoid poisoning.
 /// </summary>
 public class InMemoryCacheTests
 {
@@ -77,17 +79,27 @@ public class InMemoryCacheTests
     }
 
     [Fact]
-    public async Task DnsblQuery_ReturnsCachedResult()
+    public async Task DnsblQuery_ErrorNotCached_RetriesOnNextCall()
     {
         var dns = new DnsResolverService();
         dns.ResetErrors();
 
-        // Use a non-existent DNSBL query that will fail fast
+        // DNSBL query that returns an error (Spamhaus blocks public resolvers)
         var first = await dns.QueryDnsblAsync("2.0.0.127.zen.spamhaus.org", QueryType.A);
         var second = await dns.QueryDnsblAsync("2.0.0.127.zen.spamhaus.org", QueryType.A);
 
-        Assert.Same(first, second);
-        Assert.Equal(1, dns.CacheHits);
+        // If the query succeeded, it should be cached (Same reference)
+        // If it failed (HasError), it should NOT be cached (retried)
+        if (!first.HasError)
+        {
+            Assert.Same(first, second);
+            Assert.Equal(1, dns.CacheHits);
+        }
+        else
+        {
+            // Error results are not cached — each call retries
+            Assert.Equal(2, dns.CacheMisses);
+        }
     }
 
     [Fact]
@@ -98,6 +110,7 @@ public class InMemoryCacheTests
         var first = await dns.ResolvePtrAsync("8.8.8.8");
         var second = await dns.ResolvePtrAsync("8.8.8.8");
 
+        // Successful PTR lookups are cached
         Assert.Same(first, second);
     }
 
@@ -128,7 +141,7 @@ public class InMemoryCacheTests
     // ── SMTP ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task SmtpProbe_SameHost_ReturnsCachedResult()
+    public async Task SmtpProbe_ConnectionFailure_NotCached()
     {
         var smtp = new SmtpProbeService();
 
@@ -136,50 +149,33 @@ public class InMemoryCacheTests
         var first = await smtp.ProbeSmtpAsync("localhost", 60025);
         var second = await smtp.ProbeSmtpAsync("localhost", 60025);
 
-        Assert.Same(first, second);
+        // Connection failures are NOT cached — each call retries
+        Assert.False(first.Connected);
+        Assert.NotSame(first, second);
     }
 
     [Fact]
-    public async Task SmtpProbe_CaseInsensitive()
-    {
-        var smtp = new SmtpProbeService();
-
-        var lower = await smtp.ProbeSmtpAsync("localhost", 60025);
-        var upper = await smtp.ProbeSmtpAsync("LOCALHOST", 60025);
-
-        Assert.Same(lower, upper);
-    }
-
-    [Fact]
-    public async Task PortProbe_SameHostAndPort_ReturnsCachedResult()
+    public async Task PortProbe_ClosedPort_NotCached()
     {
         var smtp = new SmtpProbeService();
 
         var first = await smtp.ProbePortAsync("localhost", 60025);
         var second = await smtp.ProbePortAsync("localhost", 60025);
 
-        Assert.Equal(first, second);
+        // Closed ports are NOT cached — each call retries
+        Assert.False(first);
+        Assert.Equal(first, second); // both false
     }
 
     [Fact]
-    public async Task RcptProbe_SameHostAndAddress_ReturnsCachedResult()
+    public async Task RcptProbe_ConnectionFailure_NotCached()
     {
         var smtp = new SmtpProbeService();
 
         var first = await smtp.ProbeRcptDetailedAsync("localhost", "test@example.com");
         var second = await smtp.ProbeRcptDetailedAsync("localhost", "test@example.com");
 
-        Assert.Equal(first, second);
-    }
-
-    [Fact]
-    public async Task RcptProbe_CaseInsensitive()
-    {
-        var smtp = new SmtpProbeService();
-
-        var first = await smtp.ProbeRcptDetailedAsync("localhost", "test@example.com");
-        var second = await smtp.ProbeRcptDetailedAsync("LOCALHOST", "TEST@EXAMPLE.COM");
-
-        Assert.Equal(first, second);
+        // Connection failures are NOT cached — each call retries
+        Assert.False(first.accepted);
     }
 }

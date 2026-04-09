@@ -216,7 +216,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
     }
 
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
-        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
+        Func<TValue, bool>? shouldCache = null)
     {
         if (TryGet(key, out var cached, recheckFlag))
         {
@@ -228,7 +229,7 @@ public class ProbeCacheValue<TValue> where TValue : struct
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
         });
 
         if (!isNewEntry)
@@ -245,12 +246,13 @@ public class ProbeCacheValue<TValue> where TValue : struct
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
     {
         try
         {
             var result = await factory();
-            Set(key, result);
+            if (shouldCache == null || shouldCache(result))
+                Set(key, result);
             return result;
         }
         finally

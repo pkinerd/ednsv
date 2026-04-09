@@ -36,6 +36,7 @@ public class HttpProbeService
 
     private readonly ProbeCache<GetResult> _getCache;
     private readonly ProbeCache<GetWithHeadersResult> _getWithHeadersCache;
+    private readonly SemaphoreSlim _concurrencyLimiter = new(20, 20);
 
     public HttpProbeService(TimeSpan? cacheTtl = null)
     {
@@ -63,6 +64,7 @@ public class HttpProbeService
             (bool success, string content, int statusCode) lastResult = default;
             for (int attempt = 0; attempt < retries; attempt++)
             {
+                await _concurrencyLimiter.WaitAsync();
                 try
                 {
                     var response = await _client.GetAsync(url);
@@ -76,11 +78,16 @@ public class HttpProbeService
                     lastResult = (false, ex.Message, 0);
                     Trace?.Invoke($"[HTTP] GET RETRY {url} attempt {attempt + 1}/{retries} ({ex.Message})");
                 }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
             }
             if (Trace != null && sw != null)
                 Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {retries} attempts");
             return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
-        }, RecheckHelper.CacheDep.Http);
+        }, RecheckHelper.CacheDep.Http,
+        shouldCache: result => result.Success || result.StatusCode > 0);
         return result.ToTuple();
     }
 
@@ -93,6 +100,7 @@ public class HttpProbeService
             (bool success, string content, int statusCode, string? contentType) lastResult = default;
             for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
+                await _concurrencyLimiter.WaitAsync();
                 try
                 {
                     var response = await _client.GetAsync(url);
@@ -107,11 +115,16 @@ public class HttpProbeService
                     lastResult = (false, ex.Message, 0, (string?)null);
                     Trace?.Invoke($"[HTTP] GET RETRY {url} attempt {attempt + 1}/{MaxRetries} ({ex.Message})");
                 }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
             }
             if (Trace != null && sw != null)
                 Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {MaxRetries} attempts");
             return new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType };
-        }, RecheckHelper.CacheDep.Http);
+        }, RecheckHelper.CacheDep.Http,
+        shouldCache: result => result.Success || result.StatusCode > 0);
         return result.ToTuple();
     }
 

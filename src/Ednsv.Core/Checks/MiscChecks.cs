@@ -18,7 +18,7 @@ public class SrvRecordsCheck : ICheck
         "_jmap._tcp"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int found = 0;
@@ -61,7 +61,7 @@ public class AutodiscoverCheck : ICheck
     public string Name => "Autodiscover";
     public CheckCategory Category => CheckCategory.Autodiscover;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -130,7 +130,7 @@ public class Ipv6ReadinessCheck : ICheck
     public string Name => "IPv6 Readiness";
     public CheckCategory Category => CheckCategory.IPv6;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -178,7 +178,7 @@ public class WildcardDnsCheck : ICheck
     public string Name => "Wildcard DNS";
     public CheckCategory Category => CheckCategory.Wildcard;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -235,7 +235,7 @@ public class TtlSanityCheck : ICheck
     public string Name => "TTL Sanity";
     public CheckCategory Category => CheckCategory.TTL;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -296,7 +296,7 @@ public class AllTxtRecordsCheck : ICheck
     public string Name => "All TXT Records";
     public CheckCategory Category => CheckCategory.TXT;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 

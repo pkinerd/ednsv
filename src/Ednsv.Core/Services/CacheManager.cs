@@ -59,8 +59,11 @@ public sealed class CacheManager : IAsyncDisposable
 
     /// <summary>
     /// Explicitly flushes all in-memory caches to disk.
+    /// Routes through the flusher's lock when available to prevent concurrent writes.
     /// </summary>
-    public Task FlushAsync() => DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
+    public Task FlushAsync() => _flusher != null
+        ? _flusher.FlushAsync()
+        : DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
 
     /// <summary>
     /// Requests a non-blocking background flush. Safe to call frequently.

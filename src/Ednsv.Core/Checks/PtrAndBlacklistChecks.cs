@@ -10,7 +10,7 @@ public class ReverseDnsCheck : ICheck
     public string Name => "Reverse DNS (PTR)";
     public CheckCategory Category => CheckCategory.PTR;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -60,7 +60,7 @@ public class ForwardConfirmedRdnsCheck : ICheck
     public string Name => "Forward-Confirmed rDNS (FCrDNS)";
     public CheckCategory Category => CheckCategory.FCrDNS;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -146,7 +146,7 @@ public class IpBlocklistCheck : ICheck
         "127.0.0.1"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -248,7 +248,7 @@ public class MxHostnameBlocklistCheck : ICheck
         "127.255.255.254", "127.255.255.253", "127.255.255.252", "127.0.0.1"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -350,7 +350,7 @@ public class DomainBlocklistCheck : ICheck
         "127.0.0.1"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 

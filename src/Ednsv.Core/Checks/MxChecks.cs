@@ -10,7 +10,7 @@ public class MxRecordsCheck : ICheck
     public string Name => "MX Records";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -29,10 +29,11 @@ public class MxRecordsCheck : ICheck
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = $"{mxRecords.Count} MX record(s) found";
 
+                var mxHosts = new List<string>();
                 foreach (var mx in mxRecords)
                 {
                     var host = mx.Exchange.Value.TrimEnd('.');
-                    ctx.MxHosts.Add(host);
+                    mxHosts.Add(host);
 
                     var aRecs = await ctx.Dns.ResolveAAsync(host);
                     var aaaaRecs = await ctx.Dns.ResolveAAAAAsync(host);
@@ -69,6 +70,7 @@ public class MxRecordsCheck : ICheck
                         }
                     }
                 }
+                ctx.MxHosts = mxHosts;
             }
             else
             {
@@ -108,7 +110,7 @@ public class MxIpDetectionCheck : ICheck
     public string Name => "MX-to-IP Detection";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;
@@ -134,7 +136,7 @@ public class MxCnameCheck : ICheck
     public string Name => "MX CNAME Check";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -160,7 +162,7 @@ public class NullMxCheck : ICheck
     public string Name => "Null MX / Duplicates";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -222,7 +224,7 @@ public class MxPriorityDistributionCheck : ICheck
     public string Name => "MX Priority Distribution";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -280,7 +282,7 @@ public class MxBackupSecurityCheck : ICheck
     public string Name => "MX Backup Security Parity";
     public CheckCategory Category => CheckCategory.MX;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 

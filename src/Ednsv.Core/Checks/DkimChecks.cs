@@ -27,7 +27,7 @@ public class DkimSelectorsCheck : ICheck
         "v", "h", "k", "n", "p", "s", "t", "g"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         var found = new List<(string selector, string record)>();

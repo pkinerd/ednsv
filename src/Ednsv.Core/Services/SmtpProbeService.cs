@@ -107,7 +107,8 @@ public class SmtpProbeService
             if (Trace != null && sw != null)
                 Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
             return result;
-        }, RecheckHelper.CacheDep.Smtp);
+        }, RecheckHelper.CacheDep.Smtp,
+        shouldCache: result => result.Connected);
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
@@ -268,7 +269,8 @@ public class SmtpProbeService
             if (Trace != null && portSw != null)
                 Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
             return reachable;
-        }, RecheckHelper.CacheDep.Port);
+        }, RecheckHelper.CacheDep.Port,
+        shouldCache: result => result);
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)
@@ -292,7 +294,9 @@ public class SmtpProbeService
                 break;
         }
 
-        _rcptCache.TryAdd(cacheKey, lastResult);
+        // Only cache definitive server responses, not transient failures
+        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
+            _rcptCache.TryAdd(cacheKey, lastResult);
         return lastResult;
     }
 
@@ -417,7 +421,9 @@ public class SmtpProbeService
             return cached;
 
         var result = await PerformRelayTestAsync(mxHost, domain);
-        _relayCache.TryAdd(cacheKey, result);
+        // Only cache definitive results, not transient failures
+        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out"))
+            _relayCache.TryAdd(cacheKey, result);
         return result;
     }
 

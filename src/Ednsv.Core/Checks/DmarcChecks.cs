@@ -10,7 +10,7 @@ public class DmarcRecordCheck : ICheck
     public string Name => "DMARC Record";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -268,7 +268,7 @@ public class DmarcInheritanceCheck : ICheck
     public string Name => "DMARC Inheritance";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -405,7 +405,7 @@ public class DmarcExternalReportAuthCheck : ICheck
     public string Name => "DMARC External Report Auth";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -481,7 +481,7 @@ public class DmarcReportTargetMxCheck : ICheck
     public string Name => "DMARC Report Target MX";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -539,7 +539,7 @@ public class SpfDmarcCombinedCheck : ICheck
     public string Name => "SPF+DMARC Combined";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;
@@ -616,7 +616,7 @@ public class SubdomainDmarcOverrideCheck : ICheck
 
     private static readonly string[] CommonSubdomains = { "mail", "smtp", "email", "www", "newsletter", "marketing", "bounce", "send", "outbound" };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -697,7 +697,7 @@ public class DmarcSubdomainPolicyCheck : ICheck
     public string Name => "DMARC Subdomain Policy Analysis";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;
@@ -816,7 +816,7 @@ public class DmarcReportUriValidationCheck : ICheck
     public string Name => "DMARC Report URI Validation";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
