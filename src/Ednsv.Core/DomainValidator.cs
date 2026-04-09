@@ -485,7 +485,6 @@ public class DomainValidator
             OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
             foreach (var r in results)
             {
-                TraceMask?.MaskResult(r);
                 report.Results.Add(r);
                 OnCheckCompleted?.Invoke(check.Name, r);
             }
@@ -500,7 +499,6 @@ public class DomainValidator
                 Summary = $"Check failed: {ex.Message}",
                 Errors = { ex.Message }
             };
-            TraceMask?.MaskResult(errorResult);
             report.Results.Add(errorResult);
             OnCheckCompleted?.Invoke(check.Name, errorResult);
         }
