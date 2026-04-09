@@ -48,7 +48,24 @@ public class CheckContext
 
     // Cached SMTP probe results (avoid probing same host multiple times).
     // ConcurrentDictionary because concurrent checks may read/write simultaneously.
+    // Populated during prefetch; checks should use GetOrProbeSmtpAsync().
     public ConcurrentDictionary<string, Services.SmtpProbeResult> SmtpProbeCache { get; set; } = new();
+
+    /// <summary>
+    /// Get an SMTP probe result from the per-validation cache, or probe and cache it.
+    /// All checks should use this instead of calling Smtp.ProbeSmtpAsync directly
+    /// to avoid redundant probes — especially during recheck where the service-level
+    /// MemoryCache is bypassed.
+    /// </summary>
+    public async Task<Services.SmtpProbeResult> GetOrProbeSmtpAsync(string host, int port = 25)
+    {
+        var key = port == 25 ? host : $"{host}:{port}";
+        if (SmtpProbeCache.TryGetValue(key, out var cached))
+            return cached;
+        var probe = await Smtp.ProbeSmtpAsync(host, port);
+        SmtpProbeCache.TryAdd(key, probe);
+        return probe;
+    }
 
     // Per-validation recheck context — when set, service cache lookups bypass
     // MemoryCache for matching cache types, forcing fresh queries without

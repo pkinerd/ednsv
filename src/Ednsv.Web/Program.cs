@@ -13,6 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddSimpleConsole(options =>
 {
     options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+    options.SingleLine = true;
 });
 
 // ── Configuration ────────────────────────────────────────────────────────

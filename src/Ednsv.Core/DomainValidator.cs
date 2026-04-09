@@ -575,9 +575,15 @@ public class DomainValidator
                     // PTR lookups for MX IPs
                     var ptrTasks = ips.Select(ip => _dns.ResolvePtrAsync(ip));
 
-                    // SMTP probe on port 25 — must complete before checks
+                    // SMTP probe on port 25 — must complete before checks.
+                    // Store result in ctx.SmtpProbeCache so concurrent checks
+                    // reuse it without hitting ProbeCache (which bypasses on recheck).
                     await smtpSemaphore.WaitAsync();
-                    try { await _smtp.ProbeSmtpAsync(h, 25); }
+                    try
+                    {
+                        var probeResult = await _smtp.ProbeSmtpAsync(h, 25);
+                        ctx.SmtpProbeCache.TryAdd(h, probeResult);
+                    }
                     finally { smtpSemaphore.Release(); }
 
                     await Task.WhenAll(ptrTasks);
