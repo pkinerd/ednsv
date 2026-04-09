@@ -108,7 +108,9 @@ public class SmtpProbeService
                 Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
             return result;
         }, RecheckHelper.CacheDep.Smtp,
-        shouldCache: result => result.Connected);
+        // Cache successful probes and definitive failures (connection refused).
+        // Only skip caching when all attempts timed out (transient).
+        shouldCache: result => result.Connected || result.Error != "Connection timed out");
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
@@ -239,6 +241,7 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
+        bool allTimedOut = true;
         return await _portCache.GetOrCreateAsync(cacheKey, async () =>
         {
             Interlocked.Increment(ref _portsStarted);
@@ -252,16 +255,18 @@ public class SmtpProbeService
                     using var client = new TcpClient();
                     var connectTask = client.ConnectAsync(host, port);
                     if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
-                        reachable = false;
+                        reachable = false; // timeout — transient
                     else
                     {
                         await connectTask;
                         reachable = true;
+                        allTimedOut = false;
                     }
                 }
                 catch
                 {
                     reachable = false;
+                    allTimedOut = false; // connection refused — definitive
                 }
                 if (reachable) break;
             }
@@ -270,7 +275,9 @@ public class SmtpProbeService
                 Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
             return reachable;
         }, RecheckHelper.CacheDep.Port,
-        shouldCache: result => result);
+        // Cache open ports and definitive refusals. Only skip caching
+        // when all attempts timed out (transient network issue).
+        shouldCache: result => result || !allTimedOut);
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)

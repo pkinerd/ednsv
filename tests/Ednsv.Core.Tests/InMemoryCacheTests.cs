@@ -136,30 +136,30 @@ public class InMemoryCacheTests
     // ── SMTP ─────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task SmtpProbe_ConnectionFailure_NotCached()
+    public async Task SmtpProbe_DefinitiveFailure_IsCached()
     {
         var smtp = new SmtpProbeService();
 
-        // Use a host that will fail fast (connection refused)
+        // Connection refused on localhost:60025 is a definitive failure — should be cached
         var first = await smtp.ProbeSmtpAsync("localhost", 60025);
         var second = await smtp.ProbeSmtpAsync("localhost", 60025);
 
-        // Connection failures are NOT cached — each call retries
         Assert.False(first.Connected);
-        Assert.NotSame(first, second);
+        // Definitive failures (connection refused) are cached; only timeouts are not
+        Assert.Same(first, second);
     }
 
     [Fact]
-    public async Task PortProbe_ClosedPort_NotCached()
+    public async Task PortProbe_DefinitiveClosedPort_IsCached()
     {
         var smtp = new SmtpProbeService();
 
+        // Connection refused on localhost:60025 is definitive — should be cached
         var first = await smtp.ProbePortAsync("localhost", 60025);
         var second = await smtp.ProbePortAsync("localhost", 60025);
 
-        // Closed ports are NOT cached — each call retries
         Assert.False(first);
-        Assert.Equal(first, second); // both false
+        Assert.Equal(first, second);
     }
 
     [Fact]
@@ -170,7 +170,6 @@ public class InMemoryCacheTests
         var first = await smtp.ProbeRcptDetailedAsync("localhost", "test@example.com");
         var second = await smtp.ProbeRcptDetailedAsync("localhost", "test@example.com");
 
-        // Connection failures are NOT cached — each call retries
         Assert.False(first.accepted);
     }
 }
