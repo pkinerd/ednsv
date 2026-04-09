@@ -71,7 +71,14 @@ public class TraceMasker
             .Replace('+', '-').Replace('/', '_').TrimEnd('=')[..10];
     }
 
-    // Regex patterns for things to mask
+    // ── Hash output pattern ────────────────────────────────────────────────
+    // Matches tokens already masked by a prior pass (e.g. "h:a3Bf9xKz2Q").
+    // Used by later regexes so they can match compound patterns that include
+    // an already-masked hostname or IP in a sub-position.
+    private const string MaskedToken = @"(?:h|ip4|ip6|e|dkim):[a-zA-Z0-9_-]{10}";
+
+    // ── Regex patterns for things to mask ────────────────────────────────
+
     private static readonly Regex IpV4Pattern = new(
         @"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b",
         RegexOptions.Compiled);
@@ -90,17 +97,41 @@ public class TraceMasker
         @"\b[a-zA-Z0-9._%+-]+@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b",
         RegexOptions.Compiled);
 
+    // DKIM selectors: selector._domainkey.domain (domain may already be masked)
+    // Must run BEFORE hostname masking — otherwise the domain portion gets masked
+    // first, leaving the selector name exposed and breaking this pattern.
+    private static readonly Regex DkimSelectorPattern = new(
+        @"\b([a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)\._domainkey\." +
+        @"((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}" +
+        @"|" + MaskedToken + @")\b",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// Mask all potentially private details in a trace message.
-    /// Replaces IPs, hostnames, and email addresses with hashed versions.
+    /// Replaces IPs, hostnames, email addresses, and DKIM selectors with hashed versions.
     /// Preserves structure (brackets, colons, prefixes) for readability.
+    ///
+    /// Ordering is critical — each regex must run before patterns that would
+    /// consume its sub-components:
+    ///   1. Emails (contain hostname-like domain parts)
+    ///   2. DKIM selectors (contain hostname in domain position)
+    ///   3. IPv6 / IPv4
+    ///   4. Hostnames (catch-all for remaining FQDNs)
+    ///
+    /// Later regexes use the MaskedToken alternation so they can still match
+    /// compound patterns where an earlier pass already replaced a sub-part
+    /// (e.g. "selector._domainkey.h:hash" after a double-mask scenario).
     /// </summary>
     public string Mask(string message)
     {
-        // Order matters: emails before hostnames (emails contain hostname-like parts)
+        // 1. Emails first — they embed hostnames after '@'
         message = EmailPattern.Replace(message, m => $"e:{Hash(m.Value)}");
+        // 2. DKIM selectors — selector._domainkey.domain (before hostname catches domain)
+        message = DkimSelectorPattern.Replace(message, m => $"dkim:{Hash(m.Value)}");
+        // 3. IPs
         message = IpV6Pattern.Replace(message, m => $"ip6:{Hash(m.Value)}");
         message = IpV4Pattern.Replace(message, m => $"ip4:{Hash(m.Value)}");
+        // 4. Hostnames — catch remaining FQDNs
         message = HostnamePattern.Replace(message, m =>
         {
             // Don't mask common non-private hostnames
@@ -113,5 +144,21 @@ public class TraceMasker
             return $"h:{Hash(m.Value)}";
         });
         return message;
+    }
+
+    /// <summary>
+    /// Mask all string fields in a <see cref="CheckResult"/>: Summary, Details,
+    /// Warnings, and Errors. Call this before the result is added to a report
+    /// so all output paths (CLI, web, JSON) receive masked data.
+    /// </summary>
+    public void MaskResult(Ednsv.Core.Models.CheckResult result)
+    {
+        result.Summary = Mask(result.Summary);
+        for (var i = 0; i < result.Details.Count; i++)
+            result.Details[i] = Mask(result.Details[i]);
+        for (var i = 0; i < result.Warnings.Count; i++)
+            result.Warnings[i] = Mask(result.Warnings[i]);
+        for (var i = 0; i < result.Errors.Count; i++)
+            result.Errors[i] = Mask(result.Errors[i]);
     }
 }
