@@ -7,8 +7,9 @@ namespace Ednsv.Core.Services;
 /// <summary>
 /// Masks potentially private details (hostnames, IPs, domains, email addresses)
 /// in trace log messages using salted SHA256 hashes. The salt is generated once
-/// at construction so the same value always produces the same hash within a
-/// session — allowing correlation across log lines without exposing the original.
+/// at construction (or loaded from config) so the same value always produces
+/// the same hash — allowing correlation across log lines and across restarts
+/// when a static salt is used.
 ///
 /// Hash format: base64url-encoded, truncated to 10 characters (60 bits of entropy).
 /// Example: "mail.example.com" → "h:a3Bf9xKz2Q"
@@ -17,9 +18,41 @@ public class TraceMasker
 {
     private readonly byte[] _salt;
 
+    /// <summary>Create with a random 256-bit salt (unique per session).</summary>
     public TraceMasker()
     {
-        _salt = RandomNumberGenerator.GetBytes(32); // 256-bit salt
+        _salt = RandomNumberGenerator.GetBytes(32);
+    }
+
+    /// <summary>
+    /// Create with a specific salt for consistent hashes across restarts.
+    /// Accepts base64, hex (64 chars), or arbitrary string (hashed to 256 bits).
+    /// </summary>
+    public TraceMasker(string salt)
+    {
+        if (string.IsNullOrEmpty(salt))
+        {
+            _salt = RandomNumberGenerator.GetBytes(32);
+            return;
+        }
+
+        // Try base64 first
+        try
+        {
+            var bytes = Convert.FromBase64String(salt);
+            if (bytes.Length >= 16) { _salt = bytes; return; }
+        }
+        catch { }
+
+        // Try hex (64 hex chars = 32 bytes)
+        if (salt.Length == 64 && salt.All(c => "0123456789abcdefABCDEF".Contains(c)))
+        {
+            _salt = Convert.FromHexString(salt);
+            return;
+        }
+
+        // Arbitrary string — hash it to produce a 256-bit salt
+        _salt = SHA256.HashData(Encoding.UTF8.GetBytes(salt));
     }
 
     /// <summary>

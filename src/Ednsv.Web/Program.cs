@@ -16,7 +16,8 @@ var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSec
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
-var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", false);
+var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", true); // default ON for privacy
+var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
@@ -46,7 +47,9 @@ builder.Services.AddSingleton(smtp);
 builder.Services.AddSingleton(http);
 
 // ── Trace masker (singleton — same salt for session, consistent hashes) ───
-var traceMasker = maskTrace ? new TraceMasker() : null;
+var traceMasker = maskTrace
+    ? (!string.IsNullOrEmpty(maskSalt) ? new TraceMasker(maskSalt) : new TraceMasker())
+    : null;
 
 // ── Default validation options ────────────────────────────────────────────
 var defaultOptions = new ValidationOptions();
@@ -298,7 +301,8 @@ class ValidationTracker
                     if (deps != RecheckHelper.CacheDep.None)
                     {
                         validator.RecheckDeps = deps;
-                        logger.LogInformation("Recheck: bypassing cache for {Domain} ({Deps})", domain, deps);
+                        var logDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+                        logger.LogInformation("Recheck: bypassing cache for {Domain} ({Deps})", logDomain, deps);
                     }
                 }
 
@@ -330,7 +334,8 @@ class ValidationTracker
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Validation failed for {Domain}", domain);
+                var errDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+                logger.LogError(ex, "Validation failed for {Domain}", errDomain);
                 job.Error = ex.Message;
                 job.Status = JobStatus.Failed;
             }

@@ -45,7 +45,9 @@ var recheckOption = new Option<string?>("--recheck", "Revalidate checks that pre
 var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
 var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
 var traceOption = new Option<bool>("--trace", "Show detailed trace output for DNS queries, SMTP probes, and check timing");
-var maskTraceOption = new Option<bool>("--mask-trace", "Mask hostnames, IPs, and email addresses in trace output with hashed identifiers");
+var maskTraceOption = new Option<bool>("--mask-trace", () => true, "Mask hostnames, IPs, and email addresses in log output (default: on)");
+var noMaskTraceOption = new Option<bool>("--no-mask-trace", "Disable masking of private details in log output");
+var maskSaltOption = new Option<string?>("--mask-salt", "Static salt for consistent hashes across runs (base64, hex, or passphrase)");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
@@ -71,6 +73,8 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     verboseOption,
     traceOption,
     maskTraceOption,
+    noMaskTraceOption,
+    maskSaltOption,
     liveIndexOption
 };
 
@@ -197,8 +201,11 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
 
     // --trace: detailed timing diagnostics
     var enableTrace = parseResult.GetValueForOption(traceOption);
-    var enableMaskTrace = parseResult.GetValueForOption(maskTraceOption);
-    var traceMasker = enableMaskTrace ? new TraceMasker() : null;
+    var enableMaskTrace = !parseResult.GetValueForOption(noMaskTraceOption); // default ON
+    var maskSalt = parseResult.GetValueForOption(maskSaltOption);
+    var traceMasker = enableMaskTrace
+        ? (!string.IsNullOrEmpty(maskSalt) ? new TraceMasker(maskSalt) : new TraceMasker())
+        : null;
 
     // --retry: double all retry counts
     var enableRetry = parseResult.GetValueForOption(retryOption);
