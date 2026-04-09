@@ -24,16 +24,30 @@ public class DomainValidator
     /// <summary>Cache types to bypass MemoryCache for (recheck mode).</summary>
     public RecheckHelper.CacheDep RecheckDeps { get; set; }
 
+    /// <summary>Optional masker for trace output — hashes hostnames/IPs for privacy.</summary>
+    private TraceMasker? _traceMask;
+    public TraceMasker? TraceMask
+    {
+        get => _traceMask;
+        set { _traceMask = value; if (_traceCallback != null) Trace = _traceCallback; } // re-apply wrapping
+    }
+
     /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
     public Action<string>? Trace
     {
-        get => _dns.Trace;
+        get => _traceCallback;
         set
         {
-            _dns.Trace = value;
-            _smtp.Trace = value;
+            _traceCallback = value;
+            // Wrap with masking if TraceMask is set, otherwise pass through directly
+            var effectiveTrace = value != null && TraceMask != null
+                ? (Action<string>)(msg => value(TraceMask.Mask(msg)))
+                : value;
+            _dns.Trace = effectiveTrace;
+            _smtp.Trace = effectiveTrace;
         }
     }
+    private Action<string>? _traceCallback;
 
     /// <summary>
     /// Creates a new validator with fresh (non-shared) services.
@@ -434,6 +448,7 @@ public class DomainValidator
     {
         if (Trace == null) return;
         var elapsed = _validationSw?.ElapsedMilliseconds ?? 0;
+        if (TraceMask != null) message = TraceMask.Mask(message);
         Trace($"[{elapsed,7}ms] {message}");
     }
 

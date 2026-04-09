@@ -16,6 +16,7 @@ var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSec
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
+var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", false);
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
@@ -43,6 +44,9 @@ var http = new HttpProbeService(cacheTtl: inMemoryTtl);
 builder.Services.AddSingleton(dns);
 builder.Services.AddSingleton(smtp);
 builder.Services.AddSingleton(http);
+
+// ── Trace masker (singleton — same salt for session, consistent hashes) ───
+var traceMasker = maskTrace ? new TraceMasker() : null;
 
 // ── Default validation options ────────────────────────────────────────────
 var defaultOptions = new ValidationOptions();
@@ -105,7 +109,7 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace);
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 });
 
@@ -163,6 +167,7 @@ app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
         return Results.BadRequest(new { error = "domain is required" });
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
+    if (traceMasker != null) validator.TraceMask = traceMasker;
     if (enableTrace) validator.Trace = msg => app.Logger.LogDebug("{Trace}", msg);
 
     if (!string.IsNullOrEmpty(recheck) &&
@@ -272,7 +277,7 @@ class ValidationTracker
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
         CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null,
-        bool trace = false)
+        bool trace = false, TraceMasker? traceMasker = null)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
@@ -283,6 +288,7 @@ class ValidationTracker
             try
             {
                 var validator = new DomainValidator(dns, smtp, http);
+                if (traceMasker != null) validator.TraceMask = traceMasker;
                 if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
 
                 // Determine recheck deps (bypass MemoryCache without clearing shared entries)
