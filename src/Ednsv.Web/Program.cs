@@ -9,6 +9,13 @@ using Ednsv.Core.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Console log timestamps with fractional seconds ───────────────────────
+builder.Logging.AddSimpleConsole(options =>
+{
+    options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+    options.SingleLine = true;
+});
+
 // ── Configuration ────────────────────────────────────────────────────────
 var cacheDir = builder.Configuration.GetValue<string>("CacheDir") ?? ".ednsv-cache";
 var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);

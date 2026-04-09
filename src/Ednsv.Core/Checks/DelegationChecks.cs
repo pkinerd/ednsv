@@ -74,9 +74,12 @@ public class AuthoritativeNsCheck : ICheck
         {
             var nsResponse = await ctx.Dns.QueryAsync(domain, DnsClient.QueryType.NS);
             var nsRecords = nsResponse.Answers.NsRecords().ToList();
+            bool isNxDomain = CheckContext.IsNxDomain(nsResponse);
+
             if (!nsRecords.Any())
             {
-                if (nsResponse.HasError)
+                // Only set NsLookupFailed for transient errors, not NXDOMAIN
+                if (nsResponse.HasError && !isNxDomain)
                     ctx.NsLookupFailed = true;
 
                 // Try parent domain
@@ -88,6 +91,15 @@ public class AuthoritativeNsCheck : ICheck
                     if (nsRecords.Any())
                         result.Details.Add($"NS records found at parent zone: {parent}");
                 }
+            }
+
+            // If the original query returned NXDOMAIN, the domain does not exist
+            // even if we found NS records at the parent zone
+            if (isNxDomain)
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = $"Domain does not exist (NXDOMAIN)";
+                result.Errors.Add($"{domain} returned NXDOMAIN — this domain/subdomain is not configured in DNS");
             }
 
             foreach (var ns in nsRecords)
@@ -110,8 +122,11 @@ public class AuthoritativeNsCheck : ICheck
                     result.Details.Add($"NS: {nsHost} -> No A or AAAA records found");
             }
 
-            result.Summary = $"Found {nsRecords.Count} authoritative nameservers";
-            result.Severity = nsRecords.Any() ? CheckSeverity.Pass : CheckSeverity.Warning;
+            if (!isNxDomain)
+            {
+                result.Summary = $"Found {nsRecords.Count} authoritative nameservers";
+                result.Severity = nsRecords.Any() ? CheckSeverity.Pass : CheckSeverity.Warning;
+            }
         }
         catch (Exception ex)
         {

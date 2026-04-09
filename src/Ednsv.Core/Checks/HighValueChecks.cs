@@ -100,7 +100,7 @@ public class SmtpTlsVersionCheck : ICheck
         int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
-            var probe = await GetOrProbeAsync(ctx, mxHost);
+            var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
             if (!probe.Connected || !probe.SupportsStartTls)
             {
                 if (!probe.Connected) unreachable++;
@@ -132,13 +132,6 @@ public class SmtpTlsVersionCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private static async Task<Services.SmtpProbeResult> GetOrProbeAsync(CheckContext ctx, string host)
-    {
-        if (ctx.SmtpProbeCache.TryGetValue(host, out var cached)) return cached;
-        var probe = await ctx.Smtp.ProbeSmtpAsync(host, 25);
-        ctx.SmtpProbeCache[host] = probe;
-        return probe;
-    }
 }
 
 /// <summary>

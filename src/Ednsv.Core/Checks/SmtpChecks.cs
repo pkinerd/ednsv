@@ -27,7 +27,7 @@ public class SmtpTlsCertCheck : ICheck
             int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
-                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
                 if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}:");
@@ -110,7 +110,7 @@ public class DaneTlsaCertMatchCheck : ICheck
                 if (!tlsaRecords.Any()) continue;
 
                 anyTlsa = true;
-                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
                 if (probe.CertSubject != null)
                 {
                     result.Details.Add($"{mxHost}: TLSA records found, certificate available");
@@ -232,7 +232,7 @@ public class SmtpBannerCheck : ICheck
             int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
-                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
                 if (probe.Connected)
                 {
                     result.Details.Add($"{mxHost}: Banner: {probe.Banner}");
@@ -318,14 +318,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                 }
 
                 // Get banner hostname
-                SmtpProbeResult probe;
-                if (ctx.SmtpProbeCache.TryGetValue(mxHost, out var cached))
-                    probe = cached;
-                else
-                {
-                    probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                    ctx.SmtpProbeCache[mxHost] = probe;
-                }
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
 
                 if (!probe.Connected || string.IsNullOrEmpty(probe.Banner))
                 {
@@ -428,14 +421,7 @@ public class SmtpTransactionTimingCheck : ICheck
 
             foreach (var mxHost in ctx.MxHosts)
             {
-                SmtpProbeResult probe;
-                if (ctx.SmtpProbeCache.TryGetValue(mxHost, out var cached))
-                    probe = cached;
-                else
-                {
-                    probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
-                    ctx.SmtpProbeCache[mxHost] = probe;
-                }
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
 
                 if (!probe.Connected)
                 {
@@ -526,7 +512,7 @@ public class EhloCapabilitiesCheck : ICheck
             int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
-                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
                 if (probe.Connected && probe.EhloCapabilities.Any())
                 {
                     result.Details.Add($"{mxHost} EHLO capabilities:");
@@ -969,7 +955,7 @@ public class SmtpStarttlsEnforcementCheck : ICheck
             int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
-                var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
 
                 if (!probe.Connected)
                 {

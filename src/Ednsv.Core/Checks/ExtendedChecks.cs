@@ -29,7 +29,7 @@ public class SmtpSizeCheck : ICheck
         int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
-            var probe = await GetOrProbeAsync(ctx, mxHost);
+            var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
             if (probe.SmtpMaxSize.HasValue)
             {
                 var sizeMb = probe.SmtpMaxSize.Value / (1024.0 * 1024.0);
@@ -55,13 +55,6 @@ public class SmtpSizeCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private static async Task<Services.SmtpProbeResult> GetOrProbeAsync(CheckContext ctx, string host)
-    {
-        if (ctx.SmtpProbeCache.TryGetValue(host, out var cached)) return cached;
-        var probe = await ctx.Smtp.ProbeSmtpAsync(host, 25);
-        ctx.SmtpProbeCache[host] = probe;
-        return probe;
-    }
 }
 
 /// <summary>
@@ -365,7 +358,7 @@ public class SmtpRequireTlsCheck : ICheck
         int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
-            var probe = await GetOrProbeAsync(ctx, mxHost);
+            var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
             if (probe.Connected && probe.SupportsRequireTls)
             {
                 supported++;
@@ -392,13 +385,6 @@ public class SmtpRequireTlsCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private static async Task<Services.SmtpProbeResult> GetOrProbeAsync(CheckContext ctx, string host)
-    {
-        if (ctx.SmtpProbeCache.TryGetValue(host, out var cached)) return cached;
-        var probe = await ctx.Smtp.ProbeSmtpAsync(host, 25);
-        ctx.SmtpProbeCache[host] = probe;
-        return probe;
-    }
 }
 
 /// <summary>

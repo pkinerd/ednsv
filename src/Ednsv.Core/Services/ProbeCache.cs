@@ -28,8 +28,14 @@ public class ProbeCache<TValue> where TValue : class
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
     // Track which keys were imported from disk (for CLI recheck importedOnly mode)
     private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
-    // In-flight query deduplication — concurrent callers for the same key share one Task
-    private readonly ConcurrentDictionary<string, Task<TValue>> _inflight = new();
+    // In-flight query deduplication — concurrent callers for the same key share one Task.
+    // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
+    // factory on multiple threads, only one Lazy is stored and only its .Value (which
+    // starts the real work) is ever accessed — guaranteeing exactly one factory call.
+    private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
+
+    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
+    public Action<string>? Trace { get; set; }
 
     public ProbeCache(TimeSpan? ttl = null)
     {
@@ -67,36 +73,38 @@ public class ProbeCache<TValue> where TValue : class
     /// </summary>
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
-        Func<TValue, bool>? shouldCache = null)
+        Func<TValue, bool>? shouldCache = null,
+        Action? onHit = null)
     {
         // 1. Check cache (respects recheck bypass)
         if (TryGet(key, out var cached, recheckFlag))
-            return cached;
-
-        // 2. Join existing in-flight task or start a new one
-        bool weStartedIt = false;
-        var task = _inflight.GetOrAdd(key, _ =>
         {
-            weStartedIt = true;
-            return RunFactory(key, factory, shouldCache);
+            Trace?.Invoke($"[CACHE] HIT {key}");
+            onHit?.Invoke();
+            return cached;
+        }
+
+        // 2. Join existing in-flight task or start a new one.
+        //    Lazy ensures only one factory runs even if GetOrAdd calls
+        //    the value factory on multiple threads (documented .NET behavior).
+        bool isNewEntry = false;
+        var lazy = _inflight.GetOrAdd(key, _ =>
+        {
+            isNewEntry = true;
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
         });
+
+        if (!isNewEntry)
+            Trace?.Invoke($"[CACHE] DEDUP JOIN {key} (awaiting in-flight request)");
 
         try
         {
-            return await task;
+            return await lazy.Value;
         }
         catch
         {
-            // If the task we joined failed, remove it so next caller retries
+            // Remove failed entry so next caller retries
             _inflight.TryRemove(key, out _);
-            // If we didn't start it, retry once with our own factory call
-            if (!weStartedIt)
-            {
-                var result = await factory();
-                if (shouldCache == null || shouldCache(result))
-                    Set(key, result);
-                return result;
-            }
             throw;
         }
     }
@@ -175,7 +183,10 @@ public class ProbeCacheValue<TValue> where TValue : struct
     private readonly TimeSpan? _ttl;
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
     private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
-    private readonly ConcurrentDictionary<string, Task<TValue>> _inflight = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
+
+    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
+    public Action<string>? Trace { get; set; }
 
     private sealed class Box { public TValue Value; }
 
@@ -208,28 +219,28 @@ public class ProbeCacheValue<TValue> where TValue : struct
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
         if (TryGet(key, out var cached, recheckFlag))
-            return cached;
-
-        bool weStartedIt = false;
-        var task = _inflight.GetOrAdd(key, _ =>
         {
-            weStartedIt = true;
-            return RunFactory(key, factory);
+            Trace?.Invoke($"[CACHE] HIT {key}");
+            return cached;
+        }
+
+        bool isNewEntry = false;
+        var lazy = _inflight.GetOrAdd(key, _ =>
+        {
+            isNewEntry = true;
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory));
         });
+
+        if (!isNewEntry)
+            Trace?.Invoke($"[CACHE] DEDUP JOIN {key} (awaiting in-flight request)");
 
         try
         {
-            return await task;
+            return await lazy.Value;
         }
         catch
         {
             _inflight.TryRemove(key, out _);
-            if (!weStartedIt)
-            {
-                var result = await factory();
-                Set(key, result);
-                return result;
-            }
             throw;
         }
     }
