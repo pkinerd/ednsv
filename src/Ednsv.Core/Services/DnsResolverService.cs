@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using DnsClient;
 using DnsClient.Protocol;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Ednsv.Core.Services;
 
@@ -11,171 +13,311 @@ public class DnsResolverService
     private readonly LookupClient _client;
     private readonly LookupClient _directClient;
     private readonly LookupClient _dnsblClient;
-    private static int MaxRetries = 3;
+    private readonly LookupClient _speculativeClient;
+    private static volatile int MaxRetries = 3;
 
-    // Application-level cache for DNS queries (survives across domains)
-    private readonly ConcurrentDictionary<(string domain, QueryType type), IDnsQueryResponse> _queryCache = new();
-    private readonly ConcurrentDictionary<string, List<string>> _ptrCache = new();
-    // Cache for direct server queries (keyed by server+domain+type)
-    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), IDnsQueryResponse> _serverQueryCache = new();
+    // ── Rate limiting ───────────────────────────────────────────────────
+    // Token bucket: limits sustained query rate independent of response times.
+    // Concurrency cap: prevents unbounded in-flight queries during slow periods.
+    private readonly SemaphoreSlim _rateLimiter;
+    private readonly SemaphoreSlim _concurrencyLimiter;
+    private readonly Timer _refillTimer;
+    private readonly int _tokensPerSecond;
+    private readonly int _maxTokens;
+
+    /// <summary>
+    /// Optional trace callback for detailed timing diagnostics.
+    /// Set to a non-null action to enable trace output.
+    /// </summary>
+    public Action<string>? Trace { get; set; }
+
+    /// <summary>In-memory cache with per-entry TTL. Null = no expiry (CLI default).</summary>
+    private readonly TimeSpan? _cacheTtl;
+
+    // Unified caches — single source of truth (MemoryCache) with export log
+    private readonly ProbeCache<IDnsQueryResponse> _queryCache;
+    private readonly ProbeCache<List<string>> _ptrCache;
+    private readonly ProbeCache<IDnsQueryResponse> _serverQueryCache;
     // Tracks servers that are completely unreachable (network/timeout failures).
     // Once a server fails MaxRetries times (across any domain), skip it immediately.
     private readonly ConcurrentDictionary<string, int> _unreachableServerCounts = new();
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
-    // Track keys loaded from disk cache (vs. generated during this run)
-    private readonly ConcurrentDictionary<(string domain, QueryType type), bool> _importedQueryKeys = new();
-    private readonly ConcurrentDictionary<(string server, string domain, QueryType type), bool> _importedServerQueryKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedPtrKeys = new();
-
     public DnsResolverService() : this(null) { }
 
     /// <summary>
     /// Creates a resolver using the specified DNS server(s).
-    /// Pass null or empty to use Google Public DNS (default).
+    /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers)
-    {
-        var endpoints = nameservers?.Count > 0
-            ? nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray()
-            : new[] { NameServer.GooglePublicDns, NameServer.GooglePublicDns2 };
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null)
+        : this(nameservers, tokensPerSecond: 40, maxConcurrency: 50, cacheTtl) { }
 
-        var options = new LookupClientOptions(endpoints)
-        {
-            UseCache = true,
-            Timeout = TimeSpan.FromSeconds(5),
-            Retries = 2,
-            ThrowDnsErrors = false
-        };
+    /// <summary>
+    /// Creates a resolver that uses the OS-configured DNS resolvers.
+    /// </summary>
+    public static DnsResolverService CreateWithSystemResolvers(int tokensPerSecond = 40, int maxConcurrency = 50, TimeSpan? cacheTtl = null)
+        => new(useSystemResolvers: true, nameservers: null, tokensPerSecond, maxConcurrency, cacheTtl);
+
+    /// <summary>
+    /// Creates a resolver with custom rate limiting parameters.
+    /// </summary>
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency, TimeSpan? cacheTtl = null)
+        : this(useSystemResolvers: false, nameservers, tokensPerSecond, maxConcurrency, cacheTtl) { }
+
+    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency, TimeSpan? cacheTtl)
+    {
+        IPEndPoint[]? endpoints = null;
+        if (nameservers?.Count > 0)
+            endpoints = nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray();
+        else if (!useSystemResolvers)
+            endpoints = new[] { NameServer.GooglePublicDns, NameServer.GooglePublicDns2 };
+        // else endpoints stays null → LookupClientOptions() uses OS resolvers
+
+        var options = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        options.UseCache = true;
+        options.Timeout = TimeSpan.FromSeconds(15);
+        options.Retries = 2;
+        options.ThrowDnsErrors = false;
         _client = new LookupClient(options);
 
-        // DNSBL client — shorter timeout (3s) since most responsive blocklists
-        // answer in <500ms. 3 attempts like all other DNS clients.
-        var dnsblOptions = new LookupClientOptions(endpoints)
-        {
-            UseCache = true,
-            Timeout = TimeSpan.FromSeconds(3),
-            Retries = 2,
-            ThrowDnsErrors = false
-        };
+        // DNSBL client — short timeout (3s), 1 retry (2 attempts total).
+        // DNSBL failures are best-effort and don't produce error reports.
+        var dnsblOptions = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        dnsblOptions.UseCache = true;
+        dnsblOptions.Timeout = TimeSpan.FromSeconds(3);
+        dnsblOptions.Retries = 1;
+        dnsblOptions.ThrowDnsErrors = false;
         _dnsblClient = new LookupClient(dnsblOptions);
 
-        var directOptions = new LookupClientOptions
-        {
-            UseCache = false,
-            Timeout = TimeSpan.FromSeconds(5),
-            Retries = 2,
-            ThrowDnsErrors = false
-        };
+        // Speculative client — for optional probes (DKIM selectors, SRV, etc.)
+        // where a timeout simply means "skip this" rather than "report error".
+        // Short timeout (3s), 1 retry (2 attempts = 6s max per query).
+        var speculativeOptions = endpoints != null
+            ? new LookupClientOptions(endpoints)
+            : new LookupClientOptions();
+        speculativeOptions.UseCache = true;
+        speculativeOptions.Timeout = TimeSpan.FromSeconds(3);
+        speculativeOptions.Retries = 1;
+        speculativeOptions.ThrowDnsErrors = false;
+        _speculativeClient = new LookupClient(speculativeOptions);
+
+        var directOptions = new LookupClientOptions();
+        directOptions.UseCache = false;
+        directOptions.Timeout = TimeSpan.FromSeconds(15);
+        directOptions.Retries = 2;
+        directOptions.ThrowDnsErrors = false;
         _directClient = new LookupClient(directOptions);
+
+        // Rate limiting
+        _tokensPerSecond = tokensPerSecond;
+        _maxTokens = tokensPerSecond;
+        _rateLimiter = new SemaphoreSlim(tokensPerSecond, tokensPerSecond);
+        _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        _refillTimer = new Timer(_ => RefillTokens(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        // In-memory caches with optional TTL
+        _cacheTtl = cacheTtl;
+        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
+        _ptrCache = new ProbeCache<List<string>>(cacheTtl);
+        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
+    }
+
+    private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
+        => _queryCache.TryGet($"q:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.Dns);
+
+    private void SetQueryCache((string domain, QueryType type) key, IDnsQueryResponse value)
+        => _queryCache.Set($"q:{key.domain}:{key.type}", value);
+
+    private bool TryGetPtrCache(string ip, out List<string> value)
+        => _ptrCache.TryGet($"ptr:{ip}", out value, RecheckHelper.CacheDep.Ptr);
+
+    private void SetPtrCache(string ip, List<string> value)
+        => _ptrCache.Set($"ptr:{ip}", value);
+
+    private bool TryGetServerQueryCache((string server, string domain, QueryType type) key, out IDnsQueryResponse value)
+        => _serverQueryCache.TryGet($"sq:{key.server}:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.ServerDns);
+
+    private void SetServerQueryCache((string server, string domain, QueryType type) key, IDnsQueryResponse value)
+        => _serverQueryCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value);
+
+    private void RefillTokens()
+    {
+        int toRelease = _maxTokens - _rateLimiter.CurrentCount;
+        if (toRelease > 0)
+        {
+            try { _rateLimiter.Release(toRelease); }
+            catch (SemaphoreFullException) { /* race with Release — harmless */ }
+        }
     }
 
     /// <summary>
-    /// Tracks DNS query errors that occurred during the current validation.
-    /// Reset between domains via <see cref="ResetErrors"/>.
+    /// Acquires a rate-limit token and a concurrency slot before executing a DNS query.
+    /// The token bucket limits sustained QPS; the concurrency cap prevents runaway
+    /// in-flight queries when the resolver is slow.
+    /// </summary>
+    private async Task<T> RateLimitedAsync<T>(Func<Task<T>> query, string? traceLabel = null)
+    {
+        Stopwatch? sw = null;
+        if (Trace != null) { sw = Stopwatch.StartNew(); }
+        await _rateLimiter.WaitAsync();
+        var rateLimitMs = sw?.ElapsedMilliseconds ?? 0;
+        await _concurrencyLimiter.WaitAsync();
+        var concurrencyMs = sw?.ElapsedMilliseconds ?? 0;
+        try
+        {
+            var result = await query();
+            if (Trace != null && sw != null)
+                Trace($"[DNS] {traceLabel ?? "query"}: {sw.ElapsedMilliseconds}ms (rate-wait:{rateLimitMs}ms concurrency-wait:{concurrencyMs - rateLimitMs}ms network:{sw.ElapsedMilliseconds - concurrencyMs}ms)");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            if (Trace != null && sw != null)
+                Trace($"[DNS] {traceLabel ?? "query"} FAILED: {sw.ElapsedMilliseconds}ms ({ex.GetType().Name}: {ex.Message})");
+            throw;
+        }
+        finally
+        {
+            _concurrencyLimiter.Release();
+        }
+    }
+
+    /// <summary>
+    /// Legacy error tracking — only used by CLI for per-domain error display.
+    /// Web API should use CheckContext.QueryErrors instead.
     /// </summary>
     public ConcurrentBag<string> QueryErrors { get; private set; } = new();
 
-    // Cache hit/miss counters for diagnostics (reset per domain)
+    // Cumulative counters — never reset, only incremented.
+    // Web API uses baseline snapshots to compute per-validation deltas.
     private int _cacheHits;
     private int _cacheMisses;
+    private int _responsesReceived;
     public int CacheHits => _cacheHits;
     public int CacheMisses => _cacheMisses;
-    public int CacheSize => _queryCache.Count;
+    /// <summary>Number of network DNS queries that have completed (success or error).</summary>
+    public int ResponsesReceived => _responsesReceived;
+    public int CacheSize => _queryCache.Count + _ptrCache.Count + _serverQueryCache.Count;
 
     /// <summary>
-    /// Clears per-validation error tracking while preserving the shared query cache.
+    /// Resets per-validation error list for CLI use. Does NOT reset cumulative
+    /// counters (those are append-only for thread safety with concurrent web requests).
     /// </summary>
     public void ResetErrors()
     {
         QueryErrors = new ConcurrentBag<string>();
-        Interlocked.Exchange(ref _cacheHits, 0);
-        Interlocked.Exchange(ref _cacheMisses, 0);
     }
 
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
-        var key = (domain.ToLowerInvariant(), type);
-        if (_queryCache.TryGetValue(key, out var cached))
+        var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
+        return await _queryCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            Interlocked.Increment(ref _cacheHits);
-            return cached;
-        }
-
-        Interlocked.Increment(ref _cacheMisses);
-        try
-        {
-            var result = await _client.QueryAsync(domain, type);
-            // Always cache — errors are filtered out by --retry-errors on load
-            _queryCache.TryAdd(key, result);
-            return result;
-        }
-        catch (DnsResponseException ex)
-        {
-            QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (OperationCanceledException)
-        {
-            QueryErrors.Add($"DNS timeout querying {type} for {domain}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (SocketException ex)
-        {
-            QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
-        catch (Exception ex)
-        {
-            QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
-            CacheFailureIfExhausted(key);
-            return EmptyResponse.Instance;
-        }
+            Interlocked.Increment(ref _cacheMisses);
+            try
+            {
+                var result = await RateLimitedAsync(() => _client.QueryAsync(domain, type), $"{type} {domain}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result;
+            }
+            catch (DnsResponseException ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS error querying {type} for {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+            catch (OperationCanceledException)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS timeout querying {type} for {domain}");
+                return EmptyResponse.Instance;
+            }
+            catch (SocketException ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS network error querying {type} for {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS query failed for {type} {domain}: {ex.Message}");
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.Dns);
     }
 
     /// <summary>
-    /// DNSBL query with 3s timeout and 2 retries (3 attempts). Uses the shared query cache
-    /// so results are reused across domains. Timeouts don't pollute the DNS error log
-    /// (many obscure DNSBLs are simply unresponsive).
+    /// DNSBL query with 3s timeout and 1 retry (2 attempts total). Uses the shared
+    /// query cache so results are reused across domains. Timeouts don't pollute the
+    /// DNS error log (many obscure DNSBLs are simply unresponsive). Rate limited
+    /// alongside all other DNS queries.
     /// </summary>
     public async Task<IDnsQueryResponse> QueryDnsblAsync(string query, QueryType type)
     {
-        var key = (query.ToLowerInvariant(), type);
-        if (_queryCache.TryGetValue(key, out var cached))
+        var cacheKey = $"q:{query.ToLowerInvariant()}:{type}";
+        return await _queryCache.GetOrCreateAsync(cacheKey, async () =>
+        {
+            Interlocked.Increment(ref _cacheMisses);
+            try
+            {
+                var result = await RateLimitedAsync(() => _dnsblClient.QueryAsync(query, type), $"DNSBL {query}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result;
+            }
+            catch
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.Dns);
+    }
+
+    /// <summary>
+    /// Speculative query with 3s timeout and 1 retry (6s max). For optional probes
+    /// where a timeout means "skip" not "error". Uses the shared query cache so a
+    /// successful result from prefetch will be returned immediately. Timeouts are
+    /// NOT cached — a later full QueryAsync can still try with the longer timeout.
+    /// </summary>
+    public async Task<IDnsQueryResponse> QuerySpeculativeAsync(string domain, QueryType type)
+    {
+        var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
+        // Check cache — if a standard query already populated it, use that
+        if (_queryCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Dns))
         {
             Interlocked.Increment(ref _cacheHits);
+            Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
             return cached;
         }
 
         Interlocked.Increment(ref _cacheMisses);
         try
         {
-            var result = await _dnsblClient.QueryAsync(query, type);
-            _queryCache.TryAdd(key, result);
+            var result = await RateLimitedAsync(() => _speculativeClient.QueryAsync(domain, type), $"SPEC {type} {domain}");
+            Interlocked.Increment(ref _responsesReceived);
+            // Cache successful responses — but timeouts return EmptyResponse which
+            // we intentionally cache (short TTL will expire it, or standard query overwrites)
+            _queryCache.Set(cacheKey, result);
             return result;
         }
         catch
         {
-            _queryCache.TryAdd(key, EmptyResponse.Instance);
+            // Timeouts are NOT cached — don't poison the cache for the main client
+            Interlocked.Increment(ref _responsesReceived);
             return EmptyResponse.Instance;
         }
     }
 
-    private void CacheFailureIfExhausted((string domain, QueryType type) key)
-    {
-        _queryCache.TryAdd(key, EmptyResponse.Instance);
-    }
 
     public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type)
     {
         var serverStr = server.ToString();
-        var key = (serverStr, domain.ToLowerInvariant(), type);
-        if (_serverQueryCache.TryGetValue(key, out var cached))
-            return cached;
+        var cacheKey = $"sq:{serverStr}:{domain.ToLowerInvariant()}:{type}";
 
         // If this server has been unreachable too many times, skip immediately
         if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachCount) && unreachCount >= MaxRetries)
@@ -184,34 +326,33 @@ public class DnsResolverService
             return EmptyResponse.Instance;
         }
 
-        try
+        return await _serverQueryCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            var serverEndpoint = new IPEndPoint(server, 53);
-            var opts = new LookupClientOptions(serverEndpoint)
+            try
             {
-                UseCache = false,
-                Timeout = TimeSpan.FromSeconds(5),
-                Retries = 2,
-                ThrowDnsErrors = false
-            };
-            var client = new LookupClient(opts);
-            var result = await client.QueryAsync(domain, type);
-            _serverQueryCache.TryAdd(key, result);
-            if (!result.HasError)
-            {
-                // Server responded — clear unreachable tracking
-                _unreachableServerCounts.TryRemove(serverStr, out _);
+                var serverEndpoint = new IPEndPoint(server, 53);
+                var opts = new LookupClientOptions(serverEndpoint)
+                {
+                    UseCache = false,
+                    Timeout = TimeSpan.FromSeconds(15),
+                    Retries = 2,
+                    ThrowDnsErrors = false
+                };
+                var client = new LookupClient(opts);
+                var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
+                Interlocked.Increment(ref _responsesReceived);
+                if (!result.HasError)
+                    _unreachableServerCounts.TryRemove(serverStr, out _);
+                return result;
             }
-            return result;
-        }
-        catch (Exception ex)
-        {
-            QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
-            _serverQueryCache.TryAdd(key, EmptyResponse.Instance);
-            // Track server-level unreachability
-            _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
-            return EmptyResponse.Instance;
-        }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                QueryErrors.Add($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
+                _unreachableServerCounts.AddOrUpdate(serverStr, 1, (_, c) => c + 1);
+                return EmptyResponse.Instance;
+            }
+        }, RecheckHelper.CacheDep.ServerDns);
     }
 
     public async Task<List<string>> ResolveAAsync(string hostname)
@@ -228,21 +369,22 @@ public class DnsResolverService
 
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
-        if (_ptrCache.TryGetValue(ip, out var cached))
-            return cached;
-
-        try
+        var cacheKey = $"ptr:{ip}";
+        return await _ptrCache.GetOrCreateAsync(cacheKey, async () =>
         {
-            var result = await _client.QueryReverseAsync(IPAddress.Parse(ip));
-            var ptrs = result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
-            _ptrCache.TryAdd(ip, ptrs);
-            return ptrs;
-        }
-        catch
-        {
-            _ptrCache.TryAdd(ip, new List<string>());
-            return new List<string>();
-        }
+            try
+            {
+                var parsedIp = IPAddress.Parse(ip);
+                var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
+                Interlocked.Increment(ref _responsesReceived);
+                return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
+            }
+            catch
+            {
+                Interlocked.Increment(ref _responsesReceived);
+                return new List<string>();
+            }
+        }, RecheckHelper.CacheDep.Ptr);
     }
 
     public async Task<List<string>> ResolveCnameChainAsync(string hostname)
@@ -279,6 +421,16 @@ public class DnsResolverService
     public async Task<List<TxtRecord>> GetTxtRecordsAsync(string domain)
     {
         var result = await QueryAsync(domain, QueryType.TXT);
+        return result.Answers.OfType<TxtRecord>().ToList();
+    }
+
+    /// <summary>
+    /// Short-timeout TXT lookup for speculative probes (DKIM selectors, etc.).
+    /// Returns empty list on timeout without caching the failure.
+    /// </summary>
+    public async Task<List<TxtRecord>> GetTxtRecordsSpeculativeAsync(string domain)
+    {
+        var result = await QuerySpeculativeAsync(domain, QueryType.TXT);
         return result.Answers.OfType<TxtRecord>().ToList();
     }
 
@@ -362,13 +514,13 @@ public class DnsResolverService
         var opts = new LookupClientOptions(new IPEndPoint(nsIp, 53))
         {
             UseCache = false,
-            Timeout = TimeSpan.FromSeconds(5),
+            Timeout = TimeSpan.FromSeconds(10),
             Retries = 0,
             UseTcpOnly = true,
             ThrowDnsErrors = false
         };
         var client = new LookupClient(opts);
-        return await client.QueryAsync(domain, QueryType.AXFR);
+        return await RateLimitedAsync(() => client.QueryAsync(domain, QueryType.AXFR), $"AXFR {nsIp} {domain}");
     }
 
     /// <summary>
@@ -409,37 +561,38 @@ public class DnsResolverService
     }
 
     public Dictionary<string, List<string>> ExportPtrCache()
-        => _ptrCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-
-    public void ImportPtrCache(Dictionary<string, List<string>> entries)
     {
-        foreach (var kvp in entries)
+        var result = new Dictionary<string, List<string>>();
+        foreach (var kvp in _ptrCache.Export())
         {
-            _ptrCache.TryAdd(kvp.Key, kvp.Value);
-            _importedPtrKeys.TryAdd(kvp.Key, true);
-        }
-    }
-
-    /// <summary>
-    /// Exports the DNS query cache as serializable DTOs.
-    /// Queries containing unsupported record types (DNSSEC, TLSA, etc.) are skipped.
-    /// </summary>
-    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
-    {
-        var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _queryCache)
-        {
-            var key = $"{kvp.Key.domain}|{kvp.Key.type}";
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
-            if (entry != null)
-                result[key] = entry;
+            // ProbeCache key is "ptr:ip", disk format is just "ip"
+            var ip = kvp.Key.StartsWith("ptr:") ? kvp.Key[4..] : kvp.Key;
+            result[ip] = kvp.Value;
         }
         return result;
     }
 
-    /// <summary>
-    /// Imports DNS query cache from serialized DTOs.
-    /// </summary>
+    public void ImportPtrCache(Dictionary<string, List<string>> entries)
+    {
+        foreach (var kvp in entries)
+            _ptrCache.Import($"ptr:{kvp.Key}", kvp.Value);
+    }
+
+    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
+    {
+        var result = new Dictionary<string, DnsCacheEntry>();
+        foreach (var kvp in _queryCache.Export())
+        {
+            // ProbeCache key is "q:domain:type", disk format is "domain|type"
+            var cacheKey = kvp.Key.StartsWith("q:") ? kvp.Key[2..] : kvp.Key;
+            var diskKey = cacheKey.Replace(':', '|');
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            if (entry != null)
+                result[diskKey] = entry;
+        }
+        return result;
+    }
+
     public void ImportQueryCache(Dictionary<string, DnsCacheEntry> entries)
     {
         foreach (var kvp in entries)
@@ -447,32 +600,26 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 2);
             if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
                 continue;
-            var key = (parts[0].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _queryCache.TryAdd(key, response);
-            _importedQueryKeys.TryAdd(key, true);
+            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response);
         }
     }
 
-    /// <summary>
-    /// Exports the per-server DNS query cache as serializable DTOs.
-    /// </summary>
     public Dictionary<string, DnsCacheEntry> ExportServerQueryCache()
     {
         var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _serverQueryCache)
+        foreach (var kvp in _serverQueryCache.Export())
         {
-            var key = $"{kvp.Key.server}|{kvp.Key.domain}|{kvp.Key.type}";
+            // ProbeCache key is "sq:server:domain:type", disk format is "server|domain|type"
+            var cacheKey = kvp.Key.StartsWith("sq:") ? kvp.Key[3..] : kvp.Key;
+            var diskKey = cacheKey.Replace(':', '|');
             var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
             if (entry != null)
-                result[key] = entry;
+                result[diskKey] = entry;
         }
         return result;
     }
 
-    /// <summary>
-    /// Imports per-server DNS query cache from serialized DTOs.
-    /// </summary>
     public void ImportServerQueryCache(Dictionary<string, DnsCacheEntry> entries)
     {
         foreach (var kvp in entries)
@@ -480,61 +627,56 @@ public class DnsResolverService
             var parts = kvp.Key.Split('|', 3);
             if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
                 continue;
-            var key = (parts[0], parts[1].ToLowerInvariant(), type);
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _serverQueryCache.TryAdd(key, response);
-            _importedServerQueryKeys.TryAdd(key, true);
+            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response);
         }
     }
 
-    // ── Recheck support: remove imported entries matching a predicate ────
-
-    /// <summary>
-    /// Removes imported DNS query cache entries matching the predicate.
-    /// Only entries loaded from disk cache are affected; entries generated
-    /// during this run are preserved.
-    /// </summary>
-    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate)
-    {
-        foreach (var key in _importedQueryKeys.Keys)
-        {
-            if (predicate(key.domain, key.type))
-            {
-                _queryCache.TryRemove(key, out _);
-                _importedQueryKeys.TryRemove(key, out _);
-            }
-        }
-    }
+    // ── Recheck support: remove entries matching a predicate ──────────────
 
     /// <summary>
-    /// Removes imported server query cache entries matching the predicate.
+    /// Removes DNS query cache entries matching the predicate.
+    /// When importedOnly is true, only entries loaded from disk are affected;
+    /// when false, all matching entries are removed (for long-lived processes).
     /// </summary>
-    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate)
+    public void RemoveQueryEntries(Func<string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedServerQueryKeys.Keys)
+        _queryCache.Remove(key =>
         {
-            if (predicate(key.server, key.domain, key.type))
-            {
-                _serverQueryCache.TryRemove(key, out _);
-                _importedServerQueryKeys.TryRemove(key, out _);
-            }
-        }
+            // Key format: "q:domain:type"
+            if (!key.StartsWith("q:")) return false;
+            var rest = key[2..];
+            var sep = rest.LastIndexOf(':');
+            if (sep < 0) return false;
+            var domain = rest[..sep];
+            return Enum.TryParse<QueryType>(rest[(sep + 1)..], out var type) && predicate(domain, type);
+        }, importedOnly);
     }
 
-    /// <summary>
-    /// Removes imported PTR cache entries matching the predicate.
-    /// </summary>
-    public void RemoveImportedPtrEntries(Func<string, bool> predicate)
+    public void RemoveServerQueryEntries(Func<string, string, QueryType, bool> predicate, bool importedOnly = true)
     {
-        foreach (var key in _importedPtrKeys.Keys)
+        _serverQueryCache.Remove(key =>
         {
-            if (predicate(key))
-            {
-                _ptrCache.TryRemove(key, out _);
-                _importedPtrKeys.TryRemove(key, out _);
-            }
-        }
+            // Key format: "sq:server:domain:type"
+            if (!key.StartsWith("sq:")) return false;
+            var parts = key[3..].Split(':', 3);
+            return parts.Length == 3 && Enum.TryParse<QueryType>(parts[2], out var type) && predicate(parts[0], parts[1], type);
+        }, importedOnly);
     }
+
+    public void RemovePtrEntries(Func<string, bool> predicate, bool importedOnly = true)
+    {
+        _ptrCache.Remove(key =>
+        {
+            // Key format: "ptr:ip"
+            return key.StartsWith("ptr:") && predicate(key[4..]);
+        }, importedOnly);
+    }
+
+    // Backward-compatible aliases for CLI code
+    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate) => RemoveQueryEntries(predicate, importedOnly: true);
+    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate) => RemoveServerQueryEntries(predicate, importedOnly: true);
+    public void RemoveImportedPtrEntries(Func<string, bool> predicate) => RemovePtrEntries(predicate, importedOnly: true);
 
     /// <summary>
     /// Returns MX hostnames from the query cache for a domain, if available.
@@ -543,7 +685,7 @@ public class DnsResolverService
     public List<string> GetCachedMxHosts(string domain)
     {
         var key = (domain.ToLowerInvariant(), QueryType.MX);
-        if (_queryCache.TryGetValue(key, out var response))
+        if (TryGetQueryCache(key, out var response))
             return response.Answers.MxRecords().Select(m => m.Exchange.Value.TrimEnd('.')).ToList();
         return new List<string>();
     }
@@ -556,10 +698,10 @@ public class DnsResolverService
     {
         var ips = new List<string>();
         var aKey = (host.ToLowerInvariant(), QueryType.A);
-        if (_queryCache.TryGetValue(aKey, out var aResponse))
+        if (TryGetQueryCache(aKey, out var aResponse))
             ips.AddRange(aResponse.Answers.ARecords().Select(r => r.Address.ToString()));
         var aaaaKey = (host.ToLowerInvariant(), QueryType.AAAA);
-        if (_queryCache.TryGetValue(aaaaKey, out var aaaaResponse))
+        if (TryGetQueryCache(aaaaKey, out var aaaaResponse))
             ips.AddRange(aaaaResponse.Answers.AaaaRecords().Select(r => r.Address.ToString()));
         return ips;
     }

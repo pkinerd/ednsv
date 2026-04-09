@@ -16,7 +16,10 @@ public class MxRecordsCheck : ICheck
 
         try
         {
-            var mxRecords = await ctx.Dns.GetMxRecordsAsync(domain);
+            var mxResponse = await ctx.Dns.QueryAsync(domain, QueryType.MX);
+            if (mxResponse.HasError && !mxResponse.Answers.MxRecords().Any())
+                ctx.MxLookupFailed = true;
+            var mxRecords = mxResponse.Answers.MxRecords().OrderBy(m => m.Preference).ToList();
             if (mxRecords.Any())
             {
                 result.Severity = CheckSeverity.Pass;
@@ -288,6 +291,7 @@ public class MxBackupSecurityCheck : ICheck
             }
 
             var noTls = new List<string>();
+            var unreachable = new List<string>();
             foreach (var mx in mxRecords)
             {
                 var host = mx.Exchange.Value.TrimEnd('.');
@@ -297,7 +301,10 @@ public class MxBackupSecurityCheck : ICheck
                 else if (probe.Connected)
                     result.Details.Add($"{host}: STARTTLS supported");
                 else
+                {
+                    unreachable.Add(host);
                     result.Details.Add($"{host}: Could not connect");
+                }
             }
 
             if (noTls.Any())
@@ -306,6 +313,20 @@ public class MxBackupSecurityCheck : ICheck
                 result.Summary = $"{noTls.Count} backup MX host(s) lack STARTTLS";
                 foreach (var h in noTls)
                     result.Warnings.Add($"{h} does not support STARTTLS");
+            }
+            else if (unreachable.Count == mxRecords.Count)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Could not connect to any MX host to verify STARTTLS";
+                foreach (var h in unreachable)
+                    result.Warnings.Add($"{h}: Could not connect");
+            }
+            else if (unreachable.Any())
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"STARTTLS verified on reachable hosts, but {unreachable.Count} host(s) unreachable";
+                foreach (var h in unreachable)
+                    result.Warnings.Add($"{h}: Could not connect — STARTTLS status unknown");
             }
             else
             {

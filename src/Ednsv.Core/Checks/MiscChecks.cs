@@ -28,7 +28,7 @@ public class SrvRecordsCheck : ICheck
             foreach (var srv in SrvNames)
             {
                 var srvDomain = $"{srv}.{domain}";
-                var resp = await ctx.Dns.QueryRawAsync(srvDomain, QueryType.SRV);
+                var resp = await ctx.Dns.QuerySpeculativeAsync(srvDomain, QueryType.SRV);
                 var srvRecords = resp.Answers.SrvRecords().ToList();
 
                 if (srvRecords.Any())
@@ -69,7 +69,7 @@ public class AutodiscoverCheck : ICheck
         {
             // Check SRV
             var srvDomain = $"_autodiscover._tcp.{domain}";
-            var srvResp = await ctx.Dns.QueryRawAsync(srvDomain, QueryType.SRV);
+            var srvResp = await ctx.Dns.QuerySpeculativeAsync(srvDomain, QueryType.SRV);
             var srvRecords = srvResp.Answers.SrvRecords().ToList();
 
             if (srvRecords.Any())
@@ -98,13 +98,27 @@ public class AutodiscoverCheck : ICheck
                     result.Details.Add($"autodiscover.{domain}: Not found");
             }
 
-            result.Severity = (srvRecords.Any() || chain.Any()) ? CheckSeverity.Pass : CheckSeverity.Info;
-            result.Summary = srvRecords.Any() || chain.Any() ? "Autodiscover configured" : "No autodiscover found";
+            if (srvRecords.Any() || chain.Any())
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = "Autodiscover configured";
+            }
+            else if (srvResp.HasError)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "Could not query autodiscover DNS records";
+                result.Details.Add("DNS query for autodiscover SRV records failed");
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No autodiscover found";
+            }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Error;
-            result.Errors.Add(ex.Message);
+            result.Severity = CheckSeverity.Info;
+            result.Details.Add($"Autodiscover check failed: {ex.Message}");
         }
 
         return new List<CheckResult> { result };

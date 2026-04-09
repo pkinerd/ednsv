@@ -101,10 +101,10 @@ jobs:
           DOMAIN="gmail.com"
 
           echo "============================================"
-          echo "Cold run: $DOMAIN (no cache, verbose)"
+          echo "Cold run: $DOMAIN (no cache, verbose, trace)"
           echo "============================================"
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
+            "$DOMAIN" --verbose --trace --cache "$CACHE_DIR" \
             > "test-output/${DOMAIN}-cold.txt" 2>&1 || true
           cat "test-output/${DOMAIN}-cold.txt"
 
@@ -124,10 +124,10 @@ jobs:
 
           echo ""
           echo "============================================"
-          echo "Warm run: $DOMAIN (from cache, verbose)"
+          echo "Warm run: $DOMAIN (from cache, verbose, trace)"
           echo "============================================"
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" --verbose --cache "$CACHE_DIR" \
+            "$DOMAIN" --verbose --trace --cache "$CACHE_DIR" \
             > "test-output/${DOMAIN}-warm.txt" 2>&1 || true
           cat "test-output/${DOMAIN}-warm.txt"
 
@@ -202,10 +202,10 @@ jobs:
 
           echo ""
           echo "============================================"
-          echo "Recheck run: $DOMAIN (--recheck warning)"
+          echo "Recheck run: $DOMAIN (--recheck warning, trace)"
           echo "============================================"
           dotnet run --project src/Ednsv.Cli --configuration Release -- \
-            "$DOMAIN" --verbose --cache "$CACHE_DIR" --recheck warning \
+            "$DOMAIN" --verbose --trace --cache "$CACHE_DIR" --recheck warning \
             > "test-output/${DOMAIN}-recheck.txt" 2>&1 || true
           cat "test-output/${DOMAIN}-recheck.txt"
 

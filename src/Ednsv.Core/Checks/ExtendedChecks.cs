@@ -21,11 +21,12 @@ public class SmtpSizeCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts";
             return new List<CheckResult> { result };
         }
 
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
@@ -43,12 +44,14 @@ public class SmtpSizeCheck : ICheck
             }
             else
             {
+                unreachable++;
                 result.Details.Add($"{mxHost}: Could not connect");
             }
         }
 
         result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Info;
         result.Summary = "SMTP SIZE extension check completed";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         return new List<CheckResult> { result };
     }
 
@@ -75,7 +78,7 @@ public class SpfOverlapCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return Task.FromResult(new List<CheckResult> { result });
         }
@@ -270,7 +273,7 @@ public class ArcCheck : ICheck
             }
         }
 
-        result.Severity = found > 0 ? CheckSeverity.Info : CheckSeverity.Info;
+        result.Severity = found > 0 ? CheckSeverity.Pass : CheckSeverity.Info;
         result.Summary = found > 0 ? $"{found} ARC-compatible DKIM key(s) found" : "No dedicated ARC selectors found (ARC uses DKIM keys)";
 
         return new List<CheckResult> { result };
@@ -353,12 +356,13 @@ public class SmtpRequireTlsCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts";
             return new List<CheckResult> { result };
         }
 
         int supported = 0;
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
@@ -374,6 +378,7 @@ public class SmtpRequireTlsCheck : ICheck
             }
             else
             {
+                unreachable++;
                 result.Details.Add($"{mxHost}: Could not connect");
             }
         }
@@ -382,6 +387,7 @@ public class SmtpRequireTlsCheck : ICheck
         result.Summary = supported > 0 ?
             $"REQUIRETLS supported by {supported}/{ctx.MxHosts.Count} MX host(s) — verify DANE/MTA-STS prerequisites" :
             "REQUIRETLS not supported (optional RFC 8689 extension)";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
 
         return new List<CheckResult> { result };
     }
@@ -540,7 +546,7 @@ public class CertificateTransparencyCheck : ICheck
         try
         {
             var url = $"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json";
-            var (success, content, statusCode) = await ctx.Http.GetAsync(url);
+            var (success, content, statusCode) = await ctx.Http.GetAsync(url, maxRetries: 1);
 
             if (success && content.Length > 10)
             {
@@ -557,16 +563,22 @@ public class CertificateTransparencyCheck : ICheck
                     result.Details.Add($"Certificate Authorities: {string.Join(", ", issuers)}");
                 }
             }
+            else if (success)
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No CT log entries found for this domain";
+            }
             else
             {
                 result.Severity = CheckSeverity.Info;
-                result.Summary = "No CT log entries found (or crt.sh unreachable)";
+                result.Summary = "Could not query CT logs — crt.sh unreachable";
+                result.Details.Add($"HTTP request to crt.sh failed (status {statusCode})");
             }
         }
         catch (Exception ex)
         {
             result.Severity = CheckSeverity.Info;
-            result.Summary = "CT check skipped";
+            result.Summary = "CT log query skipped";
             result.Details.Add($"Could not query CT logs: {ex.Message}");
         }
 
@@ -587,7 +599,7 @@ public class MxReverseDnsCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check PTR records";
                 return new List<CheckResult> { result };
             }
@@ -696,14 +708,14 @@ public class NsecZoneWalkCheck : ICheck
                 result.Details.Add($"NSEC3 in use (algorithm={param.HashAlgorithm}, iterations={param.Iterations})");
 
                 if (param.Iterations > 100)
-                    result.Warnings.Add($"NSEC3 iterations={param.Iterations} — RFC 9276 recommends 0 for performance");
+                    result.Details.Add($"NSEC3 iterations={param.Iterations} — RFC 9276 recommends 0 for performance");
                 else
                     result.Details.Add($"Iterations={param.Iterations} (RFC 9276 recommends 0)");
 
                 if (param.Flags == 1)
                     result.Details.Add("Opt-out flag set (unsigned delegations not covered)");
 
-                result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+                result.Severity = CheckSeverity.Pass;
                 result.Summary = "NSEC3 protects against zone enumeration";
             }
             else
@@ -714,9 +726,9 @@ public class NsecZoneWalkCheck : ICheck
 
                 if (nsecRecords.Any())
                 {
-                    result.Severity = CheckSeverity.Warning;
+                    result.Severity = CheckSeverity.Info;
                     result.Summary = "NSEC (not NSEC3) — zone contents can be enumerated";
-                    result.Warnings.Add("Zone uses NSEC instead of NSEC3 — attackers can walk the zone to discover all hostnames");
+                    result.Details.Add("Zone uses NSEC instead of NSEC3 — zone walking possible but does not affect email delivery");
                     result.Warnings.Add("Consider migrating to NSEC3 to prevent zone enumeration (RFC 5155)");
                     foreach (var nsec in nsecRecords)
                         result.Details.Add($"NSEC: {nsec.DomainName} → {nsec.NextDomainName}");
@@ -843,7 +855,7 @@ public class SubdomainSpfGapCheck : ICheck
         {
             if (ctx.SpfRecord == null && ctx.DmarcRecord == null)
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed || ctx.DmarcLookupFailed);
                 result.Summary = "No parent SPF/DMARC — subdomain gap check not applicable";
                 return new List<CheckResult> { result };
             }
@@ -851,23 +863,18 @@ public class SubdomainSpfGapCheck : ICheck
             var missingSpf = new List<string>();
             var hasSpf = new List<string>();
 
-            using var semaphore = new SemaphoreSlim(5);
+            // Rate limiting is handled globally by DnsResolverService.
             var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
             {
-                await semaphore.WaitAsync();
-                try
-                {
-                    var subDomain = $"{sub}.{domain}";
-                    var aRecs = await ctx.Dns.ResolveAAsync(subDomain);
-                    var mxRecs = await ctx.Dns.GetMxRecordsAsync(subDomain);
-                    if (!aRecs.Any() && !mxRecs.Any()) return (sub, exists: false, hasSpf: false);
+                var subDomain = $"{sub}.{domain}";
+                var aRecs = await ctx.Dns.ResolveAAsync(subDomain);
+                var mxRecs = await ctx.Dns.GetMxRecordsAsync(subDomain);
+                if (!aRecs.Any() && !mxRecs.Any()) return (sub, exists: false, hasSpf: false);
 
-                    var txts = await ctx.Dns.GetTxtRecordsAsync(subDomain);
-                    var spf = txts.Any(t => string.Join("", t.Text).TrimStart()
-                        .StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase));
-                    return (sub, exists: true, hasSpf: spf);
-                }
-                finally { semaphore.Release(); }
+                var txts = await ctx.Dns.GetTxtRecordsAsync(subDomain);
+                var spf = txts.Any(t => string.Join("", t.Text).TrimStart()
+                    .StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase));
+                return (sub, exists: true, hasSpf: spf);
             })).ToList();
 
             var results = await Task.WhenAll(tasks);

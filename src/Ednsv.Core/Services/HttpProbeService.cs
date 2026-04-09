@@ -5,17 +5,28 @@ namespace Ednsv.Core.Services;
 public class HttpProbeService
 {
     private readonly HttpClient _client;
-    private static int MaxRetries = 3;
+    private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
-    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode)> _getCache = new();
-    private readonly ConcurrentDictionary<string, (bool success, string content, int statusCode, string? contentType)> _getWithHeadersCache = new();
 
-    // Track keys loaded from disk cache
-    private readonly ConcurrentDictionary<string, bool> _importedGetKeys = new();
-    private readonly ConcurrentDictionary<string, bool> _importedGetWithHeadersKeys = new();
-
-    public HttpProbeService()
+    // Wrapper classes so value tuples can be stored in ProbeCache<T> (requires class constraint)
+    private sealed class GetResult
     {
+        public bool Success; public string Content = ""; public int StatusCode;
+        public (bool, string, int) ToTuple() => (Success, Content, StatusCode);
+    }
+    private sealed class GetWithHeadersResult
+    {
+        public bool Success; public string Content = ""; public int StatusCode; public string? ContentType;
+        public (bool, string, int, string?) ToTuple() => (Success, Content, StatusCode, ContentType);
+    }
+
+    private readonly ProbeCache<GetResult> _getCache;
+    private readonly ProbeCache<GetWithHeadersResult> _getWithHeadersCache;
+
+    public HttpProbeService(TimeSpan? cacheTtl = null)
+    {
+        _getCache = new ProbeCache<GetResult>(cacheTtl);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true,
@@ -28,61 +39,52 @@ public class HttpProbeService
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("ednsv/1.0");
     }
 
-    public async Task<(bool success, string content, int statusCode)> GetAsync(string url)
+    public async Task<(bool success, string content, int statusCode)> GetAsync(string url, int? maxRetries = null)
     {
-        if (_getCache.TryGetValue(url, out var cached))
-            return cached;
-
-        (bool success, string content, int statusCode) lastResult = default;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        var retries = maxRetries ?? MaxRetries;
+        var result = await _getCache.GetOrCreateAsync(url, async () =>
         {
-            try
+            (bool success, string content, int statusCode) lastResult = default;
+            for (int attempt = 0; attempt < retries; attempt++)
             {
-                var response = await _client.GetAsync(url);
-                var content = await response.Content.ReadAsStringAsync();
-                var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode);
-                // Any HTTP response (even 4xx/5xx) is a real answer — cache immediately
-                _getCache.TryAdd(url, result);
-                return result;
+                try
+                {
+                    var response = await _client.GetAsync(url);
+                    var content = await response.Content.ReadAsStringAsync();
+                    return new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
+                }
+                catch (Exception ex)
+                {
+                    lastResult = (false, ex.Message, 0);
+                }
             }
-            catch (Exception ex)
-            {
-                lastResult = (false, ex.Message, 0);
-            }
-        }
-
-        // All attempts failed — cache the failure
-        _getCache.TryAdd(url, lastResult);
-        return lastResult;
+            return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
+        }, RecheckHelper.CacheDep.Http);
+        return result.ToTuple();
     }
 
     public async Task<(bool success, string content, int statusCode, string? contentType)> GetWithHeadersAsync(string url)
     {
-        if (_getWithHeadersCache.TryGetValue(url, out var cached))
-            return cached;
-
-        (bool success, string content, int statusCode, string? contentType) lastResult = default;
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        var result = await _getWithHeadersCache.GetOrCreateAsync(url, async () =>
         {
-            try
+            (bool success, string content, int statusCode, string? contentType) lastResult = default;
+            for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
-                var response = await _client.GetAsync(url);
-                var content = await response.Content.ReadAsStringAsync();
-                var contentType = response.Content.Headers.ContentType?.MediaType;
-                var result = (response.IsSuccessStatusCode, content, (int)response.StatusCode, contentType);
-                // Any HTTP response is a real answer — cache immediately
-                _getWithHeadersCache.TryAdd(url, result);
-                return result;
+                try
+                {
+                    var response = await _client.GetAsync(url);
+                    var content = await response.Content.ReadAsStringAsync();
+                    var contentType = response.Content.Headers.ContentType?.MediaType;
+                    return new GetWithHeadersResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode, ContentType = contentType };
+                }
+                catch (Exception ex)
+                {
+                    lastResult = (false, ex.Message, 0, (string?)null);
+                }
             }
-            catch (Exception ex)
-            {
-                lastResult = (false, ex.Message, 0, (string?)null);
-            }
-        }
-
-        // All attempts failed — cache the failure
-        _getWithHeadersCache.TryAdd(url, lastResult);
-        return lastResult;
+            return new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType };
+        }, RecheckHelper.CacheDep.Http);
+        return result.ToTuple();
     }
 
     // ── Cache export/import for disk persistence ─────────────────────────
@@ -90,48 +92,40 @@ public class HttpProbeService
     public Dictionary<string, HttpGetCacheEntry> ExportGetCache()
     {
         var result = new Dictionary<string, HttpGetCacheEntry>();
-        foreach (var kvp in _getCache)
-            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.success, Content = kvp.Value.content, StatusCode = kvp.Value.statusCode };
+        foreach (var kvp in _getCache.Export())
+            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode };
         return result;
     }
 
     public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
-            _getCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode));
-            _importedGetKeys.TryAdd(kvp.Key, true);
-        }
+            _getCache.Import(kvp.Key, new GetResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode });
     }
 
     public Dictionary<string, HttpGetWithHeadersCacheEntry> ExportGetWithHeadersCache()
     {
         var result = new Dictionary<string, HttpGetWithHeadersCacheEntry>();
-        foreach (var kvp in _getWithHeadersCache)
-            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.success, Content = kvp.Value.content, StatusCode = kvp.Value.statusCode, ContentType = kvp.Value.contentType };
+        foreach (var kvp in _getWithHeadersCache.Export())
+            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType };
         return result;
     }
 
     public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
-            _getWithHeadersCache.TryAdd(kvp.Key, (kvp.Value.Success, kvp.Value.Content, kvp.Value.StatusCode, kvp.Value.ContentType));
-            _importedGetWithHeadersKeys.TryAdd(kvp.Key, true);
-        }
+            _getWithHeadersCache.Import(kvp.Key, new GetWithHeadersResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType });
     }
 
     // ── Recheck support ─────────────────────────────────────────────────
 
-    public void RemoveImportedGetEntries(Func<string, bool> predicate)
-    {
-        foreach (var key in _importedGetKeys.Keys)
-            if (predicate(key)) { _getCache.TryRemove(key, out _); _importedGetKeys.TryRemove(key, out _); }
-    }
+    public void RemoveGetEntries(Func<string, bool> predicate, bool importedOnly = true)
+        => _getCache.Remove(predicate, importedOnly);
 
-    public void RemoveImportedGetWithHeadersEntries(Func<string, bool> predicate)
-    {
-        foreach (var key in _importedGetWithHeadersKeys.Keys)
-            if (predicate(key)) { _getWithHeadersCache.TryRemove(key, out _); _importedGetWithHeadersKeys.TryRemove(key, out _); }
-    }
+    public void RemoveGetWithHeadersEntries(Func<string, bool> predicate, bool importedOnly = true)
+        => _getWithHeadersCache.Remove(predicate, importedOnly);
+
+    // Backward-compatible aliases for CLI code
+    public void RemoveImportedGetEntries(Func<string, bool> predicate) => RemoveGetEntries(predicate, importedOnly: true);
+    public void RemoveImportedGetWithHeadersEntries(Func<string, bool> predicate) => RemoveGetWithHeadersEntries(predicate, importedOnly: true);
 }

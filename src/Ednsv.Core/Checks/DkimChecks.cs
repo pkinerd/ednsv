@@ -99,11 +99,13 @@ public class DkimSelectorsCheck : ICheck
 
             result.Details.Add($"DKIM selectors checked ({selectorSource}): {string.Join(", ", allSelectors)}");
 
-            // Probe selectors concurrently (no Task.Run — DNS is cached so avoids thread pool contention)
+            // Probe selectors concurrently using speculative (short-timeout) queries.
+            // DKIM selector probing is best-effort — a timeout just means "couldn't check",
+            // not an error. This avoids 30-45s waits per non-existent selector.
             var probeTasks = allSelectors.Select(async selector =>
             {
                 var dkimDomain = $"{selector}._domainkey.{domain}";
-                var txts = await ctx.Dns.GetTxtRecordsAsync(dkimDomain);
+                var txts = await ctx.Dns.GetTxtRecordsSpeculativeAsync(dkimDomain);
 
                 // #2 - Multiple TXT RRs at same selector
                 var dkimRecords = txts.Where(t => t.Text.Any(s =>
@@ -121,12 +123,13 @@ public class DkimSelectorsCheck : ICheck
                     return (selector, record: text, cnameChain: (string?)null, brokenCname: (string?)null, multipleTxt);
                 }
 
-                // Check for CNAME delegation (common for ESP-managed DKIM)
-                var chain = await ctx.Dns.ResolveCnameChainAsync(dkimDomain);
-                if (chain.Any())
+                // Check for CNAME delegation (common for ESP-managed DKIM) — also speculative
+                var cnameResp = await ctx.Dns.QuerySpeculativeAsync(dkimDomain, DnsClient.QueryType.CNAME);
+                var cnameRec = cnameResp.Answers.CnameRecords().FirstOrDefault();
+                if (cnameRec != null)
                 {
-                    var cTarget = chain.Last().Split(" -> ").Last();
-                    var targetTxts = await ctx.Dns.GetTxtRecordsAsync(cTarget);
+                    var cTarget = cnameRec.CanonicalName.Value.TrimEnd('.');
+                    var targetTxts = await ctx.Dns.GetTxtRecordsSpeculativeAsync(cTarget);
                     var targetDkim = targetTxts.FirstOrDefault(t => t.Text.Any(s =>
                         s.Contains("v=DKIM1", StringComparison.OrdinalIgnoreCase) ||
                         s.Contains("p=", StringComparison.OrdinalIgnoreCase)));
@@ -134,12 +137,11 @@ public class DkimSelectorsCheck : ICheck
                     if (targetDkim != null)
                     {
                         var text = string.Join("", targetDkim.Text);
-                        return (selector, record: text, cnameChain: (string?)string.Join(" → ", chain), brokenCname: (string?)null, multipleTxt: false);
+                        return (selector, record: text, cnameChain: $"{dkimDomain} → {cTarget}", brokenCname: (string?)null, multipleTxt: false);
                     }
                     else
                     {
-                        // CNAME exists but target has no DKIM TXT — broken delegation
-                        return (selector, record: (string?)null, cnameChain: (string?)string.Join(" → ", chain), brokenCname: cTarget, multipleTxt: false);
+                        return (selector, record: (string?)null, cnameChain: $"{dkimDomain} → {cTarget}", brokenCname: cTarget, multipleTxt: false);
                     }
                 }
 

@@ -19,11 +19,12 @@ public class SmtpTlsCertCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check TLS certificates";
                 return new List<CheckResult> { result };
             }
 
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -59,12 +60,17 @@ public class SmtpTlsCertCheck : ICheck
                     if (probe.TlsProtocol != default)
                         result.Details.Add($"  TLS Protocol: {probe.TlsProtocol}");
                 }
+                else if (probe.Connected && probe.SupportsStartTls)
+                {
+                    result.Warnings.Add($"{mxHost}: STARTTLS supported but TLS certificate could not be obtained ({probe.Error ?? "handshake failed"})");
+                }
                 else if (probe.Connected)
                 {
-                    result.Errors.Add($"{mxHost}: Connected but no TLS certificate obtained — TLS handshake failed");
+                    result.Details.Add($"{mxHost}: Connected but STARTTLS not offered — no TLS certificate to check");
                 }
                 else
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect ({probe.Error ?? "unknown error"})");
                 }
             }
@@ -72,6 +78,7 @@ public class SmtpTlsCertCheck : ICheck
             result.Severity = result.Errors.Any() ? CheckSeverity.Error :
                              result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
             result.Summary = $"Checked TLS certificates for {ctx.MxHosts.Count} MX host(s)";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
@@ -222,6 +229,7 @@ public class SmtpBannerCheck : ICheck
 
         try
         {
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -258,12 +266,14 @@ public class SmtpBannerCheck : ICheck
                 }
                 else
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect");
                 }
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
             result.Summary = $"Checked SMTP banners for {ctx.MxHosts.Count} MX host(s)";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
@@ -292,7 +302,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check banner/rDNS match";
                 return new List<CheckResult> { result };
             }
@@ -408,12 +418,13 @@ public class SmtpTransactionTimingCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to measure timing";
                 return new List<CheckResult> { result };
             }
 
             bool anySlow = false;
+            int unreachable = 0;
 
             foreach (var mxHost in ctx.MxHosts)
             {
@@ -428,6 +439,7 @@ public class SmtpTransactionTimingCheck : ICheck
 
                 if (!probe.Connected)
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect ({probe.Error ?? "timeout"})");
                     continue;
                 }
@@ -484,6 +496,7 @@ public class SmtpTransactionTimingCheck : ICheck
             }
 
             result.Severity = anySlow ? CheckSeverity.Warning : CheckSeverity.Pass;
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
             result.Summary = anySlow
                 ? "Slow SMTP response times detected"
                 : $"SMTP timing acceptable for {ctx.MxHosts.Count} MX host(s)";
@@ -510,6 +523,7 @@ public class EhloCapabilitiesCheck : ICheck
 
         try
         {
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
@@ -542,12 +556,14 @@ public class EhloCapabilitiesCheck : ICheck
                 }
                 else
                 {
+                    if (!probe.Connected) unreachable++;
                     result.Details.Add($"{mxHost}: Could not retrieve EHLO capabilities");
                 }
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Info : CheckSeverity.Pass;
             result.Summary = "EHLO capabilities retrieved";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         }
         catch (Exception ex)
         {
@@ -668,7 +684,7 @@ public class PostmasterAddressCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check postmaster";
                 return new List<CheckResult> { result };
             }
@@ -746,7 +762,7 @@ public class AbuseAddressCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check abuse@";
                 return new List<CheckResult> { result };
             }
@@ -829,7 +845,7 @@ public class OpenRelayCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to test";
             return new List<CheckResult> { result };
         }
@@ -892,7 +908,7 @@ public class CatchAllDetectionCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to test";
             return new List<CheckResult> { result };
         }
@@ -944,18 +960,20 @@ public class SmtpStarttlsEnforcementCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check STARTTLS";
                 return new List<CheckResult> { result };
             }
 
             var missingTls = new List<string>();
+            int unreachable = 0;
             foreach (var mxHost in ctx.MxHosts)
             {
                 var probe = await ctx.Smtp.ProbeSmtpAsync(mxHost, 25);
 
                 if (!probe.Connected)
                 {
+                    unreachable++;
                     result.Details.Add($"{mxHost}: Could not connect");
                     continue;
                 }
@@ -981,6 +999,7 @@ public class SmtpStarttlsEnforcementCheck : ICheck
             {
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = "All MX hosts support STARTTLS";
+                result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
             }
         }
         catch (Exception ex)
@@ -1006,7 +1025,7 @@ public class SmtpIpv6ConnectivityCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check IPv6 connectivity";
                 return new List<CheckResult> { result };
             }

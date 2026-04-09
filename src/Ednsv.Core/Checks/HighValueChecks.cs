@@ -91,17 +91,19 @@ public class SmtpTlsVersionCheck : ICheck
 
         if (!ctx.MxHosts.Any())
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
             result.Summary = "No MX hosts to check TLS version";
             return new List<CheckResult> { result };
         }
 
         bool anyDeprecated = false;
+        int unreachable = 0;
         foreach (var mxHost in ctx.MxHosts)
         {
             var probe = await GetOrProbeAsync(ctx, mxHost);
             if (!probe.Connected || !probe.SupportsStartTls)
             {
+                if (!probe.Connected) unreachable++;
                 result.Details.Add($"{mxHost}: {(probe.Connected ? "No STARTTLS" : "Could not connect")}");
                 continue;
             }
@@ -126,6 +128,7 @@ public class SmtpTlsVersionCheck : ICheck
 
         result.Severity = anyDeprecated ? CheckSeverity.Warning : CheckSeverity.Pass;
         result.Summary = anyDeprecated ? "Deprecated TLS version(s) detected" : "TLS versions acceptable";
+        result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
         return new List<CheckResult> { result };
     }
 
@@ -152,7 +155,7 @@ public class MxCoveredBySpfCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record to check MX coverage";
             return new List<CheckResult> { result };
         }
@@ -322,7 +325,7 @@ public class SpfIncludesAllCheck : ICheck
 
         if (ctx.SpfRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.SpfLookupFailed);
             result.Summary = "No SPF record";
             return new List<CheckResult> { result };
         }
@@ -388,7 +391,7 @@ public class DmarcPctAnalysisCheck : ICheck
 
         if (ctx.DmarcRecord == null)
         {
-            result.Severity = CheckSeverity.Info;
+            result.Severity = ctx.SeverityForMissing(ctx.DmarcLookupFailed);
             result.Summary = "No DMARC record";
             return Task.FromResult(new List<CheckResult> { result });
         }
@@ -514,10 +517,8 @@ public class ExtendedDnsblCheck : ICheck
         }
 
         int listed = 0;
-        // Build all query tasks up-front and run in parallel (throttled).
-        // High concurrency is fine here — DNSBL queries are lightweight UDP with
-        // short timeouts and the DNS cache deduplicates repeated queries.
-        var semaphore = new SemaphoreSlim(30);
+        // Build all query tasks up-front and run in parallel.
+        // Rate limiting is handled globally by DnsResolverService.
         var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
 
         foreach (var ip in allMxIps)
@@ -535,16 +536,8 @@ public class ExtendedDnsblCheck : ICheck
                 var query = $"{reversed}.{zone}";
                 tasks.Add(Task.Run(async () =>
                 {
-                    await semaphore.WaitAsync();
-                    try
-                    {
-                        var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
-                        return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
+                    var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
+                    return (capturedIp, capturedName, resp.Answers.ARecords().ToList());
                 }));
             }
         }

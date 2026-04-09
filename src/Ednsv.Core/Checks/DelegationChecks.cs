@@ -72,15 +72,19 @@ public class AuthoritativeNsCheck : ICheck
 
         try
         {
-            var nsRecords = await ctx.Dns.GetNsRecordsAsync(domain);
+            var nsResponse = await ctx.Dns.QueryAsync(domain, DnsClient.QueryType.NS);
+            var nsRecords = nsResponse.Answers.NsRecords().ToList();
             if (!nsRecords.Any())
             {
+                if (nsResponse.HasError)
+                    ctx.NsLookupFailed = true;
+
                 // Try parent domain
                 var parentParts = domain.Split('.');
                 if (parentParts.Length > 2)
                 {
                     var parent = string.Join('.', parentParts.Skip(1));
-                    nsRecords = await ctx.Dns.GetNsRecordsAsync(parent);
+                    nsRecords = (await ctx.Dns.GetNsRecordsAsync(parent));
                     if (nsRecords.Any())
                         result.Details.Add($"NS records found at parent zone: {parent}");
                 }

@@ -130,7 +130,10 @@ public class DnssecCheck : ICheck
                         {
                             coveredTypes.Add(rrsig.CoveredType.ToString());
                         }
-                        catch { }
+                        catch (Exception ex)
+                        {
+                            result.Details.Add($"Could not read RRSIG CoveredType: {ex.Message}");
+                        }
                     }
                     foreach (var criticalType in new[] { "A", "MX", "TXT", "NS" })
                     {
@@ -335,7 +338,10 @@ public class MtaStsCheck : ICheck
                         if (tlsaFound)
                             result.Details.Add("Both MTA-STS and DANE/TLSA are configured — conforming MTAs that support both will prefer DANE when DNSSEC is validated (RFC 8461 §10.1)");
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        result.Details.Add($"Could not check for coexisting DANE/TLSA records: {ex.Message}");
+                    }
 
                     result.Severity = CheckSeverity.Pass;
                     result.Summary = "MTA-STS configured";
@@ -917,7 +923,10 @@ public class DaneCheck : ICheck
                                 result.Errors.Add($"TLSA records found for {mxHost} but DNSSEC is not enabled — DANE requires DNSSEC validation (RFC 7672 §2.1). Records will be ignored by conforming MTAs.");
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        result.Warnings.Add($"Could not verify DNSSEC for {mxHost} TLSA records: {ex.Message}");
+                    }
                 }
                 else
                 {
@@ -1045,7 +1054,7 @@ public class SecurityTxtCheck : ICheck
         try
         {
             var url = $"https://{domain}/.well-known/security.txt";
-            var (success, content, statusCode) = await ctx.Http.GetAsync(url);
+            var (success, content, statusCode) = await ctx.Http.GetAsync(url, maxRetries: 1);
 
             if (success && !string.IsNullOrWhiteSpace(content))
             {
@@ -1085,16 +1094,23 @@ public class SecurityTxtCheck : ICheck
                 result.Severity = (hasContact && hasExpires) ? CheckSeverity.Pass : CheckSeverity.Warning;
                 result.Summary = "security.txt found";
             }
-            else
+            else if (success)
             {
                 result.Severity = CheckSeverity.Info;
                 result.Summary = "No security.txt found";
             }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "Could not fetch security.txt";
+                result.Details.Add($"HTTP request to {domain}/.well-known/security.txt failed (status {statusCode})");
+            }
         }
         catch (Exception ex)
         {
-            result.Severity = CheckSeverity.Error;
-            result.Errors.Add(ex.Message);
+            result.Severity = CheckSeverity.Info;
+            result.Summary = "security.txt check skipped";
+            result.Details.Add($"Could not check security.txt: {ex.Message}");
         }
 
         return new List<CheckResult> { result };

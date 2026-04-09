@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ednsv - DNS Email Validation</title>
+<style>
+  :root { --bg: #0f172a; --surface: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --pass: #4ade80; --warn: #fbbf24; --error: #f87171; --critical: #ef4444; --info: #60a5fa; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: var(--accent); }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .search-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+  .search-form input { flex: 1; padding: 0.6rem 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
+  .search-form input:focus { border-color: var(--accent); }
+  .search-form select { padding: 0.6rem 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
+  .search-form select:focus { border-color: var(--accent); }
+  .search-form button { padding: 0.6rem 1.2rem; background: var(--accent); color: var(--bg); border: none; border-radius: 6px; font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .search-form button:hover { opacity: 0.9; }
+  .search-form button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; min-height: 1.2rem; }
+  .summary { display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
+  .summary .stat { padding: 0.6rem 1rem; background: var(--surface); border-radius: 6px; border: 1px solid var(--border); font-size: 0.85rem; }
+  .stat .n { font-size: 1.2rem; font-weight: 700; }
+  .stat.pass .n { color: var(--pass); }
+  .stat.warn .n { color: var(--warn); }
+  .stat.error .n { color: var(--error); }
+  .stat.critical .n { color: var(--critical); }
+  .stat.info .n { color: var(--info); }
+  .category { margin-bottom: 0.75rem; }
+  .category-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px 6px 0 0; cursor: pointer; user-select: none; }
+  .category-header .arrow { transition: transform 0.15s; font-size: 0.7rem; color: var(--muted); }
+  .category-header.collapsed .arrow { transform: rotate(-90deg); }
+  .category-header .cat-name { font-weight: 600; font-size: 0.85rem; }
+  .category-header .cat-badge { font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 4px; }
+  .checks { border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px; overflow: hidden; }
+  .checks.hidden { display: none; }
+  .check { padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+  .check:last-child { border-bottom: none; }
+  .check .check-header { display: flex; gap: 0.5rem; align-items: baseline; }
+  .check .sev { font-weight: 700; min-width: 3.5rem; text-transform: uppercase; font-size: 0.75rem; }
+  .check .name { color: var(--muted); }
+  .check .check-summary { margin-top: 0.2rem; }
+  .check .details { color: var(--muted); font-size: 0.78rem; margin-top: 0.3rem; padding-left: 1rem; }
+  .check .details li { margin-bottom: 0.15rem; list-style: disc; }
+  .sev-Pass { color: var(--pass); }
+  .sev-Info { color: var(--info); }
+  .sev-Warning { color: var(--warn); }
+  .sev-Error { color: var(--error); }
+  .sev-Critical { color: var(--critical); }
+  .badge-Pass { background: #166534; color: var(--pass); }
+  .badge-Info { background: #1e3a5f; color: var(--info); }
+  .badge-Warning { background: #713f12; color: var(--warn); }
+  .badge-Error { background: #7f1d1d; color: var(--error); }
+  .badge-Critical { background: #7f1d1d; color: var(--critical); }
+  .duration { color: var(--muted); font-size: 0.82rem; margin-bottom: 1rem; }
+  .filter-bar { display: flex; gap: 0.4rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .filter-bar button { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-family: inherit; font-size: 0.78rem; cursor: pointer; outline: none; }
+  .filter-bar button.active { border-color: var(--accent); background: #1e3a5f; color: var(--text); }
+  .recheck-btn { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--warn); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
+  .recheck-btn:hover { border-color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ednsv</h1>
+  <p class="subtitle">DNS &amp; Email Infrastructure Validator</p>
+
+  <form class="search-form" id="form">
+    <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+    <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
+      <option value="">No recheck</option>
+      <option value="Warning">Recheck warnings+</option>
+      <option value="Error">Recheck errors+</option>
+      <option value="Critical">Recheck critical</option>
+    </select>
+    <button type="submit" id="btn">Validate</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
+let pollTimer = null;
+let lastDomain = '';
+
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const domain = input.value.trim();
+  if (!domain) return;
+  lastDomain = domain;
+  startValidation(domain, recheckSel.value || null);
+});
+
+async function startValidation(domain, recheckSeverity) {
+  btn.disabled = true;
+  resultsEl.innerHTML = '';
+  const recheckLabel = recheckSeverity ? ` (recheck >= ${recheckSeverity})` : '';
+  statusEl.textContent = `Starting validation for ${domain}${recheckLabel}...`;
+
+  const body = { domain };
+  if (recheckSeverity) body.recheckSeverity = recheckSeverity;
+
+  try {
+    const res = await fetch('/api/validate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) { statusEl.textContent = `Error: ${data.error || res.statusText}`; btn.disabled = false; return; }
+    pollJob(data.jobId, domain);
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    btn.disabled = false;
+  }
+}
+
+function pollJob(jobId, domain) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/status/${jobId}`);
+      const data = await res.json();
+      if (data.status === 'running') {
+        const d = data.dns;
+        const s = data.smtp;
+        const elapsed = data.elapsed != null ? `${data.elapsed.toFixed(1)}s` : '';
+        const parts = [];
+        if (d) {
+          if (d.queries) parts.push(`${d.queries} DNS`);
+          if (d.sent) {
+            const inflight = d.sent - d.received;
+            parts.push(`${d.received}/${d.sent} responded` + (inflight > 0 ? ` (${inflight} pending)` : ''));
+          }
+          if (d.cacheHits) parts.push(`${d.cacheHits} cached`);
+        }
+        if (s) {
+          if (s.probesStarted) {
+            const smtpPending = s.probesStarted - s.probesDone;
+            parts.push(`${s.probesDone}/${s.probesStarted} SMTP` + (smtpPending > 0 ? ` (${smtpPending} probing)` : ''));
+          }
+          if (s.portsStarted) {
+            const portPending = s.portsStarted - s.portsDone;
+            parts.push(`${s.portsDone}/${s.portsStarted} ports` + (portPending > 0 ? ` (${portPending} probing)` : ''));
+          }
+        }
+        const stats = parts.join(' / ');
+
+        let line1;
+        if (data.completedChecks > 0) {
+          const check = data.currentCheck ? ` [${data.currentCheck}]` : '';
+          line1 = `Validating ${esc(domain)}... <b>${data.completedChecks}</b> checks done${check}`;
+        } else if (data.currentCheck) {
+          line1 = `Validating ${esc(domain)}... [${esc(data.currentCheck)}]`;
+        } else {
+          line1 = `Prefetching DNS &amp; SMTP for ${esc(domain)}...`;
+        }
+
+        // Live severity counts
+        const r = data.results;
+        let sevLine = '';
+        if (r && data.completedChecks > 0) {
+          const sevParts = [];
+          if (r.critical) sevParts.push(`<span class="sev-Critical">${r.critical} critical</span>`);
+          if (r.error) sevParts.push(`<span class="sev-Error">${r.error} error</span>`);
+          if (r.warning) sevParts.push(`<span class="sev-Warning">${r.warning} warn</span>`);
+          if (r.pass) sevParts.push(`<span class="sev-Pass">${r.pass} pass</span>`);
+          if (r.info) sevParts.push(`<span class="sev-Info">${r.info} info</span>`);
+          if (sevParts.length) sevLine = `<br><span style="font-size:0.82rem">${sevParts.join(' &nbsp; ')}</span>`;
+        }
+
+        const line2 = elapsed || stats
+          ? `<br><span style="color:var(--muted);font-size:0.78rem">${[elapsed, stats].filter(Boolean).join(' — ')}</span>`
+          : '';
+        statusEl.innerHTML = line1 + sevLine + line2;
+      } else {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        btn.disabled = false;
+        if (data.status === 'completed') {
+          statusEl.textContent = `Completed ${domain} in ${fmtDuration(data.report.duration)}`;
+          renderReport(data.report, domain);
+        } else {
+          statusEl.textContent = `Failed: ${data.error || 'Unknown error'}`;
+        }
+      }
+    } catch { /* retry next tick */ }
+  }, 800);
+}
+
+function fmtDuration(d) {
+  if (!d) return '';
+  // Duration comes as "HH:MM:SS.fff" or seconds
+  if (typeof d === 'string') {
+    const parts = d.split(':');
+    if (parts.length === 3) {
+      const secs = parseInt(parts[0])*3600 + parseInt(parts[1])*60 + parseFloat(parts[2]);
+      return secs < 60 ? `${secs.toFixed(1)}s` : `${Math.floor(secs/60)}m ${(secs%60).toFixed(0)}s`;
+    }
+  }
+  return String(d);
+}
+
+let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
+
+function renderReport(report, domain) {
+  activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
+  const r = report.results || report.Results || [];
+  const counts = { Pass: 0, Info: 0, Warning: 0, Error: 0, Critical: 0 };
+  r.forEach(c => counts[c.severity] = (counts[c.severity]||0) + 1);
+
+  // Group by category
+  const groups = {};
+  r.forEach(c => {
+    const cat = c.category;
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(c);
+  });
+
+  let html = '<div class="summary">';
+  for (const [sev, cls] of [['Critical','critical'],['Error','error'],['Warning','warn'],['Pass','pass'],['Info','info']]) {
+    html += `<div class="stat ${cls}"><span class="n">${counts[sev]||0}</span> ${sev}</div>`;
+  }
+  html += '</div>';
+
+  html += '<div class="filter-bar">';
+  for (const sev of ['Pass','Info','Warning','Error','Critical']) {
+    html += `<button class="sev-filter active" data-sev="${sev}">${sev} (${counts[sev]||0})</button>`;
+  }
+  html += '</div>';
+
+  // Severity order for sorting categories by worst result
+  const sevOrder = { Critical: 0, Error: 1, Warning: 2, Info: 3, Pass: 4 };
+  const catEntries = Object.entries(groups).sort((a, b) => {
+    const worstA = Math.min(...a[1].map(c => sevOrder[c.severity] ?? 4));
+    const worstB = Math.min(...b[1].map(c => sevOrder[c.severity] ?? 4));
+    return worstA - worstB;
+  });
+
+  for (const [cat, checks] of catEntries) {
+    const worst = checks.reduce((w, c) => (sevOrder[c.severity]??4) < (sevOrder[w]??4) ? c.severity : w, 'Pass');
+    html += `<div class="category" data-cat="${cat}">`;
+    html += `<div class="category-header" onclick="toggleCat(this)">`;
+    html += `<span class="arrow">&#9660;</span>`;
+    html += `<span class="cat-name">${cat}</span>`;
+    html += `<span class="cat-badge badge-${worst}">${worst}</span>`;
+    html += `<span style="color:var(--muted);font-size:0.75rem;margin-left:auto">${checks.length} check${checks.length>1?'s':''}</span>`;
+    html += '</div>';
+    html += `<div class="checks">`;
+    for (const c of checks) {
+      html += `<div class="check" data-sev="${c.severity}">`;
+      html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span></div>`;
+      html += `<div class="check-summary">${esc(c.summary)}</div>`;
+      const allDetails = [...(c.details||[]), ...(c.warnings||[]), ...(c.errors||[])];
+      if (allDetails.length) {
+        html += '<ul class="details">';
+        for (const d of allDetails.slice(0, 20)) html += `<li>${esc(d)}</li>`;
+        if (allDetails.length > 20) html += `<li>...and ${allDetails.length - 20} more</li>`;
+        html += '</ul>';
+      }
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+
+  const hasIssues = (counts.Warning || 0) + (counts.Error || 0) + (counts.Critical || 0) > 0;
+  if (hasIssues && domain) {
+    html += '<div style="margin-top:1rem;display:flex;gap:0.5rem;align-items:center">';
+    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck issues:</span>';
+    html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
+    html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
+    html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    html += '</div>';
+  }
+
+  resultsEl.innerHTML = html;
+
+  // Recheck buttons
+  resultsEl.querySelectorAll('.recheck-btn').forEach(b => {
+    b.addEventListener('click', () => startValidation(domain, b.dataset.sev));
+  });
+
+  // Filter buttons
+  resultsEl.querySelectorAll('.sev-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sev = btn.dataset.sev;
+      if (activeFilters.has(sev)) { activeFilters.delete(sev); btn.classList.remove('active'); }
+      else { activeFilters.add(sev); btn.classList.add('active'); }
+      applyFilters();
+    });
+  });
+}
+
+function applyFilters() {
+  resultsEl.querySelectorAll('.check').forEach(el => {
+    el.style.display = activeFilters.has(el.dataset.sev) ? '' : 'none';
+  });
+}
+
+function toggleCat(header) {
+  header.classList.toggle('collapsed');
+  const checks = header.nextElementSibling;
+  checks.classList.toggle('hidden');
+}
+
+function esc(s) {
+  const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
+}
+</script>
+</body>
+</html>

@@ -158,7 +158,7 @@ public class IpBlocklistCheck : ICheck
 
             if (!allMxIps.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.MxHosts.Any() ? CheckSeverity.Info : ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX IPv4 addresses to check against blocklists";
                 return new List<CheckResult> { result };
             }
@@ -263,7 +263,7 @@ public class MxHostnameBlocklistCheck : ICheck
         {
             if (!ctx.MxHosts.Any())
             {
-                result.Severity = CheckSeverity.Info;
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
                 result.Summary = "No MX hosts to check against domain blocklists";
                 return new List<CheckResult> { result };
             }

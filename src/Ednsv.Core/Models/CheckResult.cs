@@ -53,6 +53,26 @@ public class CheckResult
     public List<string> Details { get; set; } = new();
     public List<string> Warnings { get; set; } = new();
     public List<string> Errors { get; set; } = new();
+
+    /// <summary>
+    /// If this check would report Pass but some or all hosts were unreachable,
+    /// downgrades to Warning. Call this after setting Severity and Summary.
+    /// </summary>
+    public void AdjustForUnreachableHosts(int totalHosts, int unreachableCount)
+    {
+        if (unreachableCount <= 0 || totalHosts <= 0) return;
+
+        if (unreachableCount >= totalHosts && Severity == CheckSeverity.Pass)
+        {
+            Severity = CheckSeverity.Warning;
+            Summary = $"Could not connect to any MX host — {Summary}";
+        }
+        else if (unreachableCount > 0 && Severity == CheckSeverity.Pass)
+        {
+            Severity = CheckSeverity.Warning;
+            Summary = $"{unreachableCount}/{totalHosts} MX host(s) unreachable — {Summary}";
+        }
+    }
 }
 
 public class ValidationReport

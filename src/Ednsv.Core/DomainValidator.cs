@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
@@ -7,10 +8,46 @@ namespace Ednsv.Core;
 
 public class DomainValidator
 {
-    private readonly List<ICheck> _checks;
+    // Foundation checks run sequentially — they populate shared CheckContext state
+    // (MxHosts, NsHosts, SpfRecord, DmarcRecord, etc.) that all other checks read.
+    private readonly List<ICheck> _foundationChecks;
+
+    // Concurrent checks run in parallel — they only read from CheckContext shared
+    // state and are independent of each other.
+    private readonly List<ICheck> _concurrentChecks;
+
     private readonly DnsResolverService _dns;
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
+    private Stopwatch? _validationSw;
+
+    /// <summary>Cache types to bypass MemoryCache for (recheck mode).</summary>
+    public RecheckHelper.CacheDep RecheckDeps { get; set; }
+
+    /// <summary>Optional masker for trace output — hashes hostnames/IPs for privacy.</summary>
+    private TraceMasker? _traceMask;
+    public TraceMasker? TraceMask
+    {
+        get => _traceMask;
+        set { _traceMask = value; if (_traceCallback != null) Trace = _traceCallback; } // re-apply wrapping
+    }
+
+    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    public Action<string>? Trace
+    {
+        get => _traceCallback;
+        set
+        {
+            _traceCallback = value;
+            // Wrap with masking if TraceMask is set, otherwise pass through directly
+            var effectiveTrace = value != null && TraceMask != null
+                ? (Action<string>)(msg => value(TraceMask.Mask(msg)))
+                : value;
+            _dns.Trace = effectiveTrace;
+            _smtp.Trace = effectiveTrace;
+        }
+    }
+    private Action<string>? _traceCallback;
 
     /// <summary>
     /// Creates a new validator with fresh (non-shared) services.
@@ -29,21 +66,44 @@ public class DomainValidator
         _smtp = smtp;
         _http = http;
 
-        _checks = new List<ICheck>
+        // ── Foundation checks: run sequentially, populate shared state ────
+        // Order matters here — later checks depend on state set by earlier ones.
+        // Only checks that WRITE to CheckContext shared state belong here.
+        // Everything else runs concurrently.
+        _foundationChecks = new List<ICheck>
         {
-            // Delegation (1-3)
-            new DelegationChainCheck(),
+            // AuthoritativeNsCheck → ctx.NsHosts, ctx.NsHostIps
             new AuthoritativeNsCheck(),
+
+            // A/AAAA → ctx.DomainARecords, ctx.DomainAAAARecords
+            new ARecordCheck(),
+            new AAAARecordCheck(),
+
+            // MX → ctx.MxHosts, ctx.MxHostIps
+            new MxRecordsCheck(),
+
+            // SPF → ctx.SpfRecord
+            new SpfRecordCheck(),
+
+            // DMARC → ctx.DmarcRecord
+            new DmarcRecordCheck(),
+        };
+
+        // ── Concurrent checks: run in parallel, read-only on shared state ──
+        _concurrentChecks = new List<ICheck>
+        {
+            // Delegation (reads NsHosts)
+            new DelegationChainCheck(),
             new DelegationConsistencyCheck(),
 
-            // SOA (4)
+            // SOA (reads NsHosts)
             new SoaRecordCheck(),
             new SoaSerialConsistencyCheck(),
 
             // Glue records
             new NsGlueRecordCheck(),
 
-            // NS (5-8)
+            // NS
             new NsRecordsCheck(),
             new NsMinimumCountCheck(),
             new NsLameDelegationCheck(),
@@ -51,15 +111,10 @@ public class DomainValidator
             new DuplicateNsIpCheck(),
             new OpenRecursiveResolverCheck(),
 
-            // CNAME (9)
+            // CNAME
             new CnameChainCheck(),
 
-            // A/AAAA (10-11)
-            new ARecordCheck(),
-            new AAAARecordCheck(),
-
-            // MX (12-16, 51, 43)
-            new MxRecordsCheck(),
+            // MX (remaining — MxRecordsCheck is foundation)
             new MxIpDetectionCheck(),
             new MxPrivateIpCheck(),
             new MxCnameCheck(),
@@ -68,8 +123,7 @@ public class DomainValidator
             new MxBackupSecurityCheck(),
             new MailSubdomainSurveyCheck(),
 
-            // SPF (16-21)
-            new SpfRecordCheck(),
+            // SPF (remaining — SpfRecordCheck is foundation)
             new SpfExpansionCheck(),
             new SpfLookupCountCheck(),
             new SpfIncludeDepthCheck(),
@@ -80,8 +134,7 @@ public class DomainValidator
             new MxCoveredBySpfCheck(),
             new SubdomainSpfGapCheck(),
 
-            // DMARC (22-27)
-            new DmarcRecordCheck(),
+            // DMARC (remaining — DmarcRecordCheck is foundation)
             new DmarcPctAnalysisCheck(),
             new DmarcInheritanceCheck(),
             new DmarcExternalReportAuthCheck(),
@@ -91,41 +144,41 @@ public class DomainValidator
             new DmarcSubdomainPolicyCheck(),
             new DmarcReportUriValidationCheck(),
 
-            // DKIM (28) + ARC
+            // DKIM + ARC
             new DkimSelectorsCheck(),
             new ArcCheck(),
 
-            // PTR (29)
+            // PTR
             new ReverseDnsCheck(),
             new MxReverseDnsCheck(),
 
-            // FCrDNS (30)
+            // FCrDNS
             new ForwardConfirmedRdnsCheck(),
 
-            // Blocklists (31-32)
+            // Blocklists
             new IpBlocklistCheck(),
             new ExtendedDnsblCheck(),
             new DomainBlocklistCheck(),
             new MxHostnameBlocklistCheck(),
 
-            // DNSSEC (33)
+            // DNSSEC
             new DnssecCheck(),
             new NsecZoneWalkCheck(),
 
-            // MTA-STS (34)
+            // MTA-STS
             new MtaStsCheck(),
 
-            // TLS-RPT (35)
+            // TLS-RPT
             new TlsRptCheck(),
 
-            // BIMI (36)
+            // BIMI
             new BimiCheck(),
 
-            // DANE (37, 39)
+            // DANE
             new DaneCheck(),
             new DaneTlsaCertMatchCheck(),
 
-            // SMTP (38, 40-42)
+            // SMTP
             new SmtpTlsCertCheck(),
             new SmtpTlsVersionCheck(),
             new SmtpBannerCheck(),
@@ -137,23 +190,23 @@ public class DomainValidator
             new SmtpTransactionTimingCheck(),
             new SubmissionPortsCheck(),
 
-            // SRV (44)
+            // SRV
             new SrvRecordsCheck(),
 
-            // Autodiscover (45)
+            // Autodiscover
             new AutodiscoverCheck(),
 
-            // CAA (46)
+            // CAA
             new CaaRecordCheck(),
 
-            // IPv6 (47)
+            // IPv6
             new Ipv6ReadinessCheck(),
             new SmtpIpv6ConnectivityCheck(),
 
-            // Postmaster (48)
+            // Postmaster
             new PostmasterAddressCheck(),
 
-            // Abuse (49)
+            // Abuse
             new AbuseAddressCheck(),
 
             // DNS propagation
@@ -165,16 +218,16 @@ public class DomainValidator
             // Catch-all detection
             new CatchAllDetectionCheck(),
 
-            // Wildcard (50)
+            // Wildcard
             new WildcardDnsCheck(),
 
-            // TTL (52)
+            // TTL
             new TtlSanityCheck(),
 
-            // Zone Transfer (53)
+            // Zone Transfer
             new ZoneTransferCheck(),
 
-            // security.txt (54)
+            // security.txt
             new SecurityTxtCheck(),
 
             // Provider verification
@@ -198,9 +251,9 @@ public class DomainValidator
     public async Task<ValidationReport> ValidateAsync(string domain, ValidationOptions? options = null)
     {
         var report = new ValidationReport { Domain = domain };
-        var sw = Stopwatch.StartNew();
+        _validationSw = Stopwatch.StartNew();
 
-        // Reset per-validation state while keeping shared caches
+        // Reset per-validation error tracking while keeping shared caches
         _dns.ResetErrors();
 
         var context = new CheckContext
@@ -208,65 +261,111 @@ public class DomainValidator
             Dns = _dns,
             Smtp = _smtp,
             Http = _http,
-            Options = options ?? new ValidationOptions()
+            Options = options ?? new ValidationOptions(),
+            RecheckDeps = RecheckDeps
         };
 
-        // ── Prefetch phase: fire common DNS queries and SMTP probes in parallel ──
-        // This primes the service caches so sequential checks hit cache instead of
-        // waiting on network I/O one-by-one.
+        // ── Set per-validation recheck context (flows through async calls) ──
+        RecheckHelper.CurrentRecheckDeps.Value = RecheckDeps;
+
+        // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
+        // These prime the HTTP cache for checks that will need them later.
+        // They run alongside prefetch + foundation + concurrent checks.
+        // MTA-STS is email-critical (3 retries); security.txt and CT are info-only (1 retry).
+        _ = Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt"));
+        _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt", maxRetries: 1));
+        _ = Task.Run(() => _http.GetAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
+
+        // ── Prefetch phase: fire DNS queries and SMTP probes in parallel ──
+        TraceLog($"[PHASE] PREFETCH START for {domain}");
         var prefetchSw = Stopwatch.StartNew();
         await PrefetchAsync(domain, context);
         prefetchSw.Stop();
+        TraceLog($"[PHASE] PREFETCH DONE: {prefetchSw.ElapsedMilliseconds}ms (dns:{_dns.CacheHits}h/{_dns.CacheMisses}m smtp:{_smtp.ProbesCompleted}p/{_smtp.PortsCompleted}ports)");
         OnCheckTiming?.Invoke("Prefetch", prefetchSw.Elapsed);
 
+        // ── Foundation checks: sequential, populate shared state ──────────
+        TraceLog($"[PHASE] FOUNDATION START ({_foundationChecks.Count} checks)");
+        var foundationSw = Stopwatch.StartNew();
         var timedOutChecks = new List<ICheck>();
 
-        foreach (var check in _checks)
-        {
-            try
+        foreach (var check in _foundationChecks)
+            await RunCheckAsync(check, domain, context, report, timedOutChecks);
+
+        foundationSw.Stop();
+        TraceLog($"[PHASE] FOUNDATION DONE: {foundationSw.ElapsedMilliseconds}ms (mx:{context.MxHosts.Count} ns:{context.NsHosts.Count} spf:{(context.SpfRecord != null ? "yes" : "no")} dmarc:{(context.DmarcRecord != null ? "yes" : "no")})");
+
+        // ── Concurrent checks: parallel, read-only on shared state ────────
+        TraceLog($"[PHASE] CONCURRENT START ({_concurrentChecks.Count} checks, max 12 parallel)");
+        var concurrentResults = new ConcurrentBag<(ICheck Check, List<CheckResult>? Results, CheckResult? Error, TimeSpan Elapsed, bool TimedOut)>();
+
+        await Parallel.ForEachAsync(_concurrentChecks,
+            new ParallelOptions { MaxDegreeOfParallelism = 12 },
+            async (check, _) =>
             {
-                OnCheckStarted?.Invoke(check.Name);
                 var checkSw = Stopwatch.StartNew();
-                var checkTask = check.RunAsync(domain, context);
-                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
-                List<CheckResult> results;
-                if (completedTask == checkTask)
+                try
                 {
-                    results = await checkTask;
-                }
-                else
-                {
-                    // Track for deferred retry instead of immediately reporting timeout
-                    timedOutChecks.Add(check);
+                    OnCheckStarted?.Invoke(check.Name);
+                    var checkTask = check.RunAsync(domain, context);
+                    var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
                     checkSw.Stop();
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
-                    continue;
+
+                    if (completedTask == checkTask)
+                    {
+                        var results = await checkTask;
+                        concurrentResults.Add((check, results, null, checkSw.Elapsed, false));
+                    }
+                    else
+                    {
+                        concurrentResults.Add((check, null, null, checkSw.Elapsed, true));
+                    }
                 }
-                checkSw.Stop();
-                OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
-                foreach (var r in results)
+                catch (Exception ex)
+                {
+                    checkSw.Stop();
+                    OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    var errorResult = new CheckResult
+                    {
+                        CheckName = check.Name,
+                        Category = check.Category,
+                        Severity = CheckSeverity.Error,
+                        Summary = $"Check failed: {ex.Message}",
+                        Errors = { ex.Message }
+                    };
+                    concurrentResults.Add((check, null, errorResult, checkSw.Elapsed, false));
+                }
+            });
+
+        TraceLog($"[PHASE] CONCURRENT DONE: all {_concurrentChecks.Count} checks finished");
+
+        // Collect results, preserving original check order for consistent output
+        var concurrentMap = concurrentResults.ToDictionary(r => r.Check.Name);
+        foreach (var check in _concurrentChecks)
+        {
+            if (!concurrentMap.TryGetValue(check.Name, out var entry)) continue;
+
+            if (entry.TimedOut)
+            {
+                timedOutChecks.Add(check);
+            }
+            else if (entry.Results != null)
+            {
+                foreach (var r in entry.Results)
                 {
                     report.Results.Add(r);
                     OnCheckCompleted?.Invoke(check.Name, r);
                 }
             }
-            catch (Exception ex)
+            else if (entry.Error != null)
             {
-                var errorResult = new CheckResult
-                {
-                    CheckName = check.Name,
-                    Category = check.Category,
-                    Severity = CheckSeverity.Error,
-                    Summary = $"Check failed: {ex.Message}",
-                    Errors = { ex.Message }
-                };
-                report.Results.Add(errorResult);
-                OnCheckCompleted?.Invoke(check.Name, errorResult);
+                report.Results.Add(entry.Error);
+                OnCheckCompleted?.Invoke(check.Name, entry.Error);
             }
         }
 
-        // Deferred retry: timed-out checks get a second attempt.
-        // By now, slow DNS responses may have resolved and been cached.
+        // ── Deferred retry: timed-out checks get a second attempt ─────────
         foreach (var check in timedOutChecks)
         {
             try
@@ -314,8 +413,12 @@ public class DomainValidator
             }
         }
 
-        // Surface any DNS query errors so users know results may be incomplete
-        var dnsErrors = _dns.QueryErrors.ToList(); // snapshot for consistent reads
+        // Surface any DNS query errors so users know results may be incomplete.
+        // Use per-validation errors from CheckContext (thread-safe), falling back
+        // to shared service errors for backward compatibility with CLI.
+        var dnsErrors = context.QueryErrors.Any()
+            ? context.QueryErrors.ToList()
+            : _dns.QueryErrors.ToList();
         if (dnsErrors.Any())
         {
             report.Results.Add(new CheckResult
@@ -331,23 +434,84 @@ public class DomainValidator
             });
         }
 
-        sw.Stop();
-        report.Duration = sw.Elapsed;
+        _validationSw.Stop();
+        report.Duration = _validationSw.Elapsed;
+        TraceLog($"[PHASE] VALIDATION COMPLETE: {_validationSw.ElapsedMilliseconds}ms total, {report.Results.Count} results (pass:{report.PassCount} warn:{report.WarningCount} err:{report.ErrorCount} crit:{report.CriticalCount})");
+
+        // Clear per-validation recheck context
+        RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.None;
+
         return report;
     }
 
+    private void TraceLog(string message)
+    {
+        if (Trace == null) return;
+        var elapsed = _validationSw?.ElapsedMilliseconds ?? 0;
+        if (TraceMask != null) message = TraceMask.Mask(message);
+        Trace($"[{elapsed,7}ms] {message}");
+    }
+
+    private async Task RunCheckAsync(ICheck check, string domain, CheckContext context,
+        ValidationReport report, List<ICheck> timedOutChecks)
+    {
+        try
+        {
+            OnCheckStarted?.Invoke(check.Name);
+            TraceLog($"[CHECK] START {check.Name}");
+            var checkSw = Stopwatch.StartNew();
+            var checkTask = check.RunAsync(domain, context);
+            var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
+            List<CheckResult> results;
+            if (completedTask == checkTask)
+            {
+                results = await checkTask;
+            }
+            else
+            {
+                timedOutChecks.Add(check);
+                checkSw.Stop();
+                TraceLog($"[CHECK] TIMEOUT {check.Name}: {checkSw.ElapsedMilliseconds}ms");
+                OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                return;
+            }
+            checkSw.Stop();
+            var severities = string.Join(",", results.Select(r => r.Severity));
+            TraceLog($"[CHECK] DONE {check.Name}: {checkSw.ElapsedMilliseconds}ms [{severities}]");
+            OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+            foreach (var r in results)
+            {
+                report.Results.Add(r);
+                OnCheckCompleted?.Invoke(check.Name, r);
+            }
+        }
+        catch (Exception ex)
+        {
+            var errorResult = new CheckResult
+            {
+                CheckName = check.Name,
+                Category = check.Category,
+                Severity = CheckSeverity.Error,
+                Summary = $"Check failed: {ex.Message}",
+                Errors = { ex.Message }
+            };
+            report.Results.Add(errorResult);
+            OnCheckCompleted?.Invoke(check.Name, errorResult);
+        }
+    }
+
     /// <summary>
-    /// Prefetches common DNS records and SMTP probes in batches to prime the
-    /// service caches. Concurrency is capped to avoid looking abusive — DNS
-    /// queries go through the configured resolver (not hammering authoritative
-    /// servers directly) and SMTP probes are limited to 3 at a time.
+    /// Prefetches DNS records and SMTP probes to prime service caches.
+    /// Phase 1 resolves core records. Phase 2 runs MX/NS host resolution,
+    /// policy records, DKIM selectors, PTR lookups, and SMTP probes all
+    /// concurrently — SMTP probes start as soon as MX IPs are available
+    /// without waiting for unrelated DNS queries to complete.
     /// </summary>
     private async Task PrefetchAsync(string domain, CheckContext ctx)
     {
         try
         {
-            // Phase 1: Core DNS records — small batch, all go through our configured
-            // resolver (Google/Cloudflare) which handles its own rate limiting.
+            // Phase 1: Core DNS records
             var mxTask = _dns.GetMxRecordsAsync(domain);
             var nsTask = _dns.GetNsRecordsAsync(domain);
             var aTask = _dns.ResolveAAsync(domain);
@@ -360,77 +524,70 @@ public class DomainValidator
             var mxRecords = await mxTask;
             var nsRecords = await nsTask;
 
-            // Phase 2: Resolve MX/NS host IPs + policy records (throttled to 8 concurrent)
+            // Phase 2: Everything else in parallel — DNS, PTR, and SMTP probes
+            // all start at the same time. Rate limiting is in DnsResolverService.
             var mxHosts = mxRecords.Select(m => m.Exchange.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
             var nsHosts = nsRecords.Select(n => n.NSDName.Value.TrimEnd('.')).Where(h => !string.IsNullOrEmpty(h)).Distinct().ToList();
 
-            var dnsSemaphore = new SemaphoreSlim(8);
-            var phase2Tasks = new List<Task>();
+            var allTasks = new List<Task>();
 
-            Task ThrottledDns(Func<Task> query)
-            {
-                return Task.Run(async () =>
-                {
-                    await dnsSemaphore.WaitAsync();
-                    try { await query(); }
-                    finally { dnsSemaphore.Release(); }
-                });
-            }
-
+            // MX/NS host IP resolution
             foreach (var host in mxHosts.Concat(nsHosts).Distinct())
             {
-                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAsync(host)));
-                phase2Tasks.Add(ThrottledDns(() => _dns.ResolveAAAAAsync(host)));
+                allTasks.Add(_dns.ResolveAAsync(host));
+                allTasks.Add(_dns.ResolveAAAAAsync(host));
             }
 
             // Policy/security records
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CAA)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.CNAME)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DS)));
-            phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY)));
+            allTasks.Add(_dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT));
+            allTasks.Add(_dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT));
+            allTasks.Add(_dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT));
+            allTasks.Add(_dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT));
+            allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CAA));
+            allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CNAME));
+            allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DS));
+            allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DNSKEY));
 
-            // DKIM selectors
-            var selectors = new[] { "default", "google", "selector1", "selector2", "k1", "s1", "s2", "dkim" };
+            // DKIM selectors — fire-and-forget, primes cache for DkimSelectorsCheck.
+            // If these aren't done by the time the check runs, it uses speculative (3s) queries.
+            var selectors = new[] { "default", "google", "selector1", "selector2" };
             foreach (var sel in selectors.Concat(ctx.Options.AdditionalDkimSelectors).Distinct())
-                phase2Tasks.Add(ThrottledDns(() => _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT)));
+                _ = _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT);
 
-            await Task.WhenAll(phase2Tasks);
+            // PTR lookups for domain IPs
+            var domainIps = await aTask;
+            foreach (var ip in domainIps)
+                allTasks.Add(_dns.ResolvePtrAsync(ip));
 
-            // Phase 3: PTR lookups + SMTP probes — SMTP limited to 3 concurrent
-            // to be respectful of mail servers (each probe opens a TCP connection).
-            var smtpSemaphore = new SemaphoreSlim(3);
-            var phase3Tasks = new List<Task>();
-
+            // SMTP probes + PTR for MX hosts — each host probed in parallel since
+            // they go to different servers. Only limit to avoid overwhelming a single
+            // provider's fleet (cap at 6 concurrent SMTP probes).
+            var smtpSemaphore = new SemaphoreSlim(Math.Min(mxHosts.Count, 6));
             foreach (var host in mxHosts)
             {
-                var ips = await _dns.ResolveAAsync(host);
-                foreach (var ip in ips)
-                    phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
-
-                // Pre-probe SMTP port 25
+                // Resolve MX host IPs then probe — chained but non-blocking to other tasks
                 var h = host;
-                phase3Tasks.Add(Task.Run(async () =>
+                allTasks.Add(Task.Run(async () =>
                 {
+                    var ips = await _dns.ResolveAAsync(h);
+                    // PTR lookups for MX IPs
+                    var ptrTasks = ips.Select(ip => _dns.ResolvePtrAsync(ip));
+
+                    // SMTP probe on port 25 — must complete before checks
                     await smtpSemaphore.WaitAsync();
                     try { await _smtp.ProbeSmtpAsync(h, 25); }
                     finally { smtpSemaphore.Release(); }
+
+                    await Task.WhenAll(ptrTasks);
                 }));
 
-                // Pre-probe submission ports 587/465 (cached, avoids timeout in SubmissionPortsCheck)
-                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 587)));
-                phase3Tasks.Add(Task.Run(() => _smtp.ProbePortAsync(h, 465)));
+                // Submission port probes — fire-and-forget, cached by the time
+                // SubmissionPortsCheck runs in the concurrent tier
+                _ = Task.Run(() => _smtp.ProbePortAsync(h, 587));
+                _ = Task.Run(() => _smtp.ProbePortAsync(h, 465));
             }
 
-            var domainIps = await aTask;
-            foreach (var ip in domainIps)
-                phase3Tasks.Add(ThrottledDns(() => _dns.ResolvePtrAsync(ip)));
-
-            if (phase3Tasks.Count > 0)
-                await Task.WhenAll(phase3Tasks);
+            await Task.WhenAll(allTasks);
         }
         catch
         {
