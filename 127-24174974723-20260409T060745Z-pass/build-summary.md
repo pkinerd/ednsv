@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #75 (attempt 1) |
-| **Run ID** | 23926433665 |
+| **Run** | #127 (attempt 1) |
+| **Run ID** | 24174974723 |
 | **Result** | pass |
-| **Commit** | 6a5f5776b019a4f493a64080740a1d374b59c3ea |
-| **Ref** | refs/pull/4/merge |
+| **Commit** | f9461c772289b74ada40dc576f6e41f62af9e816 |
+| **Ref** | refs/pull/6/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
+| **PR** | #6: Add DKIM selector masking to TraceMasker |
+| **Branch** | claude/add-dkim-selector-masking-d94ed |
 
 ## Artifacts
 ```
@@ -19,6 +19,7 @@ test-reports/cnn.com.json
 test-reports/example.com-verbose.txt
 test-reports/example.com.json
 test-reports/gmail.com-cold.txt
+test-reports/gmail.com-recheck.txt
 test-reports/gmail.com-verbose.txt
 test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
@@ -26,6 +27,7 @@ test-reports/google.com-verbose.txt
 test-reports/google.com.json
 test-reports/integration-cache/dns-queries.json
 test-reports/integration-cache/dns-server-queries.json
+test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
 test-reports/integration-cache/port-probes.json
