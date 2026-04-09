@@ -25,8 +25,9 @@ public class DmarcRecordCheck : ICheck
 
             if (!dmarcRecords.Any())
             {
-                if (dmarcResponse.HasError)
+                if (dmarcResponse.HasError && !CheckContext.IsNxDomain(dmarcResponse))
                 {
+                    // Transient failure (SERVFAIL/timeout) — uncertain
                     ctx.DmarcLookupFailed = true;
                     result.Severity = CheckSeverity.Warning;
                     result.Summary = "Could not query DMARC record — status unknown";
@@ -34,6 +35,7 @@ public class DmarcRecordCheck : ICheck
                 }
                 else
                 {
+                    // Either no error (record simply missing) or NXDOMAIN (domain doesn't exist)
                     result.Severity = CheckSeverity.Error;
                     result.Summary = "No DMARC record found";
                     result.Errors.Add("No DMARC record at _dmarc." + domain + " — required by Gmail and Yahoo for bulk senders since Feb 2024");

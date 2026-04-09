@@ -76,7 +76,8 @@ public class AuthoritativeNsCheck : ICheck
             var nsRecords = nsResponse.Answers.NsRecords().ToList();
             if (!nsRecords.Any())
             {
-                if (nsResponse.HasError)
+                // Only set NsLookupFailed for transient errors, not NXDOMAIN
+                if (nsResponse.HasError && !CheckContext.IsNxDomain(nsResponse))
                     ctx.NsLookupFailed = true;
 
                 // Try parent domain

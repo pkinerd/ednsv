@@ -40,8 +40,9 @@ public class SpfRecordCheck : ICheck
 
             if (spfRecords.Count == 0)
             {
-                if (txtResponse.HasError)
+                if (txtResponse.HasError && !CheckContext.IsNxDomain(txtResponse))
                 {
+                    // Transient failure (SERVFAIL/timeout) — uncertain, may resolve later
                     ctx.SpfLookupFailed = true;
                     result.Severity = CheckSeverity.Warning;
                     result.Summary = "Could not query TXT records — SPF status unknown";
@@ -49,6 +50,8 @@ public class SpfRecordCheck : ICheck
                 }
                 else
                 {
+                    // Either no error (record simply missing) or NXDOMAIN (domain doesn't exist)
+                    // Both are definitive: no SPF record exists for this domain
                     result.Severity = CheckSeverity.Error;
                     result.Summary = "No SPF record found";
                     result.Errors.Add("No SPF record — any server can claim to send email for this domain. Gmail, Outlook, and Yahoo may reject or junk mail without SPF");

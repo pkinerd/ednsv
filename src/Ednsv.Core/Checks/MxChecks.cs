@@ -17,7 +17,11 @@ public class MxRecordsCheck : ICheck
         try
         {
             var mxResponse = await ctx.Dns.QueryAsync(domain, QueryType.MX);
-            if (mxResponse.HasError && !mxResponse.Answers.MxRecords().Any())
+            // Only set MxLookupFailed for transient errors (SERVFAIL/timeout).
+            // NXDOMAIN is definitive — the domain doesn't exist, so downstream
+            // checks should report their own Errors, not uncertain Warnings.
+            if (mxResponse.HasError && !mxResponse.Answers.MxRecords().Any()
+                && !CheckContext.IsNxDomain(mxResponse))
                 ctx.MxLookupFailed = true;
             var mxRecords = mxResponse.Answers.MxRecords().OrderBy(m => m.Preference).ToList();
             if (mxRecords.Any())
