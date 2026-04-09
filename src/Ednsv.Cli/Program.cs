@@ -492,18 +492,6 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     {
         var domain = domains[i];
 
-        // --recheck: clear stale cached probes for domains with previous issues
-        if (recheckSeverity != null && previousResults != null &&
-            previousResults.TryGetValue(domain.ToLowerInvariant(), out var prevResult))
-        {
-            var deps = RecheckHelper.GetDependenciesForIssues(prevResult, recheckSeverity.Value);
-            if (deps != RecheckHelper.CacheDep.None)
-            {
-                RecheckHelper.ClearImportedEntriesForDomain(domain, deps, dns, smtp, http);
-                AnsiConsole.MarkupLine($"[dim]Recheck: cleared stale cache for {Markup.Escape(domain)} ({deps})[/]");
-            }
-        }
-
         if (i > 0)
         {
             AnsiConsole.WriteLine();
@@ -527,6 +515,18 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var validator = new DomainValidator(dns, smtp, http);
         if (masker != null) validator.TraceMask = masker;
         if (trace) validator.Trace = msg => Console.Error.WriteLine(msg);
+
+        // --recheck: bypass cache for domains with previous issues
+        if (recheckSeverity != null && previousResults != null &&
+            previousResults.TryGetValue(domain.ToLowerInvariant(), out var prevResult))
+        {
+            var deps = RecheckHelper.GetDependenciesForIssues(prevResult, recheckSeverity.Value);
+            if (deps != RecheckHelper.CacheDep.None)
+            {
+                validator.RecheckDeps = deps;
+                AnsiConsole.MarkupLine($"[dim]Recheck: bypassing cache for {Markup.Escape(domain)} ({deps})[/]");
+            }
+        }
         CheckCategory? currentCategory = null;
         var shownDescriptions = new HashSet<string>();
         var showingRunningLine = false;
@@ -784,9 +784,9 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
             var deps = RecheckHelper.GetDependenciesForIssues(prevResult2, recheckSeverity.Value);
             if (deps != RecheckHelper.CacheDep.None)
             {
-                RecheckHelper.ClearImportedEntriesForDomain(domain, deps, dns, smtp, http);
+                validator.RecheckDeps = deps;
                 if (showProgress)
-                    AnsiConsole.MarkupLine($"[dim]Recheck: cleared stale cache for {Markup.Escape(domain)} ({deps})[/]");
+                    AnsiConsole.MarkupLine($"[dim]Recheck: bypassing cache for {Markup.Escape(domain)} ({deps})[/]");
             }
         }
 
@@ -1015,8 +1015,8 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
             var deps = RecheckHelper.GetDependenciesForIssues(prevResult3, recheckSeverity.Value);
             if (deps != RecheckHelper.CacheDep.None)
             {
-                RecheckHelper.ClearImportedEntriesForDomain(domain, deps, dns, smtp, http);
-                AnsiConsole.MarkupLine($"[dim]Recheck: cleared stale cache for {Markup.Escape(domain)} ({deps})[/]");
+                validator.RecheckDeps = deps;
+                AnsiConsole.MarkupLine($"[dim]Recheck: bypassing cache for {Markup.Escape(domain)} ({deps})[/]");
             }
         }
 

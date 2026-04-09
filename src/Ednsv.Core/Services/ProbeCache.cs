@@ -26,8 +26,6 @@ public class ProbeCache<TValue> where TValue : class
     private readonly TimeSpan? _ttl;
     // Write-through log for disk export — never read during cache lookups
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
-    // Track which keys were imported from disk (for CLI recheck importedOnly mode)
-    private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
     // In-flight query deduplication — concurrent callers for the same key share one Task.
     // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
     // factory on multiple threads, only one Lazy is stored and only its .Value (which
@@ -151,11 +149,10 @@ public class ProbeCache<TValue> where TValue : class
         _cache.Set(key, value, _negativeTtl);
     }
 
-    /// <summary>Import entries from disk (marks them as imported for CLI recheck).</summary>
+    /// <summary>Import entries from disk into the cache.</summary>
     public void Import(string key, TValue value)
     {
         Set(key, value);
-        _importedKeys.TryAdd(key, true);
     }
 
     /// <summary>Export all entries that are still alive in MemoryCache.</summary>
@@ -171,17 +168,15 @@ public class ProbeCache<TValue> where TValue : class
         return result;
     }
 
-    /// <summary>Remove entries matching a predicate. importedOnly=true only removes disk-imported entries.</summary>
-    public void Remove(Func<string, bool> predicate, bool importedOnly = true)
+    /// <summary>Remove entries matching a predicate.</summary>
+    public void Remove(Func<string, bool> predicate)
     {
-        var keys = importedOnly ? _importedKeys.Keys : (ICollection<string>)_exportLog.Keys;
-        foreach (var key in keys)
+        foreach (var key in _exportLog.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
                 _exportLog.TryRemove(key, out _);
-                _importedKeys.TryRemove(key, out _);
             }
         }
     }
@@ -198,7 +193,6 @@ public class ProbeCacheValue<TValue> where TValue : struct
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
-    private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
     /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
@@ -295,7 +289,6 @@ public class ProbeCacheValue<TValue> where TValue : struct
     public void Import(string key, TValue value)
     {
         Set(key, value);
-        _importedKeys.TryAdd(key, true);
     }
 
     public Dictionary<string, TValue> Export()
@@ -309,16 +302,14 @@ public class ProbeCacheValue<TValue> where TValue : struct
         return result;
     }
 
-    public void Remove(Func<string, bool> predicate, bool importedOnly = true)
+    public void Remove(Func<string, bool> predicate)
     {
-        var keys = importedOnly ? _importedKeys.Keys : (ICollection<string>)_exportLog.Keys;
-        foreach (var key in keys)
+        foreach (var key in _exportLog.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
                 _exportLog.TryRemove(key, out _);
-                _importedKeys.TryRemove(key, out _);
             }
         }
     }

@@ -158,15 +158,11 @@ public class HttpProbeService
             _getWithHeadersCache.Import(kvp.Key, new GetWithHeadersResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType });
     }
 
-    // ── Recheck support ─────────────────────────────────────────────────
+    // ── Cache entry removal ───────────────────────────────────────────────
 
-    public void RemoveGetEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _getCache.Remove(predicate, importedOnly);
+    public void RemoveGetEntries(Func<string, bool> predicate)
+        => _getCache.Remove(predicate);
 
-    public void RemoveGetWithHeadersEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _getWithHeadersCache.Remove(predicate, importedOnly);
-
-    // Backward-compatible aliases for CLI code
-    public void RemoveImportedGetEntries(Func<string, bool> predicate) => RemoveGetEntries(predicate, importedOnly: true);
-    public void RemoveImportedGetWithHeadersEntries(Func<string, bool> predicate) => RemoveGetWithHeadersEntries(predicate, importedOnly: true);
+    public void RemoveGetWithHeadersEntries(Func<string, bool> predicate)
+        => _getWithHeadersCache.Remove(predicate);
 }

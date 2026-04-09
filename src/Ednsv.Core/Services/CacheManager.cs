@@ -84,23 +84,15 @@ public sealed class CacheManager : IAsyncDisposable
     /// <summary>
     /// Determines which cache types need rechecking for a domain based on previous
     /// issues at or above the specified severity. Returns the CacheDep flags.
-    /// When clearEntries is true (CLI), also clears matching cache entries.
-    /// When false (web API), returns flags only — caller sets them on CheckContext
-    /// so services bypass MemoryCache without affecting other concurrent users.
+    /// Caller sets these on DomainValidator.RecheckDeps so that ProbeCache
+    /// bypasses MemoryCache via AsyncLocal without affecting other concurrent users.
     /// </summary>
-    public RecheckHelper.CacheDep GetRecheckDeps(string domain, CheckSeverity minSeverity, bool clearEntries = false)
+    public RecheckHelper.CacheDep GetRecheckDeps(string domain, CheckSeverity minSeverity)
     {
         if (!_previousResults.TryGetValue(domain.ToLowerInvariant(), out var summary))
             return RecheckHelper.CacheDep.None;
 
-        var deps = RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
-        if (deps == RecheckHelper.CacheDep.None)
-            return RecheckHelper.CacheDep.None;
-
-        if (clearEntries)
-            RecheckHelper.ClearEntriesForDomain(domain, deps, _dns, _smtp, _http, importedOnly: true);
-
-        return deps;
+        return RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
     }
 
     /// <summary>

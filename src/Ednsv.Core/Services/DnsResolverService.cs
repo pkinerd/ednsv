@@ -678,51 +678,38 @@ public class DnsResolverService
         }
     }
 
-    // ── Recheck support: remove entries matching a predicate ──────────────
+    // ── Cache entry removal ────────────────────────────────────────────────
 
-    /// <summary>
-    /// Removes DNS query cache entries matching the predicate.
-    /// When importedOnly is true, only entries loaded from disk are affected;
-    /// when false, all matching entries are removed (for long-lived processes).
-    /// </summary>
-    public void RemoveQueryEntries(Func<string, QueryType, bool> predicate, bool importedOnly = true)
+    public void RemoveQueryEntries(Func<string, QueryType, bool> predicate)
     {
         _queryCache.Remove(key =>
         {
-            // Key format: "q:domain:type"
             if (!key.StartsWith("q:")) return false;
             var rest = key[2..];
             var sep = rest.LastIndexOf(':');
             if (sep < 0) return false;
             var domain = rest[..sep];
             return Enum.TryParse<QueryType>(rest[(sep + 1)..], out var type) && predicate(domain, type);
-        }, importedOnly);
+        });
     }
 
-    public void RemoveServerQueryEntries(Func<string, string, QueryType, bool> predicate, bool importedOnly = true)
+    public void RemoveServerQueryEntries(Func<string, string, QueryType, bool> predicate)
     {
         _serverQueryCache.Remove(key =>
         {
-            // Key format: "sq:server:domain:type"
             if (!key.StartsWith("sq:")) return false;
             var parts = key[3..].Split(':', 3);
             return parts.Length == 3 && Enum.TryParse<QueryType>(parts[2], out var type) && predicate(parts[0], parts[1], type);
-        }, importedOnly);
+        });
     }
 
-    public void RemovePtrEntries(Func<string, bool> predicate, bool importedOnly = true)
+    public void RemovePtrEntries(Func<string, bool> predicate)
     {
         _ptrCache.Remove(key =>
         {
-            // Key format: "ptr:ip"
             return key.StartsWith("ptr:") && predicate(key[4..]);
-        }, importedOnly);
+        });
     }
-
-    // Backward-compatible aliases for CLI code
-    public void RemoveImportedQueryEntries(Func<string, QueryType, bool> predicate) => RemoveQueryEntries(predicate, importedOnly: true);
-    public void RemoveImportedServerQueryEntries(Func<string, string, QueryType, bool> predicate) => RemoveServerQueryEntries(predicate, importedOnly: true);
-    public void RemoveImportedPtrEntries(Func<string, bool> predicate) => RemovePtrEntries(predicate, importedOnly: true);
 
     /// <summary>
     /// Returns MX hostnames from the query cache for a domain, if available.

@@ -557,33 +557,27 @@ public class SmtpProbeService
             _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
     }
 
-    // ── Recheck support ─────────────────────────────────────────────────
+    // ── Cache entry removal ───────────────────────────────────────────────
 
-    public void RemoveProbeEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]), importedOnly);
+    public void RemoveProbeEntries(Func<string, bool> predicate)
+        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]));
 
-    public void RemovePortEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _portCache.Remove(predicate, importedOnly);
+    public void RemovePortEntries(Func<string, bool> predicate)
+        => _portCache.Remove(predicate);
 
-    public void RemoveRcptEntries(Func<string, bool> predicate, bool importedOnly = true)
+    public void RemoveRcptEntries(Func<string, bool> predicate)
     {
         var toRemove = _rcptCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _rcptCache.TryRemove(key, out _);
     }
 
-    public void RemoveRelayEntries(Func<string, bool> predicate, bool importedOnly = true)
+    public void RemoveRelayEntries(Func<string, bool> predicate)
     {
         var toRemove = _relayCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _relayCache.TryRemove(key, out _);
     }
-
-    // Backward-compatible aliases for CLI code
-    public void RemoveImportedProbeEntries(Func<string, bool> predicate) => RemoveProbeEntries(predicate, importedOnly: true);
-    public void RemoveImportedPortEntries(Func<string, bool> predicate) => RemovePortEntries(predicate, importedOnly: true);
-    public void RemoveImportedRcptEntries(Func<string, bool> predicate) => RemoveRcptEntries(predicate, importedOnly: true);
-    public void RemoveImportedRelayEntries(Func<string, bool> predicate) => RemoveRelayEntries(predicate, importedOnly: true);
 
     public Dictionary<string, RelayCacheEntry> ExportRelayCache()
     {
