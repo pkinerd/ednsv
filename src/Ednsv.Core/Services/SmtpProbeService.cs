@@ -79,28 +79,25 @@ public class SmtpProbeService
             Trace?.Invoke($"[SMTP] PROBE START {host}:{port}");
             var sw = Trace != null ? Stopwatch.StartNew() : null;
             SmtpProbeResult result = null!;
+            SmtpProbeResult? bestResult = null;
             for (int attempt = 0; attempt < MaxRetries; attempt++)
             {
                 result = await ProbeSmtpAttemptAsync(host, port);
-                if (result.Connected && result.Error == null) break;
-                if (result.Connected && result.SupportsStartTls && result.CertSubject != null) break;
-                Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? "not connected"})");
+                // Track the best result across retries — prefer TLS-successful probes
+                if (bestResult == null || (result.Connected && result.SupportsStartTls && result.CertSubject != null))
+                    bestResult = result;
+                // Stop if we got a complete successful probe
+                if (result.Connected && result.Error == null && (!result.SupportsStartTls || result.CertSubject != null))
+                    break;
+                Trace?.Invoke($"[SMTP] PROBE RETRY {host}:{port} attempt {attempt + 1}/{MaxRetries} ({result.Error ?? (result.Connected ? "TLS incomplete" : "not connected")})");
             }
+            // Use the best result (prefer one with TLS cert if any attempt succeeded)
+            result = bestResult!;
             Interlocked.Increment(ref _probesCompleted);
             if (Trace != null && sw != null)
                 Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
             return result;
-        }, RecheckHelper.CacheDep.Smtp,
-        // Only cache definitive results — not transient TLS failures
-        shouldCache: result =>
-        {
-            // Cache: successful probe (connected, no error)
-            if (result.Connected && result.Error == null) return true;
-            // Cache: completely unreachable (server is down)
-            if (!result.Connected) return true;
-            // Don't cache: connected but TLS failed (transient — retry next time)
-            return false;
-        });
+        }, RecheckHelper.CacheDep.Smtp);
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
