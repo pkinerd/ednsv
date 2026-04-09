@@ -109,6 +109,10 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
+    // Short TTL for results rejected by shouldCache — avoids repeated network
+    // calls within a single validation without persisting errors to disk.
+    private static readonly TimeSpan _negativeTtl = TimeSpan.FromSeconds(60);
+
     private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
     {
         try
@@ -116,6 +120,8 @@ public class ProbeCache<TValue> where TValue : class
             var result = await factory();
             if (shouldCache == null || shouldCache(result))
                 Set(key, result);
+            else
+                SetNegative(key, result); // short-lived, not exported to disk
             return result;
         }
         finally
@@ -133,6 +139,16 @@ public class ProbeCache<TValue> where TValue : class
             _cache.Set(key, value);
 
         _exportLog[key] = value;
+    }
+
+    /// <summary>
+    /// Store a transient/error result in MemoryCache with a short TTL.
+    /// NOT added to _exportLog — never persisted to disk.
+    /// Prevents repeated network calls within a single validation run.
+    /// </summary>
+    private void SetNegative(string key, TValue value)
+    {
+        _cache.Set(key, value, _negativeTtl);
     }
 
     /// <summary>Import entries from disk (marks them as imported for CLI recheck).</summary>
@@ -246,6 +262,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
         }
     }
 
+    private static readonly TimeSpan _negativeTtl = TimeSpan.FromSeconds(60);
+
     private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
     {
         try
@@ -253,6 +271,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
             var result = await factory();
             if (shouldCache == null || shouldCache(result))
                 Set(key, result);
+            else
+                _cache.Set(key, new Box { Value = result }, _negativeTtl); // short-lived, not exported
             return result;
         }
         finally
