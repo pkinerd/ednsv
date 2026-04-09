@@ -2,35 +2,30 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #78 (attempt 1) |
-| **Run ID** | 23945207101 |
-| **Result** | pass |
-| **Commit** | 7f8bbe7156591cb1fe521c76c6e1f6272e0e2054 |
-| **Ref** | refs/pull/4/merge |
+| **Run** | #130 (attempt 1) |
+| **Run ID** | 24183933743 |
+| **Result** | fail |
+| **Commit** | 46beba8b25513c7e1541c503cd4ddf2ac1d58a68 |
+| **Ref** | refs/pull/7/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
+| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
+| **Branch** | claude/code-safety-review-lq36h |
 
 ## Artifacts
 ```
 test-reports/cnn.com-verbose.txt
-test-reports/cnn.com.json
 test-reports/example.com-verbose.txt
-test-reports/example.com.json
 test-reports/gmail.com-cold.txt
 test-reports/gmail.com-recheck.txt
 test-reports/gmail.com-verbose.txt
 test-reports/gmail.com-warm.txt
-test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
-test-reports/google.com.json
 test-reports/integration-cache/dns-queries.json
 test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
