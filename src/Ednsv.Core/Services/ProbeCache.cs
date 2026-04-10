@@ -66,12 +66,13 @@ public class ProbeCache<TValue> where TValue : class
     /// Get a cached value or create it using the factory. Only one factory call
     /// runs per key — concurrent callers await the same Task. On failure, the
     /// in-flight entry is removed so the next caller retries.
-    /// The optional shouldCache predicate controls whether the result is stored;
-    /// if it returns false, the result is returned but not cached (next caller retries).
+    /// The optional shouldPersist predicate controls disk persistence: when false,
+    /// the result is still cached in MemoryCache (for within-run dedup) but not
+    /// added to the export log (so it won't be saved to disk).
     /// </summary>
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
-        Func<TValue, bool>? shouldCache = null,
+        Func<TValue, bool>? shouldPersist = null,
         Action? onHit = null)
     {
         // 1. Check cache (respects recheck bypass)
@@ -89,7 +90,7 @@ public class ProbeCache<TValue> where TValue : class
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist));
         });
 
         if (!isNewEntry)
@@ -107,19 +108,17 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    // Short TTL for results rejected by shouldCache — avoids repeated network
-    // calls within a single validation without persisting errors to disk.
-    private static readonly TimeSpan _negativeTtl = TimeSpan.FromSeconds(60);
-
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist)
     {
         try
         {
             var result = await factory();
-            if (shouldCache == null || shouldCache(result))
+            // Always cache in MemoryCache (avoids repeated network calls within a run).
+            // Only add to _exportLog when shouldPersist approves (controls disk persistence).
+            if (shouldPersist == null || shouldPersist(result))
                 Set(key, result);
             else
-                SetNegative(key, result); // short-lived, not exported to disk
+                SetMemoryOnly(key, result);
             return result;
         }
         finally
@@ -128,7 +127,7 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a value in the cache and the export log.</summary>
+    /// <summary>Store a value in MemoryCache and the disk export log.</summary>
     public void Set(string key, TValue value)
     {
         if (_ttl.HasValue)
@@ -140,13 +139,16 @@ public class ProbeCache<TValue> where TValue : class
     }
 
     /// <summary>
-    /// Store a transient/error result in MemoryCache with a short TTL.
-    /// NOT added to _exportLog — never persisted to disk.
-    /// Prevents repeated network calls within a single validation run.
+    /// Store a value in MemoryCache only — NOT added to the disk export log.
+    /// Used for error/timeout results that should be available within the current
+    /// process (avoiding repeated network calls) but not persisted across restarts.
     /// </summary>
-    private void SetNegative(string key, TValue value)
+    private void SetMemoryOnly(string key, TValue value)
     {
-        _cache.Set(key, value, _negativeTtl);
+        if (_ttl.HasValue)
+            _cache.Set(key, value, _ttl.Value);
+        else
+            _cache.Set(key, value);
     }
 
     /// <summary>Import entries from disk into the cache.</summary>
@@ -227,7 +229,7 @@ public class ProbeCacheValue<TValue> where TValue : struct
 
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
-        Func<TValue, bool>? shouldCache = null)
+        Func<TValue, bool>? shouldPersist = null)
     {
         if (TryGet(key, out var cached, recheckFlag))
         {
@@ -239,7 +241,7 @@ public class ProbeCacheValue<TValue> where TValue : struct
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist));
         });
 
         if (!isNewEntry)
@@ -256,17 +258,15 @@ public class ProbeCacheValue<TValue> where TValue : struct
         }
     }
 
-    private static readonly TimeSpan _negativeTtl = TimeSpan.FromSeconds(60);
-
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist)
     {
         try
         {
             var result = await factory();
-            if (shouldCache == null || shouldCache(result))
+            if (shouldPersist == null || shouldPersist(result))
                 Set(key, result);
             else
-                _cache.Set(key, new Box { Value = result }, _negativeTtl); // short-lived, not exported
+                SetMemoryOnly(key, result);
             return result;
         }
         finally
@@ -284,6 +284,15 @@ public class ProbeCacheValue<TValue> where TValue : struct
             _cache.Set(key, box);
 
         _exportLog[key] = value;
+    }
+
+    private void SetMemoryOnly(string key, TValue value)
+    {
+        var box = new Box { Value = value };
+        if (_ttl.HasValue)
+            _cache.Set(key, box, _ttl.Value);
+        else
+            _cache.Set(key, box);
     }
 
     public void Import(string key, TValue value)

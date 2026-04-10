@@ -278,7 +278,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldCache: response => response != EmptyResponse.Instance,
+        shouldPersist: response => response != EmptyResponse.Instance,
         onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
@@ -306,7 +306,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldCache: response => response != EmptyResponse.Instance,
+        shouldPersist: response => response != EmptyResponse.Instance,
         onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
@@ -391,7 +391,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.ServerDns,
-        shouldCache: response => response != EmptyResponse.Instance,
+        shouldPersist: response => response != EmptyResponse.Instance,
         onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 
@@ -428,7 +428,7 @@ public class DnsResolverService
                 return new List<string>();
             }
         }, RecheckHelper.CacheDep.Ptr,
-        shouldCache: _ => succeeded,
+        shouldPersist: _ => succeeded,
         onHit: () => Interlocked.Increment(ref _cacheHits));
     }
 

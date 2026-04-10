@@ -110,7 +110,7 @@ public class SmtpProbeService
         }, RecheckHelper.CacheDep.Smtp,
         // Cache successful probes and definitive failures (connection refused).
         // Only skip caching when all attempts timed out (transient).
-        shouldCache: result => result.Connected || result.Error != "Connection timed out");
+        shouldPersist: result => result.Connected || result.Error != "Connection timed out");
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
@@ -277,7 +277,7 @@ public class SmtpProbeService
         }, RecheckHelper.CacheDep.Port,
         // Cache open ports and definitive refusals. Only skip caching
         // when all attempts timed out (transient network issue).
-        shouldCache: result => result || !allTimedOut);
+        shouldPersist: result => result || !allTimedOut);
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)

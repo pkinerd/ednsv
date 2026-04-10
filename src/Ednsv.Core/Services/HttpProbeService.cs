@@ -87,7 +87,7 @@ public class HttpProbeService
                 Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {retries} attempts");
             return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
         }, RecheckHelper.CacheDep.Http,
-        shouldCache: result => result.Success || result.StatusCode > 0);
+        shouldPersist: result => result.Success || result.StatusCode > 0);
         return result.ToTuple();
     }
 
@@ -124,7 +124,7 @@ public class HttpProbeService
                 Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {MaxRetries} attempts");
             return new GetWithHeadersResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode, ContentType = lastResult.contentType };
         }, RecheckHelper.CacheDep.Http,
-        shouldCache: result => result.Success || result.StatusCode > 0);
+        shouldPersist: result => result.Success || result.StatusCode > 0);
         return result.ToTuple();
     }
 
