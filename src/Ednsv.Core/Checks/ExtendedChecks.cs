@@ -849,6 +849,25 @@ public class SubdomainSpfGapCheck : ICheck
             var missingSpf = new List<string>();
             var hasSpf = new List<string>();
 
+            // Check if DMARC subdomain policy already protects subdomains.
+            // sp=reject means unauthenticated subdomain mail is rejected regardless of SPF.
+            bool dmarcSpReject = false;
+            if (ctx.DmarcRecord != null)
+            {
+                var spMatch = System.Text.RegularExpressions.Regex.Match(
+                    ctx.DmarcRecord, @";\s*sp\s*=\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                dmarcSpReject = spMatch.Success &&
+                    spMatch.Groups[1].Value.Equals("reject", StringComparison.OrdinalIgnoreCase);
+                // If no sp= tag, DMARC inherits from p= (RFC 7489 §6.3)
+                if (!spMatch.Success)
+                {
+                    var pMatch = System.Text.RegularExpressions.Regex.Match(
+                        ctx.DmarcRecord, @";\s*p\s*=\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    dmarcSpReject = pMatch.Success &&
+                        pMatch.Groups[1].Value.Equals("reject", StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
             // Rate limiting is handled globally by DnsResolverService.
             var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
             {
@@ -873,10 +892,15 @@ public class SubdomainSpfGapCheck : ICheck
                     hasSpf.Add(sub);
                     result.Details.Add($"{sub}.{domain}: Has SPF record");
                 }
+                else if (dmarcSpReject)
+                {
+                    // DMARC sp=reject protects this subdomain — info, not warning
+                    result.Details.Add($"{sub}.{domain}: No SPF, but protected by DMARC sp=reject");
+                }
                 else
                 {
                     missingSpf.Add(sub);
-                    result.Warnings.Add($"{sub}.{domain}: Exists but no SPF — spoofable if DMARC sp≠reject");
+                    result.Warnings.Add($"{sub}.{domain}: Exists but no SPF — spoofable (DMARC sp≠reject)");
                 }
             }
 
