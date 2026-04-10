@@ -150,7 +150,10 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
             queries = (job.Dns.CacheHits - job.DnsHitsBaseline) + (job.Dns.CacheMisses - job.DnsMissesBaseline),
             cacheHits = job.Dns.CacheHits - job.DnsHitsBaseline,
             sent = job.Dns.CacheMisses - job.DnsMissesBaseline,
-            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline
+            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline,
+            totalCacheHits = job.Dns.CacheHits,
+            totalCacheMisses = job.Dns.CacheMisses,
+            totalCacheSize = job.Dns.CacheSize
         } : null,
         smtp = job.Smtp != null ? new
         {
@@ -160,6 +163,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
             portsDone = job.Smtp.PortsCompleted - job.PortsCompletedBaseline
         } : null,
         elapsed = (DateTime.UtcNow - job.StartedAt).TotalSeconds,
+        duration = job.Report?.Duration.TotalSeconds,
         report = job.Report,
         error = job.Error
     });
