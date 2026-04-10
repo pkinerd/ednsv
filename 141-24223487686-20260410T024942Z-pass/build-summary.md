@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #90 (attempt 1) |
-| **Run ID** | 24067736942 |
+| **Run** | #141 (attempt 1) |
+| **Run ID** | 24223487686 |
 | **Result** | pass |
-| **Commit** | 13bc17944e83f49e108cc19b056ac584e60e428f |
-| **Ref** | refs/pull/4/merge |
+| **Commit** | fbebf2e10afb64528e1459da5a0d4f4a52784106 |
+| **Ref** | refs/pull/7/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
+| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
+| **Branch** | claude/code-safety-review-lq36h |
 
 ## Artifacts
 ```
@@ -25,7 +25,6 @@ test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
 test-reports/google.com.json
-test-reports/integration-cache/axfr-results.json
 test-reports/integration-cache/dns-queries.json
 test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
