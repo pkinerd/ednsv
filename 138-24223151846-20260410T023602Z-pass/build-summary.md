@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #88 (attempt 1) |
-| **Run ID** | 24067359571 |
+| **Run** | #138 (attempt 1) |
+| **Run ID** | 24223151846 |
 | **Result** | pass |
-| **Commit** | b2288c182379e59b96993dfe7bb334162d3e92b2 |
-| **Ref** | refs/pull/4/merge |
+| **Commit** | a01a7fb15f331027cc5741f6eac1446a54a8f75e |
+| **Ref** | refs/pull/7/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
+| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
+| **Branch** | claude/code-safety-review-lq36h |
 
 ## Artifacts
 ```
