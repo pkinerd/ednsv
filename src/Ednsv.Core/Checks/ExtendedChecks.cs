@@ -852,6 +852,7 @@ public class SubdomainSpfGapCheck : ICheck
             // Check if DMARC subdomain policy already protects subdomains.
             // sp=reject means unauthenticated subdomain mail is rejected regardless of SPF.
             bool dmarcSpReject = false;
+            bool dmarcSpInherited = false; // true when sp= absent, inherited from p=
             if (ctx.DmarcRecord != null)
             {
                 var spMatch = System.Text.RegularExpressions.Regex.Match(
@@ -865,8 +866,10 @@ public class SubdomainSpfGapCheck : ICheck
                         ctx.DmarcRecord, @";\s*p\s*=\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                     dmarcSpReject = pMatch.Success &&
                         pMatch.Groups[1].Value.Equals("reject", StringComparison.OrdinalIgnoreCase);
+                    if (dmarcSpReject) dmarcSpInherited = true;
                 }
             }
+            var dmarcPolicyDesc = dmarcSpInherited ? "DMARC p=reject (inherited by subdomains)" : "DMARC sp=reject";
 
             // Rate limiting is handled globally by DnsResolverService.
             var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
@@ -896,7 +899,7 @@ public class SubdomainSpfGapCheck : ICheck
                 else if (dmarcSpReject)
                 {
                     dmarcProtected++;
-                    result.Details.Add($"{sub}.{domain}: No SPF, but protected by DMARC sp=reject");
+                    result.Details.Add($"{sub}.{domain}: No SPF, but protected by {dmarcPolicyDesc}");
                 }
                 else
                 {
@@ -914,9 +917,9 @@ public class SubdomainSpfGapCheck : ICheck
             {
                 result.Severity = CheckSeverity.Pass;
                 if (dmarcProtected > 0 && !hasSpf.Any())
-                    result.Summary = $"{dmarcProtected} active mail subdomain(s) protected by DMARC sp=reject";
+                    result.Summary = $"{dmarcProtected} active mail subdomain(s) protected by {dmarcPolicyDesc}";
                 else if (dmarcProtected > 0)
-                    result.Summary = $"All active mail subdomains covered (SPF: {hasSpf.Count}, DMARC-protected: {dmarcProtected})";
+                    result.Summary = $"All active mail subdomains covered (SPF: {hasSpf.Count}, {dmarcPolicyDesc}: {dmarcProtected})";
                 else
                     result.Summary = "All active mail subdomains have SPF records";
             }
