@@ -183,7 +183,15 @@ function pollJob(jobId, domain) {
         pollTimer = null;
         btn.disabled = false;
         if (data.status === 'completed') {
-          statusEl.textContent = `Completed ${domain} in ${fmtDuration(data.report.duration)}`;
+          const d = data.dns;
+          const dur = fmtDuration(data.report.duration);
+          const cacheParts = [];
+          if (d) {
+            cacheParts.push(`${d.cacheHits} hits`);
+            cacheParts.push(`${d.sent} queries`);
+          }
+          const cacheInfo = cacheParts.length ? ` (${cacheParts.join(', ')})` : '';
+          statusEl.textContent = `Completed ${domain} in ${dur}${cacheInfo}`;
           renderReport(data.report, domain);
         } else {
           statusEl.textContent = `Failed: ${data.error || 'Unknown error'}`;
