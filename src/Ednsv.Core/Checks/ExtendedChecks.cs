@@ -884,6 +884,7 @@ public class SubdomainSpfGapCheck : ICheck
 
             var results = await Task.WhenAll(tasks);
 
+            int dmarcProtected = 0;
             foreach (var (sub, exists, spf) in results)
             {
                 if (!exists) continue;
@@ -894,7 +895,7 @@ public class SubdomainSpfGapCheck : ICheck
                 }
                 else if (dmarcSpReject)
                 {
-                    // DMARC sp=reject protects this subdomain — info, not warning
+                    dmarcProtected++;
                     result.Details.Add($"{sub}.{domain}: No SPF, but protected by DMARC sp=reject");
                 }
                 else
@@ -909,10 +910,15 @@ public class SubdomainSpfGapCheck : ICheck
                 result.Severity = CheckSeverity.Warning;
                 result.Summary = $"{missingSpf.Count} active mail subdomain(s) missing SPF records";
             }
-            else if (hasSpf.Any())
+            else if (hasSpf.Any() || dmarcProtected > 0)
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "All active mail subdomains have SPF records";
+                if (dmarcProtected > 0 && !hasSpf.Any())
+                    result.Summary = $"{dmarcProtected} active mail subdomain(s) protected by DMARC sp=reject";
+                else if (dmarcProtected > 0)
+                    result.Summary = $"All active mail subdomains covered (SPF: {hasSpf.Count}, DMARC-protected: {dmarcProtected})";
+                else
+                    result.Summary = "All active mail subdomains have SPF records";
             }
             else
             {
