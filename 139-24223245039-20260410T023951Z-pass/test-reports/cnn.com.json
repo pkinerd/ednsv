@@ -1,34 +1,109 @@
 {
   "domain": "cnn.com",
-  "timestamp": "2026-04-07T06:22:17.9852532Z",
-  "duration": "00:00:51.6779928",
+  "timestamp": "2026-04-10T02:26:48.4981258Z",
+  "duration": "00:00:14.7930926",
   "results": [
-    {
-      "checkName": "Delegation Chain",
-      "category": 0,
-      "severity": 1,
-      "summary": "Delegation chain walked through 2 levels",
-      "details": [
-        "Zone [com] NS: l.gtld-servers.net, b.gtld-servers.net, h.gtld-servers.net, f.gtld-servers.net, j.gtld-servers.net, a.gtld-servers.net, e.gtld-servers.net, d.gtld-servers.net, g.gtld-servers.net, i.gtld-servers.net, c.gtld-servers.net, k.gtld-servers.net, m.gtld-servers.net",
-        "Zone [cnn.com] NS: ns-1242.awsdns-27.org, ns-1652.awsdns-14.co.uk, ns-587.awsdns-09.net, ns-378.awsdns-47.com"
-      ],
-      "warnings": [],
-      "errors": []
-    },
     {
       "checkName": "Authoritative NS",
       "category": 0,
       "severity": 1,
       "summary": "Found 4 authoritative nameservers",
       "details": [
-        "NS: ns-1242.awsdns-27.org -\u003E 205.251.196.218 (PTR: ns-1242.awsdns-27.org)",
-        "NS: ns-1242.awsdns-27.org -\u003E 2600:9000:5304:da00::1 (PTR: ns-1242.awsdns-27.org)",
         "NS: ns-1652.awsdns-14.co.uk -\u003E 205.251.198.116 (PTR: ns-1652.awsdns-14.co.uk)",
         "NS: ns-1652.awsdns-14.co.uk -\u003E 2600:9000:5306:7400::1 (PTR: ns-1652.awsdns-14.co.uk)",
         "NS: ns-587.awsdns-09.net -\u003E 205.251.194.75 (PTR: ns-587.awsdns-09.net)",
         "NS: ns-587.awsdns-09.net -\u003E 2600:9000:5302:4b00::1 (PTR: ns-587.awsdns-09.net)",
+        "NS: ns-1242.awsdns-27.org -\u003E 205.251.196.218 (PTR: ns-1242.awsdns-27.org)",
+        "NS: ns-1242.awsdns-27.org -\u003E 2600:9000:5304:da00::1 (PTR: ns-1242.awsdns-27.org)",
         "NS: ns-378.awsdns-47.com -\u003E 205.251.193.122 (PTR: ns-378.awsdns-47.com)",
         "NS: ns-378.awsdns-47.com -\u003E 2600:9000:5301:7a00::1 (PTR: ns-378.awsdns-47.com)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "A Records",
+      "category": 4,
+      "severity": 1,
+      "summary": "4 A record(s) found",
+      "details": [
+        "151.101.67.5 (TTL: 36s)",
+        "151.101.195.5 (TTL: 36s)",
+        "151.101.131.5 (TTL: 36s)",
+        "151.101.3.5 (TTL: 36s)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "AAAA Records",
+      "category": 5,
+      "severity": 1,
+      "summary": "4 AAAA record(s) found",
+      "details": [
+        "2a04:4e42::773 (TTL: 73s)",
+        "2a04:4e42:200::773 (TTL: 73s)",
+        "2a04:4e42:600::773 (TTL: 73s)",
+        "2a04:4e42:400::773 (TTL: 73s)"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "MX Records",
+      "category": 6,
+      "severity": 1,
+      "summary": "1 MX record(s) found",
+      "details": [
+        "Priority 10: cnn-com.mail.protection.outlook.com -\u003E 52.101.8.51, 52.101.41.22, 52.101.42.18, 52.101.40.1 IPv6: 2a01:111:f403:c902::5, 2a01:111:f403:f913::1, 2a01:111:f403:c922::, 2a01:111:f403:f901::",
+        "  52.101.8.51 PTR: mail-dm1pr04cu00203.inbound.protection.outlook.com",
+        "  52.101.41.22 PTR: mail-sj2pr05cu00406.inbound.protection.outlook.com",
+        "  52.101.42.18 PTR: mail-co1pr03cu00302.inbound.protection.outlook.com",
+        "  52.101.40.1 PTR: mail-cy4pr03cu00101.inbound.protection.outlook.com",
+        "  SMTP: Connected, STARTTLS: Yes"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "SPF Record",
+      "category": 7,
+      "severity": 1,
+      "summary": "SPF record found: ~all",
+      "details": [
+        "SPF: v=spf1 include:cnn.com._nspf.vali.email include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email include:mail.zendesk.com ~all",
+        "  Mechanism: include:cnn.com._nspf.vali.email",
+        "  Mechanism: include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email",
+        "  Mechanism: include:mail.zendesk.com",
+        "  Mechanism: ~all",
+        "  Policy: ~all",
+        "~all (softfail) is the recommended policy when used with DMARC enforcement"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "DMARC Record",
+      "category": 8,
+      "severity": 1,
+      "summary": "DMARC p=reject",
+      "details": [
+        "DMARC: v=DMARC1; p=reject; rua=mailto:dmarc_agg@vali.email; ruf=mailto:Njk3@ruf.vali.email",
+        "Policy (p): reject",
+        "Aggregate reports (rua): mailto:dmarc_agg@vali.email",
+        "Forensic reports (ruf): mailto:Njk3@ruf.vali.email"
+      ],
+      "warnings": [],
+      "errors": []
+    },
+    {
+      "checkName": "Delegation Chain",
+      "category": 0,
+      "severity": 1,
+      "summary": "Delegation chain walked through 2 levels",
+      "details": [
+        "Zone [com] NS: l.gtld-servers.net, d.gtld-servers.net, m.gtld-servers.net, k.gtld-servers.net, i.gtld-servers.net, b.gtld-servers.net, e.gtld-servers.net, g.gtld-servers.net, f.gtld-servers.net, c.gtld-servers.net, j.gtld-servers.net, a.gtld-servers.net, h.gtld-servers.net",
+        "Zone [cnn.com] NS: ns-1652.awsdns-14.co.uk, ns-587.awsdns-09.net, ns-1242.awsdns-27.org, ns-378.awsdns-47.com"
       ],
       "warnings": [],
       "errors": []
@@ -41,7 +116,7 @@
       "details": [
         "Parent and child NS sets are consistent",
         "Parent NS set: ns-587.awsdns-09.net, ns-378.awsdns-47.com, ns-1652.awsdns-14.co.uk, ns-1242.awsdns-27.org",
-        "Child NS set: ns-1242.awsdns-27.org, ns-1652.awsdns-14.co.uk, ns-587.awsdns-09.net, ns-378.awsdns-47.com"
+        "Child NS set: ns-1652.awsdns-14.co.uk, ns-587.awsdns-09.net, ns-1242.awsdns-27.org, ns-378.awsdns-47.com"
       ],
       "warnings": [],
       "errors": []
@@ -71,13 +146,13 @@
       "severity": 1,
       "summary": "All 4 nameservers agree on SOA serial 1",
       "details": [
-        "ns-1242.awsdns-27.org (205.251.196.218): Serial 1",
         "ns-1652.awsdns-14.co.uk (205.251.198.116): Serial 1",
         "ns-587.awsdns-09.net (205.251.194.75): Serial 1",
+        "ns-1242.awsdns-27.org (205.251.196.218): Serial 1",
         "ns-378.awsdns-47.com (205.251.193.122): Serial 1",
-        "ns-1242.awsdns-27.org (2600:9000:5304:da00::1): No SOA in response",
         "ns-1652.awsdns-14.co.uk (2600:9000:5306:7400::1): No SOA in response",
         "ns-587.awsdns-09.net (2600:9000:5302:4b00::1): No SOA in response",
+        "ns-1242.awsdns-27.org (2600:9000:5304:da00::1): No SOA in response",
         "ns-378.awsdns-47.com (2600:9000:5301:7a00::1): No SOA in response"
       ],
       "warnings": [],
@@ -100,10 +175,10 @@
       "severity": 1,
       "summary": "4 NS records found",
       "details": [
-        "NS: ns-1242.awsdns-27.org (TTL: 19531s)",
-        "NS: ns-1652.awsdns-14.co.uk (TTL: 19531s)",
-        "NS: ns-587.awsdns-09.net (TTL: 19531s)",
-        "NS: ns-378.awsdns-47.com (TTL: 19531s)"
+        "NS: ns-1652.awsdns-14.co.uk (TTL: 21599s)",
+        "NS: ns-587.awsdns-09.net (TTL: 21599s)",
+        "NS: ns-1242.awsdns-27.org (TTL: 21599s)",
+        "NS: ns-378.awsdns-47.com (TTL: 21599s)"
       ],
       "warnings": [],
       "errors": []
@@ -123,12 +198,12 @@
       "severity": 2,
       "summary": "4/8 nameservers unreachable (none confirmed lame)",
       "details": [
-        "ns-1242.awsdns-27.org (205.251.196.218): Authoritative (SOA present)",
-        "ns-1242.awsdns-27.org (2600:9000:5304:da00::1): Unreachable (query failed)",
         "ns-1652.awsdns-14.co.uk (205.251.198.116): Authoritative (SOA present)",
         "ns-1652.awsdns-14.co.uk (2600:9000:5306:7400::1): Unreachable (query failed)",
         "ns-587.awsdns-09.net (205.251.194.75): Authoritative (SOA present)",
         "ns-587.awsdns-09.net (2600:9000:5302:4b00::1): Unreachable (query failed)",
+        "ns-1242.awsdns-27.org (205.251.196.218): Authoritative (SOA present)",
+        "ns-1242.awsdns-27.org (2600:9000:5304:da00::1): Unreachable (query failed)",
         "ns-378.awsdns-47.com (205.251.193.122): Authoritative (SOA present)",
         "ns-378.awsdns-47.com (2600:9000:5301:7a00::1): Unreachable (query failed)"
       ],
@@ -145,10 +220,10 @@
         "ns-1242.awsdns-27.org: 2600:9000:5304:da00::1",
         "ns-1652.awsdns-14.co.uk: 205.251.198.116",
         "ns-1652.awsdns-14.co.uk: 2600:9000:5306:7400::1",
-        "ns-587.awsdns-09.net: 205.251.194.75",
-        "ns-587.awsdns-09.net: 2600:9000:5302:4b00::1",
         "ns-378.awsdns-47.com: 205.251.193.122",
-        "ns-378.awsdns-47.com: 2600:9000:5301:7a00::1"
+        "ns-378.awsdns-47.com: 2600:9000:5301:7a00::1",
+        "ns-587.awsdns-09.net: 205.251.194.75",
+        "ns-587.awsdns-09.net: 2600:9000:5302:4b00::1"
       ],
       "warnings": [],
       "errors": []
@@ -177,50 +252,6 @@
       "severity": 1,
       "summary": "No CNAME chain (direct resolution)",
       "details": [],
-      "warnings": [],
-      "errors": []
-    },
-    {
-      "checkName": "A Records",
-      "category": 4,
-      "severity": 1,
-      "summary": "4 A record(s) found",
-      "details": [
-        "151.101.131.5 (TTL: 24s)",
-        "151.101.195.5 (TTL: 24s)",
-        "151.101.3.5 (TTL: 24s)",
-        "151.101.67.5 (TTL: 24s)"
-      ],
-      "warnings": [],
-      "errors": []
-    },
-    {
-      "checkName": "AAAA Records",
-      "category": 5,
-      "severity": 1,
-      "summary": "4 AAAA record(s) found",
-      "details": [
-        "2a04:4e42:200::773 (TTL: 232s)",
-        "2a04:4e42:600::773 (TTL: 232s)",
-        "2a04:4e42::773 (TTL: 232s)",
-        "2a04:4e42:400::773 (TTL: 232s)"
-      ],
-      "warnings": [],
-      "errors": []
-    },
-    {
-      "checkName": "MX Records",
-      "category": 6,
-      "severity": 1,
-      "summary": "1 MX record(s) found",
-      "details": [
-        "Priority 10: cnn-com.mail.protection.outlook.com -\u003E 52.101.40.4, 52.101.9.21, 52.101.9.5, 52.101.10.6 IPv6: 2a01:111:f403:c91d::, 2a01:111:f403:c946::, 2a01:111:f403:c801::1, 2a01:111:f403:f908::",
-        "  52.101.40.4 PTR: mail-cy5pr03cu00204.inbound.protection.outlook.com",
-        "  52.101.9.21 PTR: mail-bl2pr04cu00205.inbound.protection.outlook.com",
-        "  52.101.9.5 PTR: mail-mn2pr04cu00205.inbound.protection.outlook.com",
-        "  52.101.10.6 PTR: mail-bn1pr21cu00106.inbound.protection.outlook.com",
-        "  SMTP: Connected, STARTTLS: Yes"
-      ],
       "warnings": [],
       "errors": []
     },
@@ -291,23 +322,6 @@
         "mail.cnn.com: A -\u003E 157.166.236.135",
         "email.cnn.com: CNAME -\u003E sparkpostmail.com",
         "bounce.cnn.com: CNAME -\u003E custom-email-domain.stripe.com"
-      ],
-      "warnings": [],
-      "errors": []
-    },
-    {
-      "checkName": "SPF Record",
-      "category": 7,
-      "severity": 1,
-      "summary": "SPF record found: ~all",
-      "details": [
-        "SPF: v=spf1 include:cnn.com._nspf.vali.email include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email include:mail.zendesk.com ~all",
-        "  Mechanism: include:cnn.com._nspf.vali.email",
-        "  Mechanism: include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email",
-        "  Mechanism: include:mail.zendesk.com",
-        "  Mechanism: ~all",
-        "  Policy: ~all",
-        "~all (softfail) is the recommended policy when used with DMARC enforcement"
       ],
       "warnings": [],
       "errors": []
@@ -410,14 +424,14 @@
       "severity": 0,
       "summary": "8 MX IP(s) not in SPF (normal - SPF covers outbound, MX covers inbound)",
       "details": [
-        "cnn-com.mail.protection.outlook.com (52.101.40.4): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (52.101.9.21): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (52.101.9.5): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (52.101.10.6): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c91d::): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c946::): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c801::1): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f908::): Not in SPF authorized ranges (expected if MX and outbound servers differ)"
+        "cnn-com.mail.protection.outlook.com (52.101.8.51): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (52.101.41.22): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (52.101.42.18): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (52.101.40.1): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c902::5): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f913::1): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c922::): Not in SPF authorized ranges (expected if MX and outbound servers differ)",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f901::): Not in SPF authorized ranges (expected if MX and outbound servers differ)"
       ],
       "warnings": [],
       "errors": []
@@ -432,20 +446,6 @@
         "email.cnn.com: Has SPF record",
         "bounce.cnn.com: Has SPF record",
         "transactional.cnn.com: Has SPF record"
-      ],
-      "warnings": [],
-      "errors": []
-    },
-    {
-      "checkName": "DMARC Record",
-      "category": 8,
-      "severity": 1,
-      "summary": "DMARC p=reject",
-      "details": [
-        "DMARC: v=DMARC1; p=reject; rua=mailto:dmarc_agg@vali.email; ruf=mailto:Njk3@ruf.vali.email",
-        "Policy (p): reject",
-        "Aggregate reports (rua): mailto:dmarc_agg@vali.email",
-        "Forensic reports (ruf): mailto:Njk3@ruf.vali.email"
       ],
       "warnings": [],
       "errors": []
@@ -556,7 +556,6 @@
       "severity": 2,
       "summary": "Found 8 active DKIM selector(s) (1 error(s))",
       "details": [
-        "AXFR selector discovery: zone transfer denied (probing common selectors only)",
         "DKIM selectors checked (default list): default, google, selector1, selector2, k1, k2, k3, s1, s2, s3, dkim, mail, email, smtp, google2048, everlytickey1, everlytickey2, mandrill, amazonses, postmark, sendgrid, cm, mxvault, protonmail, protonmail2, protonmail3, fm1, fm2, fm3, pic, mailjet, zoho, turbo-smtp, sig1, smtpapi, hs1, hs2, m1, m2",
         "Selector: selector1",
         "  Record: v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsZc1FOMkCaNoC09qvvioKK\u002BkWxS6jryfj6cm9XM/tUOFLANNhYR/x\u002BUegUkG9Dmnr50vQw51Pc\u002BI6zYwfxMC/AAQNblgbLkRm6\u002BhyowhrkF3YJUtCOK8Z1XFpqC3Ra86ajMiphbHGRlkJpvvPdqqYbHayfeMbWg0Hd3FsigRfGZKAllvVO3Y8IK5Ivi6PlNf7Yr66BVPEPB99gJXqnRH8\u002BIWmOIOwIVwrYQcDAYxmhM1tp7ULCC\u002B1d7a9IS9X\u002BBzxExHINvJRU5p9RBArAZPrD8/tZ91jkOF\u002BRf65wsGs\u002BnKtVr6HTtjizIH2YGRiBTzBhWKGMpAgge1Xue4VQoXCQIDAQAB;",
@@ -599,13 +598,13 @@
         "Selector m1: Key is ~1296 bits (RFC 8301 recommends \u003E= 2048)"
       ],
       "errors": [
-        "Selector \u0027selector2\u0027: CNAME delegation exists (selector2._domainkey.cnn.com -\u003E selector2-CNN-com._domainkey.turner.p-v1.dkim.mail.microsoft) but target selector2-CNN-com._domainkey.turner.p-v1.dkim.mail.microsoft has no TXT record \u2014 DKIM verification will fail for this selector"
+        "Selector \u0027selector2\u0027: CNAME delegation exists (selector2._domainkey.cnn.com \u2192 selector2-CNN-com._domainkey.turner.p-v1.dkim.mail.microsoft) but target selector2-CNN-com._domainkey.turner.p-v1.dkim.mail.microsoft has no TXT record \u2014 DKIM verification will fail for this selector"
       ]
     },
     {
       "checkName": "ARC Selector Records",
       "category": 9,
-      "severity": 0,
+      "severity": 1,
       "summary": "3 ARC-compatible DKIM key(s) found",
       "details": [
         "ARC/DKIM key at s1._domainkey.cnn.com",
@@ -626,10 +625,10 @@
       "summary": "PTR check: 0/4 IPs have matching reverse DNS",
       "details": [],
       "warnings": [
-        "151.101.131.5: No PTR record",
+        "151.101.67.5: No PTR record",
         "151.101.195.5: No PTR record",
-        "151.101.3.5: No PTR record",
-        "151.101.67.5: No PTR record"
+        "151.101.131.5: No PTR record",
+        "151.101.3.5: No PTR record"
       ],
       "errors": []
     },
@@ -639,14 +638,14 @@
       "severity": 1,
       "summary": "All 8 MX IP(s) have valid reverse DNS",
       "details": [
-        "cnn-com.mail.protection.outlook.com [52.101.40.4]: PTR \u2192 mail-cy5pr03cu00204.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [52.101.9.21]: PTR \u2192 mail-bl2pr04cu00205.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [52.101.9.5]: PTR \u2192 mail-mn2pr04cu00205.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [52.101.10.6]: PTR \u2192 mail-bn1pr21cu00106.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c91d::]: PTR \u2192 mail-mw2pr04cu00100.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c946::]: PTR \u2192 mail-ch5pr02cu00200.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c801::1]: PTR \u2192 mail-sn1pr0501cu00101.inbound.protection.outlook.com",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f908::]: PTR \u2192 mail-bn1pr21cu00100.inbound.protection.outlook.com"
+        "cnn-com.mail.protection.outlook.com [52.101.8.51]: PTR \u2192 mail-dm1pr04cu00203.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [52.101.41.22]: PTR \u2192 mail-sj2pr05cu00406.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [52.101.42.18]: PTR \u2192 mail-co1pr03cu00302.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [52.101.40.1]: PTR \u2192 mail-cy4pr03cu00101.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c902::5]: PTR \u2192 mail-sj2pr05cu00505.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f913::1]: PTR \u2192 mail-cy5pr05cu00101.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c922::]: PTR \u2192 mail-bl0pr03cu00200.inbound.protection.outlook.com",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f901::]: PTR \u2192 mail-mn2pr04cu00200.inbound.protection.outlook.com"
       ],
       "warnings": [],
       "errors": []
@@ -657,14 +656,14 @@
       "severity": 1,
       "summary": "FCrDNS: 8/8 MX IPs confirmed",
       "details": [
-        "52.101.40.4 -\u003E mail-cy5pr03cu00204.inbound.protection.outlook.com -\u003E 52.101.40.4 (FCrDNS confirmed)",
-        "52.101.9.21 -\u003E mail-bl2pr04cu00205.inbound.protection.outlook.com -\u003E 52.101.9.21 (FCrDNS confirmed)",
-        "52.101.9.5 -\u003E mail-mn2pr04cu00205.inbound.protection.outlook.com -\u003E 52.101.9.5 (FCrDNS confirmed)",
-        "52.101.10.6 -\u003E mail-bn1pr21cu00106.inbound.protection.outlook.com -\u003E 52.101.10.6 (FCrDNS confirmed)",
-        "2a01:111:f403:c91d:: -\u003E mail-mw2pr04cu00100.inbound.protection.outlook.com -\u003E 2a01:111:f403:c91d:: (FCrDNS confirmed)",
-        "2a01:111:f403:c946:: -\u003E mail-ch5pr02cu00200.inbound.protection.outlook.com -\u003E 2a01:111:f403:c946:: (FCrDNS confirmed)",
-        "2a01:111:f403:c801::1 -\u003E mail-sn1pr0501cu00101.inbound.protection.outlook.com -\u003E 2a01:111:f403:c801::1 (FCrDNS confirmed)",
-        "2a01:111:f403:f908:: -\u003E mail-bn1pr21cu00100.inbound.protection.outlook.com -\u003E 2a01:111:f403:f908:: (FCrDNS confirmed)"
+        "52.101.8.51 -\u003E mail-dm1pr04cu00203.inbound.protection.outlook.com -\u003E 52.101.8.51 (FCrDNS confirmed)",
+        "52.101.41.22 -\u003E mail-sj2pr05cu00406.inbound.protection.outlook.com -\u003E 52.101.41.22 (FCrDNS confirmed)",
+        "52.101.42.18 -\u003E mail-co1pr03cu00302.inbound.protection.outlook.com -\u003E 52.101.42.18 (FCrDNS confirmed)",
+        "52.101.40.1 -\u003E mail-cy4pr03cu00101.inbound.protection.outlook.com -\u003E 52.101.40.1 (FCrDNS confirmed)",
+        "2a01:111:f403:c902::5 -\u003E mail-sj2pr05cu00505.inbound.protection.outlook.com -\u003E 2a01:111:f403:c902::5 (FCrDNS confirmed)",
+        "2a01:111:f403:f913::1 -\u003E mail-cy5pr05cu00101.inbound.protection.outlook.com -\u003E 2a01:111:f403:f913::1 (FCrDNS confirmed)",
+        "2a01:111:f403:c922:: -\u003E mail-bl0pr03cu00200.inbound.protection.outlook.com -\u003E 2a01:111:f403:c922:: (FCrDNS confirmed)",
+        "2a01:111:f403:f901:: -\u003E mail-mn2pr04cu00200.inbound.protection.outlook.com -\u003E 2a01:111:f403:f901:: (FCrDNS confirmed)"
       ],
       "warnings": [],
       "errors": []
@@ -675,10 +674,10 @@
       "severity": 1,
       "summary": "No IP blocklist listings",
       "details": [
-        "52.101.40.4: Not listed on bl.spamcop.net",
-        "52.101.9.21: Not listed on bl.spamcop.net",
-        "52.101.9.5: Not listed on bl.spamcop.net",
-        "52.101.10.6: Not listed on bl.spamcop.net"
+        "52.101.8.51: Not listed on bl.spamcop.net",
+        "52.101.41.22: Not listed on bl.spamcop.net",
+        "52.101.42.18: Not listed on bl.spamcop.net",
+        "52.101.40.1: Not listed on bl.spamcop.net"
       ],
       "warnings": [],
       "errors": []
@@ -689,90 +688,90 @@
       "severity": 1,
       "summary": "Clean on all extended blocklists",
       "details": [
-        "52.101.40.4: Not listed on S5H",
-        "52.101.40.4: Not listed on SORBS Combined",
-        "52.101.40.4: Not listed on SORBS Spam",
-        "52.101.40.4: Not listed on Mailspike",
-        "52.101.40.4: Not listed on UCEProtect L1",
-        "52.101.40.4: Not listed on UCEProtect L2",
-        "52.101.40.4: Not listed on UCEProtect L3",
-        "52.101.40.4: Not listed on PSBL",
-        "52.101.40.4: Not listed on SpamRATS Dyna",
-        "52.101.40.4: Not listed on SpamRATS NoPtr",
-        "52.101.40.4: Not listed on SpamRATS Spam",
-        "52.101.40.4: Not listed on DroneBL",
-        "52.101.40.4: Not listed on InterServer",
-        "52.101.40.4: Not listed on Cymru Bogons",
-        "52.101.40.4: Not listed on Blocklist.de",
-        "52.101.40.4: Not listed on NordSpam BL",
-        "52.101.40.4: Not listed on INPS",
-        "52.101.40.4: Not listed on NiX Spam",
-        "52.101.40.4: Not listed on Truncate/GBUdb",
-        "52.101.40.4: Not listed on Mailspike Z",
-        "52.101.40.4: Not listed on Digibase SpamBot",
-        "52.101.9.21: Not listed on S5H",
-        "52.101.9.21: Not listed on SORBS Combined",
-        "52.101.9.21: Not listed on SORBS Spam",
-        "52.101.9.21: Not listed on Mailspike",
-        "52.101.9.21: Not listed on UCEProtect L1",
-        "52.101.9.21: Not listed on UCEProtect L2",
-        "52.101.9.21: Not listed on UCEProtect L3",
-        "52.101.9.21: Not listed on PSBL",
-        "52.101.9.21: Not listed on SpamRATS Dyna",
-        "52.101.9.21: Not listed on SpamRATS NoPtr",
-        "52.101.9.21: Not listed on SpamRATS Spam",
-        "52.101.9.21: Not listed on DroneBL",
-        "52.101.9.21: Not listed on InterServer",
-        "52.101.9.21: Not listed on Cymru Bogons",
-        "52.101.9.21: Not listed on Blocklist.de",
-        "52.101.9.21: Not listed on NordSpam BL",
-        "52.101.9.21: Not listed on INPS",
-        "52.101.9.21: Not listed on NiX Spam",
-        "52.101.9.21: Not listed on Truncate/GBUdb",
-        "52.101.9.21: Not listed on Mailspike Z",
-        "52.101.9.21: Not listed on Digibase SpamBot",
-        "52.101.9.5: Not listed on S5H",
-        "52.101.9.5: Not listed on SORBS Combined",
-        "52.101.9.5: Not listed on SORBS Spam",
-        "52.101.9.5: Not listed on Mailspike",
-        "52.101.9.5: Not listed on UCEProtect L1",
-        "52.101.9.5: Not listed on UCEProtect L2",
-        "52.101.9.5: Not listed on UCEProtect L3",
-        "52.101.9.5: Not listed on PSBL",
-        "52.101.9.5: Not listed on SpamRATS Dyna",
-        "52.101.9.5: Not listed on SpamRATS NoPtr",
-        "52.101.9.5: Not listed on SpamRATS Spam",
-        "52.101.9.5: Not listed on DroneBL",
-        "52.101.9.5: Not listed on InterServer",
-        "52.101.9.5: Not listed on Cymru Bogons",
-        "52.101.9.5: Not listed on Blocklist.de",
-        "52.101.9.5: Not listed on NordSpam BL",
-        "52.101.9.5: Not listed on INPS",
-        "52.101.9.5: Not listed on NiX Spam",
-        "52.101.9.5: Not listed on Truncate/GBUdb",
-        "52.101.9.5: Not listed on Mailspike Z",
-        "52.101.9.5: Not listed on Digibase SpamBot",
-        "52.101.10.6: Not listed on S5H",
-        "52.101.10.6: Not listed on SORBS Combined",
-        "52.101.10.6: Not listed on SORBS Spam",
-        "52.101.10.6: Not listed on Mailspike",
-        "52.101.10.6: Not listed on UCEProtect L1",
-        "52.101.10.6: Not listed on UCEProtect L2",
-        "52.101.10.6: Not listed on UCEProtect L3",
-        "52.101.10.6: Not listed on PSBL",
-        "52.101.10.6: Not listed on SpamRATS Dyna",
-        "52.101.10.6: Not listed on SpamRATS NoPtr",
-        "52.101.10.6: Not listed on SpamRATS Spam",
-        "52.101.10.6: Not listed on DroneBL",
-        "52.101.10.6: Not listed on InterServer",
-        "52.101.10.6: Not listed on Cymru Bogons",
-        "52.101.10.6: Not listed on Blocklist.de",
-        "52.101.10.6: Not listed on NordSpam BL",
-        "52.101.10.6: Not listed on INPS",
-        "52.101.10.6: Not listed on NiX Spam",
-        "52.101.10.6: Not listed on Truncate/GBUdb",
-        "52.101.10.6: Not listed on Mailspike Z",
-        "52.101.10.6: Not listed on Digibase SpamBot"
+        "52.101.8.51: Not listed on S5H",
+        "52.101.8.51: Not listed on SORBS Combined",
+        "52.101.8.51: Not listed on SORBS Spam",
+        "52.101.8.51: Not listed on Mailspike",
+        "52.101.8.51: Not listed on UCEProtect L1",
+        "52.101.8.51: Not listed on UCEProtect L2",
+        "52.101.8.51: Not listed on UCEProtect L3",
+        "52.101.8.51: Not listed on PSBL",
+        "52.101.8.51: Not listed on SpamRATS Dyna",
+        "52.101.8.51: Not listed on SpamRATS NoPtr",
+        "52.101.8.51: Not listed on SpamRATS Spam",
+        "52.101.8.51: Not listed on DroneBL",
+        "52.101.8.51: Not listed on InterServer",
+        "52.101.8.51: Not listed on Cymru Bogons",
+        "52.101.8.51: Not listed on Blocklist.de",
+        "52.101.8.51: Not listed on NordSpam BL",
+        "52.101.8.51: Not listed on INPS",
+        "52.101.8.51: Not listed on NiX Spam",
+        "52.101.8.51: Not listed on Truncate/GBUdb",
+        "52.101.8.51: Not listed on Mailspike Z",
+        "52.101.8.51: Not listed on Digibase SpamBot",
+        "52.101.41.22: Not listed on S5H",
+        "52.101.41.22: Not listed on SORBS Combined",
+        "52.101.41.22: Not listed on SORBS Spam",
+        "52.101.41.22: Not listed on Mailspike",
+        "52.101.41.22: Not listed on UCEProtect L1",
+        "52.101.41.22: Not listed on UCEProtect L2",
+        "52.101.41.22: Not listed on UCEProtect L3",
+        "52.101.41.22: Not listed on PSBL",
+        "52.101.41.22: Not listed on SpamRATS Dyna",
+        "52.101.41.22: Not listed on SpamRATS NoPtr",
+        "52.101.41.22: Not listed on SpamRATS Spam",
+        "52.101.41.22: Not listed on DroneBL",
+        "52.101.41.22: Not listed on InterServer",
+        "52.101.41.22: Not listed on Cymru Bogons",
+        "52.101.41.22: Not listed on Blocklist.de",
+        "52.101.41.22: Not listed on NordSpam BL",
+        "52.101.41.22: Not listed on INPS",
+        "52.101.41.22: Not listed on NiX Spam",
+        "52.101.41.22: Not listed on Truncate/GBUdb",
+        "52.101.41.22: Not listed on Mailspike Z",
+        "52.101.41.22: Not listed on Digibase SpamBot",
+        "52.101.42.18: Not listed on S5H",
+        "52.101.42.18: Not listed on SORBS Combined",
+        "52.101.42.18: Not listed on SORBS Spam",
+        "52.101.42.18: Not listed on Mailspike",
+        "52.101.42.18: Not listed on UCEProtect L1",
+        "52.101.42.18: Not listed on UCEProtect L2",
+        "52.101.42.18: Not listed on UCEProtect L3",
+        "52.101.42.18: Not listed on PSBL",
+        "52.101.42.18: Not listed on SpamRATS Dyna",
+        "52.101.42.18: Not listed on SpamRATS NoPtr",
+        "52.101.42.18: Not listed on SpamRATS Spam",
+        "52.101.42.18: Not listed on DroneBL",
+        "52.101.42.18: Not listed on InterServer",
+        "52.101.42.18: Not listed on Cymru Bogons",
+        "52.101.42.18: Not listed on Blocklist.de",
+        "52.101.42.18: Not listed on NordSpam BL",
+        "52.101.42.18: Not listed on INPS",
+        "52.101.42.18: Not listed on NiX Spam",
+        "52.101.42.18: Not listed on Truncate/GBUdb",
+        "52.101.42.18: Not listed on Mailspike Z",
+        "52.101.42.18: Not listed on Digibase SpamBot",
+        "52.101.40.1: Not listed on S5H",
+        "52.101.40.1: Not listed on SORBS Combined",
+        "52.101.40.1: Not listed on SORBS Spam",
+        "52.101.40.1: Not listed on Mailspike",
+        "52.101.40.1: Not listed on UCEProtect L1",
+        "52.101.40.1: Not listed on UCEProtect L2",
+        "52.101.40.1: Not listed on UCEProtect L3",
+        "52.101.40.1: Not listed on PSBL",
+        "52.101.40.1: Not listed on SpamRATS Dyna",
+        "52.101.40.1: Not listed on SpamRATS NoPtr",
+        "52.101.40.1: Not listed on SpamRATS Spam",
+        "52.101.40.1: Not listed on DroneBL",
+        "52.101.40.1: Not listed on InterServer",
+        "52.101.40.1: Not listed on Cymru Bogons",
+        "52.101.40.1: Not listed on Blocklist.de",
+        "52.101.40.1: Not listed on NordSpam BL",
+        "52.101.40.1: Not listed on INPS",
+        "52.101.40.1: Not listed on NiX Spam",
+        "52.101.40.1: Not listed on Truncate/GBUdb",
+        "52.101.40.1: Not listed on Mailspike Z",
+        "52.101.40.1: Not listed on Digibase SpamBot"
       ],
       "warnings": [],
       "errors": []
@@ -855,7 +854,7 @@
         "VMC Subject: OID.1.3.6.1.4.1.53087.1.4=5817930, OID.1.3.6.1.4.1.53087.1.3=US, OID.1.3.6.1.4.1.53087.1.13=Registered Mark, CN=\u0022Cable News Network, Inc.\u0022, O=\u0022Cable News Network, Inc.\u0022, STREET=190 Marietta St NW, L=Atlanta, S=Georgia, C=US, SERIALNUMBER=2976730, businessCategory=Private Organization, jurisdictionStateOrProvinceName=Delaware, jurisdictionCountryName=US",
         "VMC Issuer: CN=DigiCert Verified Mark RSA4096 SHA256 2021 CA1, O=\u0022DigiCert, Inc.\u0022, C=US",
         "VMC Valid: 2025-08-11 to 2026-09-01",
-        "VMC expires in 147 days",
+        "VMC expires in 144 days",
         "VMC issued by recognized CA: DigiCert Verified Mark RSA4096 SHA256 2021 CA1",
         "VMC subject CN (\u0022Cable News Network) differs from domain (cnn.com)",
         "VMC contains logotype extension (id-pe-logotype)",
@@ -919,7 +918,7 @@
       "severity": 1,
       "summary": "Checked SMTP banners for 1 MX host(s)",
       "details": [
-        "cnn-com.mail.protection.outlook.com: Banner: 220 SA2PEPF00003F66.mail.protection.outlook.com Microsoft ESMTP MAIL Service ready at Tue, 7 Apr 2026 06:22:17 \u002B0000 [08DE8F7EBB18C91C]",
+        "cnn-com.mail.protection.outlook.com: Banner: 220 SJ1PEPF000026C8.mail.protection.outlook.com Microsoft ESMTP MAIL Service ready at Fri, 10 Apr 2026 02:26:48 \u002B0000 [08DE95FB78147ECD]",
         "  Banner hostname differs from MX FQDN (common for load-balanced MX)"
       ],
       "warnings": [],
@@ -932,7 +931,7 @@
       "summary": "EHLO capabilities retrieved",
       "details": [
         "cnn-com.mail.protection.outlook.com EHLO capabilities:",
-        "  SA2PEPF00003F66.mail.protection.outlook.com Hello [20.102.47.193]",
+        "  SJ1PEPF000026C8.mail.protection.outlook.com Hello [172.184.210.49]",
         "  SIZE 157286400",
         "  PIPELINING",
         "  DSN",
@@ -987,14 +986,14 @@
       "summary": "8 MX IP(s) have rDNS/banner hostname mismatch",
       "details": [],
       "warnings": [
-        "cnn-com.mail.protection.outlook.com (52.101.40.4): PTR [mail-cy5pr03cu00204.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (52.101.9.21): PTR [mail-bl2pr04cu00205.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (52.101.9.5): PTR [mail-mn2pr04cu00205.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (52.101.10.6): PTR [mail-bn1pr21cu00106.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c91d::): PTR [mail-mw2pr04cu00100.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c946::): PTR [mail-ch5pr02cu00200.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c801::1): PTR [mail-sn1pr0501cu00101.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
-        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f908::): PTR [mail-bn1pr21cu00100.inbound.protection.outlook.com] does not match banner hostname \u0027SA2PEPF00003F66.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (52.101.8.51): PTR [mail-dm1pr04cu00203.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (52.101.41.22): PTR [mail-sj2pr05cu00406.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (52.101.42.18): PTR [mail-co1pr03cu00302.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (52.101.40.1): PTR [mail-cy4pr03cu00101.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c902::5): PTR [mail-sj2pr05cu00505.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f913::1): PTR [mail-cy5pr05cu00101.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:c922::): PTR [mail-bl0pr03cu00200.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
+        "cnn-com.mail.protection.outlook.com (2a01:111:f403:f901::): PTR [mail-mn2pr04cu00200.inbound.protection.outlook.com] does not match banner hostname \u0027SJ1PEPF000026C8.mail.protection.outlook.com\u0027",
         "Reverse DNS should match the SMTP banner hostname for best deliverability"
       ],
       "errors": []
@@ -1005,7 +1004,7 @@
       "severity": 1,
       "summary": "SMTP timing acceptable for 1 MX host(s)",
       "details": [
-        "cnn-com.mail.protection.outlook.com: Connect: 120ms, Banner: 37ms, EHLO: 38ms, TLS: 283ms (Total: 478ms)"
+        "cnn-com.mail.protection.outlook.com: Connect: 18ms, Banner: 1ms, EHLO: 2ms, TLS: 81ms (Total: 102ms)"
       ],
       "warnings": [],
       "errors": []
@@ -1067,7 +1066,7 @@
       "severity": 1,
       "summary": "1/1 MX hosts have IPv6",
       "details": [
-        "cnn-com.mail.protection.outlook.com: 2a01:111:f403:c91d::, 2a01:111:f403:c946::, 2a01:111:f403:c801::1, 2a01:111:f403:f908::"
+        "cnn-com.mail.protection.outlook.com: 2a01:111:f403:c902::5, 2a01:111:f403:f913::1, 2a01:111:f403:c922::, 2a01:111:f403:f901::"
       ],
       "warnings": [],
       "errors": []
@@ -1079,35 +1078,34 @@
       "summary": "4 MX IPv6 address(es) unreachable \u2014 stale AAAA records cause delivery delays",
       "details": [],
       "warnings": [
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c91d::]: AAAA exists but port 25 unreachable over IPv6",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c946::]: AAAA exists but port 25 unreachable over IPv6",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c801::1]: AAAA exists but port 25 unreachable over IPv6",
-        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f908::]: AAAA exists but port 25 unreachable over IPv6"
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c902::5]: AAAA exists but port 25 unreachable over IPv6",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f913::1]: AAAA exists but port 25 unreachable over IPv6",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:c922::]: AAAA exists but port 25 unreachable over IPv6",
+        "cnn-com.mail.protection.outlook.com [2a01:111:f403:f901::]: AAAA exists but port 25 unreachable over IPv6"
       ],
       "errors": []
     },
     {
       "checkName": "Postmaster Address",
       "category": 24,
-      "severity": 0,
-      "summary": "postmaster@ check inconclusive \u2014 our source IP is blocklisted by the server",
+      "severity": 2,
+      "summary": "postmaster@ not accepted on any MX (RFC 5321 \u00A74.5.1 requires it)",
       "details": [
         "postmaster@cnn.com via cnn-com.mail.protection.outlook.com: Rejected",
-        "  Server response: 550 5.7.1 Service unavailable, Client host [20.102.47.193] blocked using Spamhaus. To request removal from this list see https://www.spamhaus.org/query/ip/20.102.47.193 AS(1440) [BN1PEPF00006002.namprd05.prod.outlook.com 2026-04-07T06:23:08.365Z 08DE9089C28C510C]",
-        "  Note: Rejection appears to be IP-based blocking, not address refusal"
+        "  Server response: 550 5.4.1 Recipient address rejected: Access denied. For more information see https://aka.ms/EXOSmtpErrors [SJ1PEPF000026C8.namprd04.prod.outlook.com 2026-04-10T02:26:54.930Z 08DE95FB78148196]"
       ],
-      "warnings": [],
+      "warnings": [
+        "postmaster@cnn.com rejected by cnn-com.mail.protection.outlook.com (550 5.4.1 Recipient address rejected: Access denied. For more information see https://aka.ms/EXOSmtpErrors [SJ1PEPF000026C8.namprd04.prod.outlook.com 2026-04-10T02:26:54.930Z 08DE95FB78148196])"
+      ],
       "errors": []
     },
     {
       "checkName": "Abuse Address",
       "category": 25,
-      "severity": 0,
-      "summary": "abuse@ check inconclusive \u2014 our source IP is blocklisted by the server",
+      "severity": 1,
+      "summary": "abuse@ accepted",
       "details": [
-        "abuse@cnn.com via cnn-com.mail.protection.outlook.com: Rejected",
-        "  Server response: 550 5.7.1 Service unavailable, Client host [20.102.47.193] blocked using Spamhaus. To request removal from this list see https://www.spamhaus.org/query/ip/20.102.47.193 AS(1440) [SN1PEPF0002BA50.namprd03.prod.outlook.com 2026-04-07T06:23:08.522Z 08DE8FB28192B597]",
-        "  Note: Rejection appears to be IP-based blocking, not address refusal"
+        "abuse@cnn.com via cnn-com.mail.protection.outlook.com: Accepted"
       ],
       "warnings": [],
       "errors": []
@@ -1158,28 +1156,21 @@
       "severity": 2,
       "summary": "TTL issues detected",
       "details": [
-        "MX (cnn.com): TTL 209s",
-        "DMARC (_dmarc.cnn.com): TTL 550s"
+        "MX (cnn.com): TTL 293s",
+        "DMARC (_dmarc.cnn.com): TTL 593s"
       ],
       "warnings": [
-        "SPF/TXT (cnn.com): TTL 0s is very low (\u003C 60s)"
+        "SPF/TXT (cnn.com): TTL 51s is very low (\u003C 60s)"
       ],
       "errors": []
     },
     {
       "checkName": "AXFR Exposure",
       "category": 28,
-      "severity": 1,
-      "summary": "Zone transfer denied on all nameservers",
+      "severity": 0,
+      "summary": "AXFR test skipped (use --axfr to enable)",
       "details": [
-        "ns-1242.awsdns-27.org (205.251.196.218): Zone transfer denied (good)",
-        "ns-1242.awsdns-27.org (2600:9000:5304:da00::1): Zone transfer denied (good)",
-        "ns-1652.awsdns-14.co.uk (205.251.198.116): Zone transfer denied (good)",
-        "ns-1652.awsdns-14.co.uk (2600:9000:5306:7400::1): Zone transfer denied (good)",
-        "ns-587.awsdns-09.net (205.251.194.75): Zone transfer denied (good)",
-        "ns-587.awsdns-09.net (2600:9000:5302:4b00::1): Zone transfer denied (good)",
-        "ns-378.awsdns-47.com (205.251.193.122): Zone transfer denied (good)",
-        "ns-378.awsdns-47.com (2600:9000:5301:7a00::1): Zone transfer denied (good)"
+        "Zone transfer test is disabled by default \u2014 use --axfr to enable"
       ],
       "warnings": [],
       "errors": []
@@ -1188,8 +1179,10 @@
       "checkName": "security.txt (RFC 9116)",
       "category": 29,
       "severity": 0,
-      "summary": "No security.txt found",
-      "details": [],
+      "summary": "Could not fetch security.txt",
+      "details": [
+        "HTTP request to cnn.com/.well-known/security.txt failed (status 404)"
+      ],
       "warnings": [],
       "errors": []
     },
@@ -1197,22 +1190,22 @@
       "checkName": "Email Provider Verification TXT",
       "category": 30,
       "severity": 0,
-      "summary": "Detected verification records: Microsoft 365, Google Workspace, Atlassian, Stripe, Facebook/Meta, Adobe, Cisco/Webex",
+      "summary": "Detected verification records: Cisco/Webex, Stripe, Adobe, Microsoft 365, Google Workspace, Atlassian, Facebook/Meta",
       "details": [
-        "Microsoft 365: MS=ms66433104",
-        "Google Workspace: google-site-verification=R-Btow3Z8oU_9H1IWU4Gm4lvUQ_OVmsfxonIKhIaiPE",
-        "Atlassian: atlassian-domain-verification=joqe6L8dNi\u002BaisGbB1XHQa0pDc53V2l0GQQRUtLEcr2997x0\u002Br...",
-        "Stripe: stripe-verification=1488a36c1dc125ea564dc5822d1414eeed68875825aaf90df27ac3131d05...",
-        "Facebook/Meta: facebook-domain-verification=xszi21kow2trmw3xt3ph6s631zyu3i",
-        "Stripe: stripe-verification=e5dad290205182f6bdbd4e72697ce3cf9a965f35cb0349d538e09706345f...",
-        "Google Workspace: google-site-verification=cNhH3bbaizgJp34tQo2r1NgKE0YYLIPNOOvcBVTT5Pk",
-        "Adobe: adobe-idp-site-verification=279ead95-3581-42b7-82f4-73c97f8cebfa",
-        "Stripe: stripe-verification=094254c9a60a6dc0c1c2a62294b81c0c3b9363d044151a3e562ffeac0a7c...",
-        "Google Workspace: google-site-verification=_QivaXNjhXy-V1y_YqrycXdAWZi2mVrcwbXerX6THeY",
         "Cisco/Webex: cisco-ci-domain-verification=4a1c92ef69fe42f8125c3ca9ce0696dcf6cc16fa80243257de5...",
+        "Stripe: stripe-verification=1488a36c1dc125ea564dc5822d1414eeed68875825aaf90df27ac3131d05...",
         "Stripe: stripe-verification=5535d8a3c7b3517ee3765df8bd66b8a5cf70a65c3437f5be5d3a8f0108b7...",
+        "Adobe: adobe-idp-site-verification=279ead95-3581-42b7-82f4-73c97f8cebfa",
+        "Microsoft 365: MS=ms66433104",
+        "Google Workspace: google-site-verification=_QivaXNjhXy-V1y_YqrycXdAWZi2mVrcwbXerX6THeY",
+        "Stripe: stripe-verification=094254c9a60a6dc0c1c2a62294b81c0c3b9363d044151a3e562ffeac0a7c...",
+        "Stripe: stripe-verification=e5dad290205182f6bdbd4e72697ce3cf9a965f35cb0349d538e09706345f...",
+        "Microsoft 365: ms=ms97284866",
+        "Google Workspace: google-site-verification=cNhH3bbaizgJp34tQo2r1NgKE0YYLIPNOOvcBVTT5Pk",
+        "Atlassian: atlassian-domain-verification=joqe6L8dNi\u002BaisGbB1XHQa0pDc53V2l0GQQRUtLEcr2997x0\u002Br...",
+        "Facebook/Meta: facebook-domain-verification=xszi21kow2trmw3xt3ph6s631zyu3i",
         "Stripe: stripe-verification=42CDB310484C1CAA878F12A73EB7505EA6E7F154731CD7E4F5ABB574DE5E...",
-        "Microsoft 365: ms=ms97284866"
+        "Google Workspace: google-site-verification=R-Btow3Z8oU_9H1IWU4Gm4lvUQ_OVmsfxonIKhIaiPE"
       ],
       "warnings": [],
       "errors": []
@@ -1221,8 +1214,10 @@
       "checkName": "Certificate Transparency",
       "category": 22,
       "severity": 0,
-      "summary": "No CT log entries found (or crt.sh unreachable)",
-      "details": [],
+      "summary": "Could not query CT logs \u2014 crt.sh unreachable",
+      "details": [
+        "HTTP request to crt.sh failed (status 0)"
+      ],
       "warnings": [],
       "errors": []
     },
@@ -1241,67 +1236,67 @@
       "severity": 0,
       "summary": "61 TXT record(s) found",
       "details": [
-        "TXT: 754516718-4422064",
-        "TXT: 267933795-4422004",
-        "TXT: 882269757-4422010",
-        "TXT: 755973593-4422016",
-        "TXT: 598362927-4422061",
-        "TXT: _globalsign-domain-verification=MK_ZKmss4D_DdzGOsssHxxBOK6hJc6LGycFvNOESdZ",
-        "TXT: MS=ms66433104",
-        "TXT: _globalsign-domain-verification=B57sRQpmte4G4w-gavZbVNmmNsMxGp5kcL19UP2599",
-        "TXT: v=spf1 include:cnn.com._nspf.vali.email include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email include:mail.zendesk.com ~all",
-        "TXT: lucidlink-verification=W6M94ET3X2JD6QNS2DS0QM5E5W",
-        "TXT: 186844776-4422028",
-        "TXT: _globalsign-domain-verification=S6DssfjyL_2kgK4I2Ae_1cdPfwqRRBfB9-3ZhRGMRj",
-        "TXT: 764482256-4422025",
-        "TXT: adobe-sign-verification=c3dc3217f76deddcb413a23e4e665fad",
-        "TXT: 714321471-4421998",
-        "TXT: 321159687-4422031",
-        "TXT: google-site-verification=R-Btow3Z8oU_9H1IWU4Gm4lvUQ_OVmsfxonIKhIaiPE",
-        "TXT: globalsign-domain-verification=2lI5pahhCu_jg_2RC5GEdolQmAa4K7rhP7_OA-lZBK",
-        "TXT: openai-domain-verification=dv-yGIc9wI1iK7uFqtmBqEp94Xk",
-        "TXT: atlassian-domain-verification=joqe6L8dNi\u002BaisGbB1XHQa0pDc53V2l0GQQRUtLEcr2997x0\u002BrtrAA5Zw\u002BUgQw3u",
-        "TXT: stripe-verification=1488a36c1dc125ea564dc5822d1414eeed68875825aaf90df27ac3131d053935",
-        "TXT: facebook-domain-verification=xszi21kow2trmw3xt3ph6s631zyu3i",
-        "TXT: _globalsign-domain-verification=5ckEJ4VIhQ6weCdCfmfzQPVP6ED1LtCX9jw1OKX5Mv",
-        "TXT: globalsign-domain-verification=-Q7umwx2mj164XwLa0PsoUaWe2HBhta50GjggsT98f",
-        "TXT: _globalsign-domain-verification=2lybn8Z2GKCTHNehPEREKdz_jh5SahShpwOeRqCWjl",
-        "TXT: mongodb-site-verification=mtrxHeW3jOzWtwEwnOLpeQo9NXh6Lqas",
-        "TXT: 126953328-4422040",
-        "TXT: 528183251-4422019",
-        "TXT: 667921863-4422007",
-        "TXT: _globalsign-domain-verification=-lBuNJDFRxDkLkNbYOLBU03PlWjnPqAzBPAVUokhAw",
-        "TXT: stripe-verification=e5dad290205182f6bdbd4e72697ce3cf9a965f35cb0349d538e09706345fb673",
-        "TXT: google-site-verification=cNhH3bbaizgJp34tQo2r1NgKE0YYLIPNOOvcBVTT5Pk",
-        "TXT: 294913881-4422049",
         "TXT: 826218936-4422046",
-        "TXT: 353665828-4422052",
-        "TXT: _globalsign-domain-verification=1McxnrVkIU8RCVwwHslxDiq_r8hp3zjD_f29xgdWgF",
-        "TXT: 782989862-4417942",
-        "TXT: adobe-idp-site-verification=279ead95-3581-42b7-82f4-73c97f8cebfa",
-        "TXT: 228426766-4422034",
-        "TXT: _globalsign-domain-verification=yTw3T3KnyIyTB1xG2GvVhl1zWJlFp-WqmNskdVI_65",
-        "TXT: _globalsign-domain-verification=9hlGg1_xFQ9m6kVqzsG0EO121UTChwQZQCgxCRvgyn",
-        "TXT: 299762315-4422055",
-        "TXT: 688162515-4422037",
-        "TXT: stripe-verification=094254c9a60a6dc0c1c2a62294b81c0c3b9363d044151a3e562ffeac0a7c4157",
-        "TXT: 691244352-4422022",
-        "TXT: google-site-verification=_QivaXNjhXy-V1y_YqrycXdAWZi2mVrcwbXerX6THeY",
         "TXT: 349997471-4422043",
         "TXT: cisco-ci-domain-verification=4a1c92ef69fe42f8125c3ca9ce0696dcf6cc16fa80243257de578af593d19548",
-        "TXT: 133461244-4422058",
-        "TXT: stripe-verification=5535d8a3c7b3517ee3765df8bd66b8a5cf70a65c3437f5be5d3a8f0108b790ef",
-        "TXT: d1xTs9\u002BkADZZSz3bPphLpkMXXxBGjqn5vsQHhi2M6lo0r8AdIbm6j8LfQXPujsywVgeGSP\u002BAXWX0vO9Iep5cUg==",
-        "TXT: canva-site-verification=_RUUWoBDVpt0pfonUPWJgg",
-        "TXT: 553992719-4400647",
-        "TXT: stripe-verification=42CDB310484C1CAA878F12A73EB7505EA6E7F154731CD7E4F5ABB574DE5E7725",
-        "TXT: lucidlink-verification=B9TYHWKAXAA93NQ61ST71E7NW8",
+        "TXT: stripe-verification=1488a36c1dc125ea564dc5822d1414eeed68875825aaf90df27ac3131d053935",
+        "TXT: 228426766-4422034",
+        "TXT: _globalsign-domain-verification=S6DssfjyL_2kgK4I2Ae_1cdPfwqRRBfB9-3ZhRGMRj",
         "TXT: 2baPGrmeo\u002BRwsWdIdq/gIVSEWNb4tC9mLGQu0j4l/mduqhm06T\u002BV9vNLXsauLyH9FwMZJSRHvj/YHGKOVWRylw==",
+        "TXT: 688162515-4422037",
+        "TXT: 755973593-4422016",
         "TXT: tollbit-domain-verification=3b1766c3c41ef082750984a8a43089a81344c7af85005466c1a03c6ca1fb47dd",
-        "TXT: ms=ms97284866",
+        "TXT: stripe-verification=5535d8a3c7b3517ee3765df8bd66b8a5cf70a65c3437f5be5d3a8f0108b790ef",
+        "TXT: globalsign-domain-verification=2lI5pahhCu_jg_2RC5GEdolQmAa4K7rhP7_OA-lZBK",
+        "TXT: 714321471-4421998",
+        "TXT: d1xTs9\u002BkADZZSz3bPphLpkMXXxBGjqn5vsQHhi2M6lo0r8AdIbm6j8LfQXPujsywVgeGSP\u002BAXWX0vO9Iep5cUg==",
+        "TXT: 299762315-4422055",
         "TXT: 287893558-4422013",
+        "TXT: _globalsign-domain-verification=2lybn8Z2GKCTHNehPEREKdz_jh5SahShpwOeRqCWjl",
+        "TXT: 186844776-4422028",
+        "TXT: adobe-sign-verification=c3dc3217f76deddcb413a23e4e665fad",
+        "TXT: _globalsign-domain-verification=1McxnrVkIU8RCVwwHslxDiq_r8hp3zjD_f29xgdWgF",
+        "TXT: 267933795-4422004",
+        "TXT: adobe-idp-site-verification=279ead95-3581-42b7-82f4-73c97f8cebfa",
+        "TXT: openai-domain-verification=dv-yGIc9wI1iK7uFqtmBqEp94Xk",
+        "TXT: 667921863-4422007",
+        "TXT: MS=ms66433104",
+        "TXT: 126953328-4422040",
+        "TXT: google-site-verification=_QivaXNjhXy-V1y_YqrycXdAWZi2mVrcwbXerX6THeY",
+        "TXT: stripe-verification=094254c9a60a6dc0c1c2a62294b81c0c3b9363d044151a3e562ffeac0a7c4157",
+        "TXT: stripe-verification=e5dad290205182f6bdbd4e72697ce3cf9a965f35cb0349d538e09706345fb673",
+        "TXT: globalsign-domain-verification=-Q7umwx2mj164XwLa0PsoUaWe2HBhta50GjggsT98f",
+        "TXT: _globalsign-domain-verification=B57sRQpmte4G4w-gavZbVNmmNsMxGp5kcL19UP2599",
+        "TXT: 691244352-4422022",
+        "TXT: 598362927-4422061",
+        "TXT: ms=ms97284866",
+        "TXT: google-site-verification=cNhH3bbaizgJp34tQo2r1NgKE0YYLIPNOOvcBVTT5Pk",
+        "TXT: mixpanel-domain-verify=612e2914-a7fb-4965-95d5-19acc02797df",
+        "TXT: _globalsign-domain-verification=MK_ZKmss4D_DdzGOsssHxxBOK6hJc6LGycFvNOESdZ",
+        "TXT: atlassian-domain-verification=joqe6L8dNi\u002BaisGbB1XHQa0pDc53V2l0GQQRUtLEcr2997x0\u002BrtrAA5Zw\u002BUgQw3u",
+        "TXT: _globalsign-domain-verification=yTw3T3KnyIyTB1xG2GvVhl1zWJlFp-WqmNskdVI_65",
+        "TXT: facebook-domain-verification=xszi21kow2trmw3xt3ph6s631zyu3i",
+        "TXT: 528183251-4422019",
+        "TXT: canva-site-verification=_RUUWoBDVpt0pfonUPWJgg",
+        "TXT: lucidlink-verification=B9TYHWKAXAA93NQ61ST71E7NW8",
+        "TXT: 353665828-4422052",
+        "TXT: 782989862-4417942",
+        "TXT: _globalsign-domain-verification=9hlGg1_xFQ9m6kVqzsG0EO121UTChwQZQCgxCRvgyn",
+        "TXT: lucidlink-verification=W6M94ET3X2JD6QNS2DS0QM5E5W",
+        "TXT: _globalsign-domain-verification=-lBuNJDFRxDkLkNbYOLBU03PlWjnPqAzBPAVUokhAw",
+        "TXT: 754516718-4422064",
+        "TXT: 321159687-4422031",
+        "TXT: 294913881-4422049",
+        "TXT: stripe-verification=42CDB310484C1CAA878F12A73EB7505EA6E7F154731CD7E4F5ABB574DE5E7725",
+        "TXT: 553992719-4400647",
+        "TXT: 882269757-4422010",
+        "TXT: 133461244-4422058",
         "TXT: 178953534-4422001",
-        "TXT: mixpanel-domain-verify=612e2914-a7fb-4965-95d5-19acc02797df"
+        "TXT: google-site-verification=R-Btow3Z8oU_9H1IWU4Gm4lvUQ_OVmsfxonIKhIaiPE",
+        "TXT: 764482256-4422025",
+        "TXT: mongodb-site-verification=mtrxHeW3jOzWtwEwnOLpeQo9NXh6Lqas",
+        "TXT: _globalsign-domain-verification=5ckEJ4VIhQ6weCdCfmfzQPVP6ED1LtCX9jw1OKX5Mv",
+        "TXT: v=spf1 include:cnn.com._nspf.vali.email include:%{i}._ip.%{h}._ehlo.%{d}._spf.vali.email include:mail.zendesk.com ~all"
       ],
       "warnings": [],
       "errors": []
@@ -1313,16 +1308,16 @@
       "summary": "4 DNS query error(s) \u2014 some results may be incomplete",
       "details": [],
       "warnings": [
-        "DNS query to 2600:9000:5301:7a00::1 failed for SOA cnn.com: Query 55974 =\u003E cnn.com IN SOA on [2600:9000:5301:7a00::1]:53 failed with an error.",
-        "DNS query to 2600:9000:5302:4b00::1 failed for SOA cnn.com: Query 33969 =\u003E cnn.com IN SOA on [2600:9000:5302:4b00::1]:53 failed with an error.",
-        "DNS query to 2600:9000:5306:7400::1 failed for SOA cnn.com: Query 15242 =\u003E cnn.com IN SOA on [2600:9000:5306:7400::1]:53 failed with an error.",
-        "DNS query to 2600:9000:5304:da00::1 failed for SOA cnn.com: Query 35479 =\u003E cnn.com IN SOA on [2600:9000:5304:da00::1]:53 failed with an error."
+        "DNS query to 2600:9000:5302:4b00::1 failed for SOA cnn.com: Query 44067 =\u003E cnn.com IN SOA on [2600:9000:5302:4b00::1]:53 failed with an error.",
+        "DNS query to 2600:9000:5304:da00::1 failed for SOA cnn.com: Query 1514 =\u003E cnn.com IN SOA on [2600:9000:5304:da00::1]:53 failed with an error.",
+        "DNS query to 2600:9000:5301:7a00::1 failed for SOA cnn.com: Query 2116 =\u003E cnn.com IN SOA on [2600:9000:5301:7a00::1]:53 failed with an error.",
+        "DNS query to 2600:9000:5306:7400::1 failed for SOA cnn.com: Query 24660 =\u003E cnn.com IN SOA on [2600:9000:5306:7400::1]:53 failed with an error."
       ],
       "errors": []
     }
   ],
-  "passCount": 52,
-  "warningCount": 8,
+  "passCount": 53,
+  "warningCount": 9,
   "errorCount": 0,
   "criticalCount": 0
 }
