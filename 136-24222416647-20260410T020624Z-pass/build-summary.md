@@ -2,15 +2,13 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #84 (attempt 1) |
-| **Run ID** | 24059657674 |
+| **Run** | #136 (attempt 1) |
+| **Run ID** | 24222416647 |
 | **Result** | pass |
-| **Commit** | 3f14c1592a7d2ab2629d03e82f587c906ff4cfaa |
-| **Ref** | refs/pull/4/merge |
-| **Event** | pull_request |
+| **Commit** | 47c0303b5cef3f329d38eea1fe99d3c190c7b9bc |
+| **Ref** | refs/heads/architecture-docs-2026-04-10 |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
 
 ## Artifacts
 ```
