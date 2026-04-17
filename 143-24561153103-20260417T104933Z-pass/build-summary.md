@@ -2,15 +2,13 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #92 (attempt 1) |
-| **Run ID** | 24068470971 |
+| **Run** | #143 (attempt 1) |
+| **Run ID** | 24561153103 |
 | **Result** | pass |
-| **Commit** | b139ecb4dccae5d7b76d4c44a869260cc5dce166 |
-| **Ref** | refs/pull/4/merge |
-| **Event** | pull_request |
+| **Commit** | e28382a8514549e2f2d49de8ba94cf481ac916aa |
+| **Ref** | refs/heads/main |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
 
 ## Artifacts
 ```
@@ -25,7 +23,6 @@ test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
 test-reports/google.com.json
-test-reports/integration-cache/axfr-results.json
 test-reports/integration-cache/dns-queries.json
 test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
