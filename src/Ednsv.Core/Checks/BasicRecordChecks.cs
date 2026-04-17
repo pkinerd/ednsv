@@ -9,7 +9,7 @@ public class CnameChainCheck : ICheck
     public string Name => "CNAME Chain";
     public CheckCategory Category => CheckCategory.CNAME;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -52,7 +52,7 @@ public class ARecordCheck : ICheck
     public string Name => "A Records";
     public CheckCategory Category => CheckCategory.A;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -64,11 +64,13 @@ public class ARecordCheck : ICheck
             {
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = $"{records.Count} A record(s) found";
+                var aRecords = new List<string>();
                 foreach (var a in records)
                 {
                     result.Details.Add($"{a.Address} (TTL: {a.TimeToLive}s)");
-                    ctx.DomainARecords.Add(a.Address.ToString());
+                    aRecords.Add(a.Address.ToString());
                 }
+                ctx.DomainARecords = aRecords;
             }
             else
             {
@@ -91,7 +93,7 @@ public class AAAARecordCheck : ICheck
     public string Name => "AAAA Records";
     public CheckCategory Category => CheckCategory.AAAA;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -103,11 +105,13 @@ public class AAAARecordCheck : ICheck
             {
                 result.Severity = CheckSeverity.Pass;
                 result.Summary = $"{records.Count} AAAA record(s) found";
+                var aaaaRecords = new List<string>();
                 foreach (var a in records)
                 {
                     result.Details.Add($"{a.Address} (TTL: {a.TimeToLive}s)");
-                    ctx.DomainAAAARecords.Add(a.Address.ToString());
+                    aaaaRecords.Add(a.Address.ToString());
                 }
+                ctx.DomainAAAARecords = aaaaRecords;
             }
             else
             {

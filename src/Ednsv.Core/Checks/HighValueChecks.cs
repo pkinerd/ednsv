@@ -26,7 +26,7 @@ public class MxPrivateIpCheck : ICheck
         (new byte[] { 100, 64 }, 10, "CGNAT (100.64.0.0/10)"),
     };
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         var privateFound = new List<string>();
@@ -85,7 +85,7 @@ public class SmtpTlsVersionCheck : ICheck
     public string Name => "SMTP TLS Version";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -142,7 +142,7 @@ public class MxCoveredBySpfCheck : ICheck
     public string Name => "MX Hosts Covered by SPF";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -312,7 +312,7 @@ public class SpfIncludesAllCheck : ICheck
     public string Name => "SPF +all in Includes";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -378,7 +378,7 @@ public class DmarcPctAnalysisCheck : ICheck
     public string Name => "DMARC Percentage (pct) Analysis";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -494,7 +494,7 @@ public class ExtendedDnsblCheck : ICheck
         "127.255.255.254", "127.255.255.253", "127.255.255.252", "127.0.0.1"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -572,7 +572,7 @@ public class NsMinimumCountCheck : ICheck
     public string Name => "NS Minimum Count";
     public CheckCategory Category => CheckCategory.NS;
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         var count = ctx.NsHosts.Count;

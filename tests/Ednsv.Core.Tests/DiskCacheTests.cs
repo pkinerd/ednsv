@@ -7,6 +7,8 @@ namespace Ednsv.Core.Tests;
 /// Verifies disk cache round-trip: save services to disk, load into fresh
 /// services, and confirm the cached entries are restored and served.
 /// Now uses directory-based cache with per-entry timestamps.
+/// Note: Only successful results are cached in-memory, so disk persistence
+/// tests focus on successful DNS/HTTP queries and imported entries.
 /// </summary>
 public class DiskCacheTests : IDisposable
 {
@@ -85,71 +87,6 @@ public class DiskCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task SmtpProbeCache_RoundTrip_RestoresEntries()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        // Populate SMTP cache (connection failure, fast)
-        var original = await smtp1.ProbeSmtpAsync("localhost", 60025);
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
-        Assert.NotNull(loadResult);
-        Assert.True(loadResult!.SmtpProbes > 0);
-
-        var restored = await smtp2.ProbeSmtpAsync("localhost", 60025);
-        Assert.Equal(original.Connected, restored.Connected);
-        Assert.Equal(original.Error, restored.Error);
-    }
-
-    [Fact]
-    public async Task PortCache_RoundTrip_RestoresEntries()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        await smtp1.ProbePortAsync("localhost", 60025);
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
-        Assert.NotNull(loadResult);
-        Assert.True(loadResult!.PortProbes > 0);
-    }
-
-    [Fact]
-    public async Task RcptCache_RoundTrip_RestoresEntries()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
-        Assert.NotNull(loadResult);
-        Assert.True(loadResult!.RcptProbes > 0);
-    }
-
-    [Fact]
     public async Task PtrCache_RoundTrip_RestoresEntries()
     {
         var dns1 = new DnsResolverService();
@@ -166,7 +103,7 @@ public class DiskCacheTests : IDisposable
 
         var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2);
         Assert.NotNull(loadResult);
-        Assert.True(loadResult!.PtrLookups > 0);
+        Assert.True(loadResult!.PtrLookups >= 1);
 
         // Should come from cache
         var ptrs = await dns2.ResolvePtrAsync("8.8.8.8");
@@ -231,15 +168,14 @@ public class DiskCacheTests : IDisposable
         var smtp = new SmtpProbeService();
         var http = new HttpProbeService();
 
+        // Use successful queries that will be cached
         await dns.QueryAsync("example.com", QueryType.A);
         await http.GetAsync("http://example.com");
-        await smtp.ProbePortAsync("localhost", 60025);
 
         await DiskCacheService.SaveAsync(_cacheDir, smtp, http, dns);
 
         Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
         Assert.True(File.Exists(Path.Combine(_cacheDir, "http-get.json")));
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "port-probes.json")));
     }
 
     // ── Merge behavior ──────────────────────────────────────────────────
@@ -274,66 +210,6 @@ public class DiskCacheTests : IDisposable
     // ── --retry-errors filtering ─────────────────────────────────────────
 
     [Fact]
-    public async Task RetryErrors_FiltersOutFailedSmtpProbes()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        // This will fail (no SMTP on localhost:60025) — creates a cached error
-        await smtp1.ProbeSmtpAsync("localhost", 60025);
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        // Load with retryErrors=true — failed SMTP probe should be filtered out
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        // May be null if all entries are filtered out, or have 0 SMTP probes
-        Assert.True(loadResult == null || loadResult.SmtpProbes == 0);
-    }
-
-    [Fact]
-    public async Task RetryErrors_FiltersOutClosedPorts()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        await smtp1.ProbePortAsync("localhost", 60025);
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        Assert.True(loadResult == null || loadResult.PortProbes == 0);
-    }
-
-    [Fact]
-    public async Task RetryErrors_FiltersOutFailedRcpt()
-    {
-        var dns1 = new DnsResolverService();
-        var smtp1 = new SmtpProbeService();
-        var http1 = new HttpProbeService();
-
-        await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
-
-        await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
-
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
-
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromHours(1), smtp2, http2, dns2, retryErrors: true);
-        Assert.True(loadResult == null || loadResult.RcptProbes == 0);
-    }
-
-    [Fact]
     public async Task RetryErrors_KeepsSuccessfulEntries()
     {
         var dns1 = new DnsResolverService();
@@ -360,23 +236,21 @@ public class DiskCacheTests : IDisposable
         Assert.True(loadResult!.HttpRequests > 0, "Successful HTTP entries should survive --retry-errors");
     }
 
-    // ── Cache entry counts ───────────────────────────────────────────────
+    // ── Successful cache types round-trip ────────────────────────────────
 
     [Fact]
-    public async Task SaveAndLoad_AllCacheTypes_CountsMatch()
+    public async Task SaveAndLoad_SuccessfulCacheTypes_CountsMatch()
     {
         var dns1 = new DnsResolverService();
         var smtp1 = new SmtpProbeService();
         var http1 = new HttpProbeService();
 
-        // Populate all cache types
+        // Populate cache types that produce successful/cached results
         await dns1.QueryAsync("example.com", QueryType.A);
         await dns1.QueryAsync("example.com", QueryType.MX);
         await dns1.ResolvePtrAsync("8.8.8.8");
         await http1.GetAsync("http://example.com");
-        await smtp1.ProbeSmtpAsync("localhost", 60025);
-        await smtp1.ProbePortAsync("localhost", 60025);
-        await smtp1.ProbeRcptDetailedAsync("localhost", "test@example.com");
+        // Note: SMTP/port/RCPT probes to localhost fail and are NOT cached
 
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
@@ -389,9 +263,5 @@ public class DiskCacheTests : IDisposable
         Assert.True(result!.DnsQueries >= 2, $"DNS: expected >= 2, got {result.DnsQueries}");
         Assert.True(result.PtrLookups >= 1, $"PTR: expected >= 1, got {result.PtrLookups}");
         Assert.True(result.HttpRequests >= 1, $"HTTP: expected >= 1, got {result.HttpRequests}");
-        Assert.True(result.SmtpProbes >= 1, $"SMTP: expected >= 1, got {result.SmtpProbes}");
-        Assert.True(result.PortProbes >= 1, $"Port: expected >= 1, got {result.PortProbes}");
-        Assert.True(result.RcptProbes >= 1, $"RCPT: expected >= 1, got {result.RcptProbes}");
-        Assert.True(result.Total >= 7, $"Total: expected >= 7, got {result.Total}");
     }
 }

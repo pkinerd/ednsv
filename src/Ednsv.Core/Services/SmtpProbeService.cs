@@ -107,7 +107,10 @@ public class SmtpProbeService
             if (Trace != null && sw != null)
                 Trace($"[SMTP] PROBE DONE {host}:{port}: {sw.ElapsedMilliseconds}ms connected={result.Connected} tls={result.SupportsStartTls} connect={result.ConnectTimeMs}ms banner={result.BannerTimeMs}ms ehlo={result.EhloTimeMs}ms tls={result.TlsTimeMs}ms");
             return result;
-        }, RecheckHelper.CacheDep.Smtp);
+        }, RecheckHelper.CacheDep.Smtp,
+        // Cache successful probes and definitive failures (connection refused).
+        // Only skip caching when all attempts timed out (transient).
+        shouldPersist: result => result.Connected || result.Error != "Connection timed out");
     }
 
     private async Task<SmtpProbeResult> ProbeSmtpAttemptAsync(string host, int port)
@@ -238,6 +241,7 @@ public class SmtpProbeService
     public async Task<bool> ProbePortAsync(string host, int port)
     {
         var cacheKey = $"port:{host.ToLowerInvariant()}:{port}";
+        bool allTimedOut = true;
         return await _portCache.GetOrCreateAsync(cacheKey, async () =>
         {
             Interlocked.Increment(ref _portsStarted);
@@ -251,16 +255,18 @@ public class SmtpProbeService
                     using var client = new TcpClient();
                     var connectTask = client.ConnectAsync(host, port);
                     if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
-                        reachable = false;
+                        reachable = false; // timeout — transient
                     else
                     {
                         await connectTask;
                         reachable = true;
+                        allTimedOut = false;
                     }
                 }
                 catch
                 {
                     reachable = false;
+                    allTimedOut = false; // connection refused — definitive
                 }
                 if (reachable) break;
             }
@@ -268,7 +274,10 @@ public class SmtpProbeService
             if (Trace != null && portSw != null)
                 Trace($"[PORT] PROBE DONE {host}:{port}: {portSw.ElapsedMilliseconds}ms open={reachable}");
             return reachable;
-        }, RecheckHelper.CacheDep.Port);
+        }, RecheckHelper.CacheDep.Port,
+        // Cache open ports and definitive refusals. Only skip caching
+        // when all attempts timed out (transient network issue).
+        shouldPersist: result => result || !allTimedOut);
     }
 
     public async Task<bool> ProbeRcptAsync(string host, string address)
@@ -292,7 +301,9 @@ public class SmtpProbeService
                 break;
         }
 
-        _rcptCache.TryAdd(cacheKey, lastResult);
+        // Only cache definitive server responses, not transient failures
+        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
+            _rcptCache.TryAdd(cacheKey, lastResult);
         return lastResult;
     }
 
@@ -417,7 +428,9 @@ public class SmtpProbeService
             return cached;
 
         var result = await PerformRelayTestAsync(mxHost, domain);
-        _relayCache.TryAdd(cacheKey, result);
+        // Only cache definitive results, not transient failures
+        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out"))
+            _relayCache.TryAdd(cacheKey, result);
         return result;
     }
 
@@ -544,33 +557,27 @@ public class SmtpProbeService
             _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
     }
 
-    // ── Recheck support ─────────────────────────────────────────────────
+    // ── Cache entry removal ───────────────────────────────────────────────
 
-    public void RemoveProbeEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]), importedOnly);
+    public void RemoveProbeEntries(Func<string, bool> predicate)
+        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]));
 
-    public void RemovePortEntries(Func<string, bool> predicate, bool importedOnly = true)
-        => _portCache.Remove(predicate, importedOnly);
+    public void RemovePortEntries(Func<string, bool> predicate)
+        => _portCache.Remove(predicate);
 
-    public void RemoveRcptEntries(Func<string, bool> predicate, bool importedOnly = true)
+    public void RemoveRcptEntries(Func<string, bool> predicate)
     {
         var toRemove = _rcptCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _rcptCache.TryRemove(key, out _);
     }
 
-    public void RemoveRelayEntries(Func<string, bool> predicate, bool importedOnly = true)
+    public void RemoveRelayEntries(Func<string, bool> predicate)
     {
         var toRemove = _relayCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _relayCache.TryRemove(key, out _);
     }
-
-    // Backward-compatible aliases for CLI code
-    public void RemoveImportedProbeEntries(Func<string, bool> predicate) => RemoveProbeEntries(predicate, importedOnly: true);
-    public void RemoveImportedPortEntries(Func<string, bool> predicate) => RemovePortEntries(predicate, importedOnly: true);
-    public void RemoveImportedRcptEntries(Func<string, bool> predicate) => RemoveRcptEntries(predicate, importedOnly: true);
-    public void RemoveImportedRelayEntries(Func<string, bool> predicate) => RemoveRelayEntries(predicate, importedOnly: true);
 
     public Dictionary<string, RelayCacheEntry> ExportRelayCache()
     {

@@ -10,7 +10,7 @@ public class SoaRecordCheck : ICheck
     public string Name => "SOA Record";
     public CheckCategory Category => CheckCategory.SOA;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -76,7 +76,7 @@ public class NsRecordsCheck : ICheck
     public string Name => "NS Records";
     public CheckCategory Category => CheckCategory.NS;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -111,7 +111,7 @@ public class NsLameDelegationCheck : ICheck
     public string Name => "NS Lame Delegation";
     public CheckCategory Category => CheckCategory.NS;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int lameCount = 0;
@@ -208,7 +208,7 @@ public class NsNetworkDiversityCheck : ICheck
     public string Name => "NS Network Diversity";
     public CheckCategory Category => CheckCategory.NS;
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -267,7 +267,7 @@ public class SoaSerialConsistencyCheck : ICheck
     public string Name => "SOA Serial Consistency";
     public CheckCategory Category => CheckCategory.SOA;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -364,7 +364,7 @@ public class OpenRecursiveResolverCheck : ICheck
     public string Name => "Open Recursive Resolver Detection";
     public CheckCategory Category => CheckCategory.NS;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -452,7 +452,7 @@ public class DuplicateNsIpCheck : ICheck
     public string Name => "Duplicate NS IPs";
     public CheckCategory Category => CheckCategory.NS;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;

@@ -250,6 +250,9 @@ public class DiskCacheService
 
     // ── Domain results persistence ──────────────────────────────────────
 
+    // Serializes concurrent read-modify-write to domain-results.json
+    private static readonly SemaphoreSlim _domainResultsLock = new(1, 1);
+
     /// <summary>
     /// Saves a domain's validation result summary to the cache directory.
     /// Merges with existing results from other domains.
@@ -259,24 +262,32 @@ public class DiskCacheService
         Directory.CreateDirectory(cacheDir);
         var path = Path.Combine(cacheDir, DomainResultsFile);
 
-        Dictionary<string, DomainResultSummary>? existing = null;
-        if (File.Exists(path))
+        await _domainResultsLock.WaitAsync();
+        try
         {
-            try
+            Dictionary<string, DomainResultSummary>? existing = null;
+            if (File.Exists(path))
             {
-                var json = await File.ReadAllTextAsync(path);
-                existing = JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+                try
+                {
+                    var json = await File.ReadAllTextAsync(path);
+                    existing = JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+                }
+                catch { /* corrupt — overwrite */ }
             }
-            catch { /* corrupt — overwrite */ }
+
+            var merged = existing ?? new Dictionary<string, DomainResultSummary>();
+            merged[domain.ToLowerInvariant()] = summary;
+
+            var output = JsonSerializer.Serialize(merged, JsonOptions);
+            var tmp = path + ".tmp";
+            await File.WriteAllTextAsync(tmp, output);
+            File.Move(tmp, path, overwrite: true);
         }
-
-        var merged = existing ?? new Dictionary<string, DomainResultSummary>();
-        merged[domain.ToLowerInvariant()] = summary;
-
-        var output = JsonSerializer.Serialize(merged, JsonOptions);
-        var tmp = path + ".tmp";
-        await File.WriteAllTextAsync(tmp, output);
-        File.Move(tmp, path, overwrite: true);
+        finally
+        {
+            _domainResultsLock.Release();
+        }
     }
 
     /// <summary>
@@ -443,7 +454,7 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
     public async Task FlushAsync()
     {
         if (_disposed) return;
-        if (!_lock.Wait(0)) return; // skip if a flush is already in progress
+        if (!await _lock.WaitAsync(0)) return; // skip if a flush is already in progress
         try
         {
             await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);

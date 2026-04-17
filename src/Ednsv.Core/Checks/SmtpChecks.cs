@@ -11,7 +11,7 @@ public class SmtpTlsCertCheck : ICheck
     public string Name => "SMTP TLS Certificate";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -95,7 +95,7 @@ public class DaneTlsaCertMatchCheck : ICheck
     public string Name => "DANE TLSA Cert Match";
     public CheckCategory Category => CheckCategory.DANE;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -223,7 +223,7 @@ public class SmtpBannerCheck : ICheck
     public string Name => "SMTP Banner Validation";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -294,7 +294,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
     public string Name => "SMTP Banner vs Reverse DNS";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -403,7 +403,7 @@ public class SmtpTransactionTimingCheck : ICheck
     public string Name => "SMTP Transaction Timing";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -503,7 +503,7 @@ public class EhloCapabilitiesCheck : ICheck
     public string Name => "EHLO Capabilities";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -566,7 +566,7 @@ public class SubmissionPortsCheck : ICheck
     public string Name => "Submission Ports";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -662,7 +662,7 @@ public class PostmasterAddressCheck : ICheck
     public string Name => "Postmaster Address";
     public CheckCategory Category => CheckCategory.Postmaster;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -740,7 +740,7 @@ public class AbuseAddressCheck : ICheck
     public string Name => "Abuse Address";
     public CheckCategory Category => CheckCategory.Abuse;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -818,7 +818,7 @@ public class OpenRelayCheck : ICheck
     public string Name => "Open Relay Test";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -881,7 +881,7 @@ public class CatchAllDetectionCheck : ICheck
     public string Name => "Catch-All Detection";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -938,7 +938,7 @@ public class SmtpStarttlsEnforcementCheck : ICheck
     public string Name => "STARTTLS Enforcement";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -1003,7 +1003,7 @@ public class SmtpIpv6ConnectivityCheck : ICheck
     public string Name => "SMTP IPv6 Connectivity";
     public CheckCategory Category => CheckCategory.IPv6;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 

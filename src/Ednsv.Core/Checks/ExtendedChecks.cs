@@ -15,7 +15,7 @@ public class SmtpSizeCheck : ICheck
     public string Name => "SMTP Max Message Size";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -65,7 +65,7 @@ public class SpfOverlapCheck : ICheck
     public string Name => "SPF IP Overlap Detection";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -176,7 +176,7 @@ public class DnsPropagationCheck : ICheck
         ("9.9.9.9", "Quad9"),
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -242,7 +242,7 @@ public class ArcCheck : ICheck
 
     private static readonly string[] ArcSelectors = { "arc", "s1", "s2", "google", "selector1", "selector2", "default" };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int found = 0;
@@ -305,7 +305,7 @@ public class ProviderVerificationTxtCheck : ICheck
         ("mailru-verification:", "Mail.ru"),
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -343,7 +343,7 @@ public class SmtpRequireTlsCheck : ICheck
     public string Name => "SMTP REQUIRETLS (RFC 8689)";
     public CheckCategory Category => CheckCategory.SMTP;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -395,7 +395,7 @@ public class NsGlueRecordCheck : ICheck
     public string Name => "NS Glue Records";
     public CheckCategory Category => CheckCategory.Delegation;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -477,7 +477,7 @@ public class MailSubdomainSurveyCheck : ICheck
         "bounce", "return", "send", "newsletter", "marketing"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -525,7 +525,7 @@ public class CertificateTransparencyCheck : ICheck
     public string Name => "Certificate Transparency";
     public CheckCategory Category => CheckCategory.CAA;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -577,7 +577,7 @@ public class MxReverseDnsCheck : ICheck
     public string Name => "MX Reverse DNS (PTR)";
     public CheckCategory Category => CheckCategory.PTR;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -667,7 +667,7 @@ public class NsecZoneWalkCheck : ICheck
     public string Name => "NSEC/NSEC3 Zone Walk";
     public CheckCategory Category => CheckCategory.DNSSEC;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -741,7 +741,7 @@ public class DuplicateTxtRecordCheck : ICheck
     public string Name => "Duplicate/Conflicting TXT Records";
     public CheckCategory Category => CheckCategory.TXT;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -833,7 +833,7 @@ public class SubdomainSpfGapCheck : ICheck
         "bounce", "send", "outbound", "notifications", "transactional"
     };
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -848,6 +848,28 @@ public class SubdomainSpfGapCheck : ICheck
 
             var missingSpf = new List<string>();
             var hasSpf = new List<string>();
+
+            // Check if DMARC subdomain policy already protects subdomains.
+            // sp=reject means unauthenticated subdomain mail is rejected regardless of SPF.
+            bool dmarcSpReject = false;
+            bool dmarcSpInherited = false; // true when sp= absent, inherited from p=
+            if (ctx.DmarcRecord != null)
+            {
+                var spMatch = System.Text.RegularExpressions.Regex.Match(
+                    ctx.DmarcRecord, @";\s*sp\s*=\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                dmarcSpReject = spMatch.Success &&
+                    spMatch.Groups[1].Value.Equals("reject", StringComparison.OrdinalIgnoreCase);
+                // If no sp= tag, DMARC inherits from p= (RFC 7489 §6.3)
+                if (!spMatch.Success)
+                {
+                    var pMatch = System.Text.RegularExpressions.Regex.Match(
+                        ctx.DmarcRecord, @";\s*p\s*=\s*(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    dmarcSpReject = pMatch.Success &&
+                        pMatch.Groups[1].Value.Equals("reject", StringComparison.OrdinalIgnoreCase);
+                    if (dmarcSpReject) dmarcSpInherited = true;
+                }
+            }
+            var dmarcPolicyDesc = dmarcSpInherited ? "DMARC p=reject (inherited by subdomains)" : "DMARC sp=reject";
 
             // Rate limiting is handled globally by DnsResolverService.
             var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
@@ -865,6 +887,7 @@ public class SubdomainSpfGapCheck : ICheck
 
             var results = await Task.WhenAll(tasks);
 
+            int dmarcProtected = 0;
             foreach (var (sub, exists, spf) in results)
             {
                 if (!exists) continue;
@@ -873,10 +896,15 @@ public class SubdomainSpfGapCheck : ICheck
                     hasSpf.Add(sub);
                     result.Details.Add($"{sub}.{domain}: Has SPF record");
                 }
+                else if (dmarcSpReject)
+                {
+                    dmarcProtected++;
+                    result.Details.Add($"{sub}.{domain}: No SPF, but protected by {dmarcPolicyDesc}");
+                }
                 else
                 {
                     missingSpf.Add(sub);
-                    result.Warnings.Add($"{sub}.{domain}: Exists but no SPF — spoofable if DMARC sp≠reject");
+                    result.Warnings.Add($"{sub}.{domain}: Exists but no SPF — spoofable (DMARC sp≠reject)");
                 }
             }
 
@@ -885,10 +913,15 @@ public class SubdomainSpfGapCheck : ICheck
                 result.Severity = CheckSeverity.Warning;
                 result.Summary = $"{missingSpf.Count} active mail subdomain(s) missing SPF records";
             }
-            else if (hasSpf.Any())
+            else if (hasSpf.Any() || dmarcProtected > 0)
             {
                 result.Severity = CheckSeverity.Pass;
-                result.Summary = "All active mail subdomains have SPF records";
+                if (dmarcProtected > 0 && !hasSpf.Any())
+                    result.Summary = $"{dmarcProtected} active mail subdomain(s) protected by {dmarcPolicyDesc}";
+                else if (dmarcProtected > 0)
+                    result.Summary = $"All active mail subdomains covered (SPF: {hasSpf.Count}, {dmarcPolicyDesc}: {dmarcProtected})";
+                else
+                    result.Summary = "All active mail subdomains have SPF records";
             }
             else
             {

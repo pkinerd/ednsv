@@ -266,6 +266,9 @@ public class DomainValidator
             RecheckDeps = RecheckDeps
         };
 
+        // ── Set per-validation error routing (flows through async calls) ──
+        DnsResolverService.CurrentQueryErrors.Value = context.QueryErrors;
+
         // ── Set per-validation recheck context (flows through async calls) ──
         RecheckHelper.CurrentRecheckDeps.Value = RecheckDeps;
 
@@ -305,23 +308,20 @@ public class DomainValidator
             async (check, _) =>
             {
                 var checkSw = Stopwatch.StartNew();
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
                 try
                 {
                     OnCheckStarted?.Invoke(check.Name);
-                    var checkTask = check.RunAsync(domain, context);
-                    var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
+                    var results = await check.RunAsync(domain, context, cts.Token);
                     checkSw.Stop();
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
-
-                    if (completedTask == checkTask)
-                    {
-                        var results = await checkTask;
-                        concurrentResults.Add((check, results, null, checkSw.Elapsed, false));
-                    }
-                    else
-                    {
-                        concurrentResults.Add((check, null, null, checkSw.Elapsed, true));
-                    }
+                    concurrentResults.Add((check, results, null, checkSw.Elapsed, false));
+                }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                {
+                    checkSw.Stop();
+                    OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    concurrentResults.Add((check, null, null, checkSw.Elapsed, true));
                 }
                 catch (Exception ex)
                 {
@@ -375,14 +375,13 @@ public class DomainValidator
             try
             {
                 OnCheckStarted?.Invoke(check.Name);
-                var checkTask = check.RunAsync(domain, context);
-                var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(30)));
+                using var retryCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 List<CheckResult> results;
-                if (completedTask == checkTask)
+                try
                 {
-                    results = await checkTask;
+                    results = await check.RunAsync(domain, context, retryCts.Token);
                 }
-                else
+                catch (OperationCanceledException) when (retryCts.IsCancellationRequested)
                 {
                     results = new List<CheckResult>
                     {
@@ -442,8 +441,9 @@ public class DomainValidator
         report.Duration = _validationSw.Elapsed;
         TraceLog($"[PHASE] VALIDATION COMPLETE: {_validationSw.ElapsedMilliseconds}ms total, {report.Results.Count} results (pass:{report.PassCount} warn:{report.WarningCount} err:{report.ErrorCount} crit:{report.CriticalCount})");
 
-        // Clear per-validation recheck context
+        // Clear per-validation contexts
         RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.None;
+        DnsResolverService.CurrentQueryErrors.Value = null;
 
         return report;
     }
@@ -464,14 +464,13 @@ public class DomainValidator
             OnCheckStarted?.Invoke(check.Name);
             TraceLog($"[CHECK] START {check.Name}");
             var checkSw = Stopwatch.StartNew();
-            var checkTask = check.RunAsync(domain, context);
-            var completedTask = await Task.WhenAny(checkTask, Task.Delay(TimeSpan.FromSeconds(45)));
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             List<CheckResult> results;
-            if (completedTask == checkTask)
+            try
             {
-                results = await checkTask;
+                results = await check.RunAsync(domain, context, cts.Token);
             }
-            else
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
                 timedOutChecks.Add(check);
                 checkSw.Stop();

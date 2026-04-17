@@ -10,7 +10,7 @@ public class DelegationChainCheck : ICheck
     public string Name => "Delegation Chain";
     public CheckCategory Category => CheckCategory.Delegation;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category, Severity = CheckSeverity.Info };
         var parts = domain.Split('.');
@@ -66,7 +66,7 @@ public class AuthoritativeNsCheck : ICheck
     public string Name => "Authoritative NS";
     public CheckCategory Category => CheckCategory.Delegation;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category, Severity = CheckSeverity.Info };
 
@@ -102,10 +102,11 @@ public class AuthoritativeNsCheck : ICheck
                 result.Errors.Add($"{domain} returned NXDOMAIN — this domain/subdomain is not configured in DNS");
             }
 
+            var nsHosts = new List<string>();
             foreach (var ns in nsRecords)
             {
                 var nsHost = ns.NSDName.Value.TrimEnd('.');
-                ctx.NsHosts.Add(nsHost);
+                nsHosts.Add(nsHost);
 
                 var aRecords = await ctx.Dns.ResolveAAsync(nsHost);
                 var aaaaRecords = await ctx.Dns.ResolveAAAAAsync(nsHost);
@@ -121,6 +122,7 @@ public class AuthoritativeNsCheck : ICheck
                 if (!allIps.Any())
                     result.Details.Add($"NS: {nsHost} -> No A or AAAA records found");
             }
+            ctx.NsHosts = nsHosts;
 
             if (!isNxDomain)
             {
@@ -144,7 +146,7 @@ public class DelegationConsistencyCheck : ICheck
     public string Name => "Delegation Consistency";
     public CheckCategory Category => CheckCategory.Delegation;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category, Severity = CheckSeverity.Info };
 

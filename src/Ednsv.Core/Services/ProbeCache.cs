@@ -26,8 +26,6 @@ public class ProbeCache<TValue> where TValue : class
     private readonly TimeSpan? _ttl;
     // Write-through log for disk export — never read during cache lookups
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
-    // Track which keys were imported from disk (for CLI recheck importedOnly mode)
-    private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
     // In-flight query deduplication — concurrent callers for the same key share one Task.
     // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
     // factory on multiple threads, only one Lazy is stored and only its .Value (which
@@ -68,12 +66,13 @@ public class ProbeCache<TValue> where TValue : class
     /// Get a cached value or create it using the factory. Only one factory call
     /// runs per key — concurrent callers await the same Task. On failure, the
     /// in-flight entry is removed so the next caller retries.
-    /// The optional shouldCache predicate controls whether the result is stored;
-    /// if it returns false, the result is returned but not cached (next caller retries).
+    /// The optional shouldPersist predicate controls disk persistence: when false,
+    /// the result is still cached in MemoryCache (for within-run dedup) but not
+    /// added to the export log (so it won't be saved to disk).
     /// </summary>
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
-        Func<TValue, bool>? shouldCache = null,
+        Func<TValue, bool>? shouldPersist = null,
         Action? onHit = null)
     {
         // 1. Check cache (respects recheck bypass)
@@ -91,7 +90,7 @@ public class ProbeCache<TValue> where TValue : class
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldCache));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist));
         });
 
         if (!isNewEntry)
@@ -109,13 +108,17 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldCache)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist)
     {
         try
         {
             var result = await factory();
-            if (shouldCache == null || shouldCache(result))
+            // Always cache in MemoryCache (avoids repeated network calls within a run).
+            // Only add to _exportLog when shouldPersist approves (controls disk persistence).
+            if (shouldPersist == null || shouldPersist(result))
                 Set(key, result);
+            else
+                SetMemoryOnly(key, result);
             return result;
         }
         finally
@@ -124,7 +127,7 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a value in the cache and the export log.</summary>
+    /// <summary>Store a value in MemoryCache and the disk export log.</summary>
     public void Set(string key, TValue value)
     {
         if (_ttl.HasValue)
@@ -135,11 +138,23 @@ public class ProbeCache<TValue> where TValue : class
         _exportLog[key] = value;
     }
 
-    /// <summary>Import entries from disk (marks them as imported for CLI recheck).</summary>
+    /// <summary>
+    /// Store a value in MemoryCache only — NOT added to the disk export log.
+    /// Used for error/timeout results that should be available within the current
+    /// process (avoiding repeated network calls) but not persisted across restarts.
+    /// </summary>
+    private void SetMemoryOnly(string key, TValue value)
+    {
+        if (_ttl.HasValue)
+            _cache.Set(key, value, _ttl.Value);
+        else
+            _cache.Set(key, value);
+    }
+
+    /// <summary>Import entries from disk into the cache.</summary>
     public void Import(string key, TValue value)
     {
         Set(key, value);
-        _importedKeys.TryAdd(key, true);
     }
 
     /// <summary>Export all entries that are still alive in MemoryCache.</summary>
@@ -155,17 +170,15 @@ public class ProbeCache<TValue> where TValue : class
         return result;
     }
 
-    /// <summary>Remove entries matching a predicate. importedOnly=true only removes disk-imported entries.</summary>
-    public void Remove(Func<string, bool> predicate, bool importedOnly = true)
+    /// <summary>Remove entries matching a predicate.</summary>
+    public void Remove(Func<string, bool> predicate)
     {
-        var keys = importedOnly ? _importedKeys.Keys : (ICollection<string>)_exportLog.Keys;
-        foreach (var key in keys)
+        foreach (var key in _exportLog.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
                 _exportLog.TryRemove(key, out _);
-                _importedKeys.TryRemove(key, out _);
             }
         }
     }
@@ -182,7 +195,6 @@ public class ProbeCacheValue<TValue> where TValue : struct
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
-    private readonly ConcurrentDictionary<string, bool> _importedKeys = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
     /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
@@ -216,7 +228,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
     }
 
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
-        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
+        Func<TValue, bool>? shouldPersist = null)
     {
         if (TryGet(key, out var cached, recheckFlag))
         {
@@ -228,7 +241,7 @@ public class ProbeCacheValue<TValue> where TValue : struct
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist));
         });
 
         if (!isNewEntry)
@@ -245,12 +258,15 @@ public class ProbeCacheValue<TValue> where TValue : struct
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist)
     {
         try
         {
             var result = await factory();
-            Set(key, result);
+            if (shouldPersist == null || shouldPersist(result))
+                Set(key, result);
+            else
+                SetMemoryOnly(key, result);
             return result;
         }
         finally
@@ -270,10 +286,18 @@ public class ProbeCacheValue<TValue> where TValue : struct
         _exportLog[key] = value;
     }
 
+    private void SetMemoryOnly(string key, TValue value)
+    {
+        var box = new Box { Value = value };
+        if (_ttl.HasValue)
+            _cache.Set(key, box, _ttl.Value);
+        else
+            _cache.Set(key, box);
+    }
+
     public void Import(string key, TValue value)
     {
         Set(key, value);
-        _importedKeys.TryAdd(key, true);
     }
 
     public Dictionary<string, TValue> Export()
@@ -287,16 +311,14 @@ public class ProbeCacheValue<TValue> where TValue : struct
         return result;
     }
 
-    public void Remove(Func<string, bool> predicate, bool importedOnly = true)
+    public void Remove(Func<string, bool> predicate)
     {
-        var keys = importedOnly ? _importedKeys.Keys : (ICollection<string>)_exportLog.Keys;
-        foreach (var key in keys)
+        foreach (var key in _exportLog.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
                 _exportLog.TryRemove(key, out _);
-                _importedKeys.TryRemove(key, out _);
             }
         }
     }

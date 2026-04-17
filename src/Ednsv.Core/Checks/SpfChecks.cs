@@ -26,7 +26,7 @@ public class SpfRecordCheck : ICheck
     public string Name => "SPF Record";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -264,7 +264,7 @@ public class SpfExpansionCheck : ICheck
     private int _maxDepth;
     private readonly HashSet<string> _visitedDomains = new(StringComparer.OrdinalIgnoreCase);
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         _lookupCount = 0;
@@ -478,7 +478,7 @@ public class SpfLookupCountCheck : ICheck
     public string Name => "SPF Lookup Count";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -588,7 +588,7 @@ public class SpfIncludeDepthCheck : ICheck
     public string Name => "SPF Include Depth";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -649,7 +649,7 @@ public class SpfRecordSizeCheck : ICheck
     public string Name => "SPF Record Size";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;
@@ -691,7 +691,7 @@ public class SpfMacrosCheck : ICheck
     public string Name => "SPF Macros";
     public CheckCategory Category => CheckCategory.SPF;
 
-    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx)
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         await Task.CompletedTask;
