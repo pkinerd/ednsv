@@ -7,6 +7,7 @@ using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
 using Ednsv.Core.Services;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -124,6 +125,37 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
     opts.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
 });
 
+// ── OpenAPI / Swagger ────────────────────────────────────────────────────
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "ednsv API",
+        Version = "v1",
+        Description = "Email/DNS validation service. All endpoints require "
+            + "authentication when EDNSV_AUTH_TOKEN_HASH is set."
+    });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        Description = "Token issued by /api/auth/login or /api/auth/users."
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecurityScheme
+        {
+            Reference = new OpenApiReference
+            {
+                Type = ReferenceType.SecurityScheme,
+                Id = "Bearer"
+            }
+        }] = Array.Empty<string>()
+    });
+});
+
 var app = builder.Build();
 
 // ── Load cache from disk at startup ──────────────────────────────────────
@@ -221,6 +253,14 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+// ── Swagger UI (auth-gated by the middleware above) ──────────────────────
+app.UseSwagger();
+app.UseSwaggerUI(c =>
+{
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "ednsv API v1");
+    c.DocumentTitle = "ednsv API";
+});
+
 // ── Static files (wwwroot/index.html) ────────────────────────────────────
 app.UseDefaultFiles();
 app.UseStaticFiles();
@@ -259,7 +299,9 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
-});
+})
+.WithName("StartValidation")
+.WithTags("Validation");
 
 // GET /api/status/{jobId}
 // Returns the current status and results (if complete) for a validation job.
@@ -305,7 +347,9 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         report = job.Report,
         error = job.Error
     });
-});
+})
+.WithName("GetValidationStatus")
+.WithTags("Validation");
 
 // GET /api/validate/{domain}
 // Synchronous convenience endpoint — runs validation and returns the full report.
@@ -380,7 +424,9 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     {
         return Results.StatusCode(504);
     }
-});
+})
+.WithName("ValidateDomainSync")
+.WithTags("Validation");
 
 // GET /api/cache/stats
 app.MapGet("/api/cache/stats", (DnsResolverService dnsSvc) =>
@@ -391,17 +437,23 @@ app.MapGet("/api/cache/stats", (DnsResolverService dnsSvc) =>
         dnsCacheHits = dnsSvc.CacheHits,
         dnsCacheMisses = dnsSvc.CacheMisses
     });
-});
+})
+.WithName("GetCacheStats")
+.WithTags("Cache");
 
 // POST /api/cache/flush
 app.MapPost("/api/cache/flush", async (CacheManager cache) =>
 {
     await cache.FlushAsync();
     return Results.Ok(new { flushed = true });
-});
+})
+.WithName("FlushCache")
+.WithTags("Cache");
 
 // GET /api/checks
-app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories));
+app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories))
+    .WithName("ListChecks")
+    .WithTags("Meta");
 
 // GET /api/defaults — surface server-side defaults the UI needs to pre-fill
 // the validation form (default DKIM list and the per-domain overrides map so
@@ -419,7 +471,9 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
             : DkimSelectorsCheck.CommonSelectors.ToList(),
         perDomainDkimSelectors = cfg.DkimSelectors
     });
-});
+})
+.WithName("GetDefaults")
+.WithTags("Meta");
 
 // ── Config endpoints (admin-only) ────────────────────────────────────────
 
@@ -441,7 +495,9 @@ app.MapGet("/api/config", (HttpContext ctx, AuthService auth, ConfigService cfgS
 {
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
     return Results.Ok(cfgSvc.Snapshot());
-});
+})
+.WithName("GetConfig")
+.WithTags("Config");
 
 // PUT /api/config — replace the config and persist to disk.
 app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
@@ -459,7 +515,9 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
     if (incoming == null) return Results.BadRequest(new { error = "body is required" });
     cfgSvc.Replace(incoming);
     return Results.Ok(cfgSvc.Snapshot());
-});
+})
+.WithName("UpdateConfig")
+.WithTags("Config");
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 
@@ -470,7 +528,9 @@ app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
     var u = (AuthService.User?)ctx.Items["AuthUser"];
     var isRoot = u?.Username.Equals(AuthService.RootUsername, StringComparison.OrdinalIgnoreCase) ?? false;
     return Results.Ok(new { disabled = false, username = u?.Username, isAdmin = u?.IsAdmin ?? false, isRoot });
-});
+})
+.WithName("GetCurrentUser")
+.WithTags("Auth");
 
 // POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
 app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService auth) =>
@@ -494,14 +554,18 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService a
         MaxAge = TimeSpan.FromDays(30)
     });
     return Results.Ok(new { username = user.Username, isAdmin = user.IsAdmin });
-});
+})
+.WithName("Login")
+.WithTags("Auth");
 
 // POST /api/auth/logout — clears the session cookie.
 app.MapPost("/api/auth/logout", (HttpContext ctx) =>
 {
     ctx.Response.Cookies.Delete("ednsv-auth", new CookieOptions { Path = "/" });
     return Results.Ok(new { ok = true });
-});
+})
+.WithName("Logout")
+.WithTags("Auth");
 
 // GET /api/auth/users — list users visible to the caller (descendants; root sees all).
 app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
@@ -528,7 +592,9 @@ app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
             x.RevokedBy
         })
     });
-});
+})
+.WithName("ListUsers")
+.WithTags("Auth");
 
 // POST /api/auth/users — issue a new token. Returns the raw token exactly once.
 app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthService auth) =>
@@ -558,7 +624,9 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
         AuthService.IssueStatus.InvalidUsername => Results.BadRequest(new { error = "invalid username (allowed: letters, digits, '.', '_', '-', max 64 chars)" }),
         _ => Results.BadRequest(new { error = "issue failed" })
     };
-});
+})
+.WithName("IssueToken")
+.WithTags("Auth");
 
 // POST /api/auth/users/{username}/revoke — cascade-revoke target and descendants.
 app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext ctx, AuthService auth) =>
@@ -574,7 +642,9 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
         AuthService.RevokeStatus.NotAllowed => Results.StatusCode(StatusCodes.Status403Forbidden),
         _ => Results.BadRequest(new { error = "revoke failed" })
     };
-});
+})
+.WithName("RevokeUser")
+.WithTags("Auth");
 
 // DELETE /api/auth/users/{username} — root-only permanent removal of a revoked user.
 app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, AuthService auth) =>
@@ -590,7 +660,9 @@ app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, A
         AuthService.DeleteStatus.NotRevoked => Results.BadRequest(new { error = "user is not revoked; revoke first" }),
         _ => Results.BadRequest(new { error = "delete failed" })
     };
-});
+})
+.WithName("DeleteUser")
+.WithTags("Auth");
 
 app.Run();
 
