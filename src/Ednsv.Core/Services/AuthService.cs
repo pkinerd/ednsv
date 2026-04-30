@@ -29,7 +29,7 @@ public sealed class AuthService
         public string Username { get; set; } = "";
         public string Hash { get; set; } = "";
         public string IssuedBy { get; set; } = "";
-        public bool CanIssue { get; set; }
+        public bool IsAdmin { get; set; }
         public DateTime IssuedAt { get; set; }
         public string? IssuedFromIp { get; set; }
         public bool Revoked { get; set; }
@@ -77,6 +77,30 @@ public sealed class AuthService
         var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
         if (file?.Users != null)
         {
+            // Backward-compat: legacy "canIssue" field upgrades to IsAdmin.
+            // Walk the raw JSON in array order to detect the old key.
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("users", out var arr) &&
+                    arr.ValueKind == JsonValueKind.Array)
+                {
+                    int i = 0;
+                    foreach (var el in arr.EnumerateArray())
+                    {
+                        if (i >= file.Users.Count) break;
+                        if (!file.Users[i].IsAdmin &&
+                            el.TryGetProperty("canIssue", out var ci) &&
+                            ci.ValueKind == JsonValueKind.True)
+                        {
+                            file.Users[i].IsAdmin = true;
+                        }
+                        i++;
+                    }
+                }
+            }
+            catch { /* best-effort migration */ }
+
             lock (_lock) _users = file.Users;
         }
     }
@@ -157,7 +181,7 @@ public sealed class AuthService
     public sealed record IssueResult(IssueStatus Status, User? User = null, string? Token = null);
 
     /// <summary>Issues a new token. Returns the raw token (only chance to read it).</summary>
-    public IssueResult Issue(string newUsername, bool canIssue, string issuedBy, string? issuedFromIp)
+    public IssueResult Issue(string newUsername, bool isAdmin, string issuedBy, string? issuedFromIp)
     {
         if (Disabled) return new IssueResult(IssueStatus.Disabled);
 
@@ -177,7 +201,7 @@ public sealed class AuthService
                 Username = newUsername,
                 Hash = Hash(token),
                 IssuedBy = issuedBy,
-                CanIssue = canIssue,
+                IsAdmin = isAdmin,
                 IssuedAt = DateTime.UtcNow,
                 IssuedFromIp = issuedFromIp,
                 Revoked = false
@@ -290,7 +314,7 @@ public sealed class AuthService
         Username = RootUsername,
         Hash = "",
         IssuedBy = "",
-        CanIssue = true,
+        IsAdmin = true,
         IssuedAt = DateTime.MinValue,
         Revoked = false
     };
@@ -300,7 +324,7 @@ public sealed class AuthService
         Username = u.Username,
         Hash = u.Hash,
         IssuedBy = u.IssuedBy,
-        CanIssue = u.CanIssue,
+        IsAdmin = u.IsAdmin,
         IssuedAt = u.IssuedAt,
         IssuedFromIp = u.IssuedFromIp,
         Revoked = u.Revoked,

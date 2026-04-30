@@ -554,8 +554,24 @@ public class DomainValidator
 
             // DKIM selectors — fire-and-forget, primes cache for DkimSelectorsCheck.
             // If these aren't done by the time the check runs, it uses speculative (3s) queries.
-            var selectors = new[] { "default", "google", "selector1", "selector2" };
-            foreach (var sel in selectors.Concat(ctx.Options.AdditionalDkimSelectors).Distinct())
+            // Mirrors DkimSelectorsCheck's precedence so we prefetch the right names:
+            // per-domain config wins, else user-supplied, else a small built-in seed.
+            IEnumerable<string> prefetchSelectors;
+            if (!ctx.Options.ForceDkimSelectors &&
+                ctx.Options.PerDomainDkimSelectors.TryGetValue(domain, out var perDomainPrefetch) &&
+                perDomainPrefetch.Count > 0)
+            {
+                prefetchSelectors = perDomainPrefetch;
+            }
+            else if (ctx.Options.AdditionalDkimSelectors.Any())
+            {
+                prefetchSelectors = ctx.Options.AdditionalDkimSelectors;
+            }
+            else
+            {
+                prefetchSelectors = new[] { "default", "google", "selector1", "selector2" };
+            }
+            foreach (var sel in prefetchSelectors.Distinct(StringComparer.OrdinalIgnoreCase))
                 _ = _dns.QueryAsync($"{sel}._domainkey.{domain}", DnsClient.QueryType.TXT);
 
             // PTR lookups for domain IPs

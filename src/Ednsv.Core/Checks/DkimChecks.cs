@@ -61,15 +61,40 @@ public class DkimSelectorsCheck : ICheck
                     result.Details.Add("AXFR selector discovery: zone transfer denied (probing common selectors only)");
             }
 
-            // Build selector list based on what sources are available:
-            // - If user provided selectors: use user + any AXFR-discovered (skip defaults)
-            // - If AXFR discovered selectors: use only those (skip defaults)
-            // - Otherwise: fall back to common/default selectors
+            // Build selector list. Precedence (high → low):
+            //   1. ForceDkimSelectors=true with user-provided list → use user list (overrides per-domain config)
+            //   2. Per-domain config entry for this domain → use that
+            //   3. User-provided list (request-supplied) → use that
+            //   4. AXFR-discovered selectors → use those
+            //   5. CommonSelectors fallback
+            // AXFR-discovered selectors are merged into 1/3 when present, but per-domain
+            // config (#2) is treated as authoritative and not augmented.
             var userProvided = ctx.Options.AdditionalDkimSelectors;
+            ctx.Options.PerDomainDkimSelectors.TryGetValue(domain, out var perDomain);
+            var perDomainSet = perDomain != null && perDomain.Count > 0;
+            var force = ctx.Options.ForceDkimSelectors && userProvided.Any();
+
             List<string> allSelectors;
             string selectorSource;
 
-            if (userProvided.Any() && axfrSelectors.Any())
+            if (force)
+            {
+                allSelectors = userProvided
+                    .Concat(axfrSelectors)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                selectorSource = perDomainSet
+                    ? "request-forced (per-domain config overridden)"
+                    : (axfrSelectors.Any() ? "request-forced + AXFR-discovered" : "request-forced");
+            }
+            else if (perDomainSet)
+            {
+                allSelectors = perDomain!
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                selectorSource = $"per-domain config for {domain}";
+            }
+            else if (userProvided.Any() && axfrSelectors.Any())
             {
                 allSelectors = userProvided
                     .Concat(axfrSelectors)

@@ -79,6 +79,8 @@
   <p class="subtitle" id="authNav" style="display:none">
     <a href="/tokens.html" style="color:var(--accent);text-decoration:none">tokens &rarr;</a>
     &nbsp;&middot;&nbsp;
+    <a href="/config.html" id="adminConfigLink" style="color:var(--accent);text-decoration:none;display:none">config &rarr;</a>
+    <span id="adminConfigSep" style="display:none">&nbsp;&middot;&nbsp;</span>
     <a href="#" id="signOut" style="color:var(--muted);text-decoration:none">sign out</a>
   </p>
 
@@ -109,9 +111,13 @@
         <span>Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc. Disable when blocklist providers refuse or rate-limit your resolver.</span></span>
       </label>
       <div class="field">
-        <span>DKIM selectors<span class="desc">Comma- or space-separated list of selectors to probe at <code>&lt;selector&gt;._domainkey.&lt;domain&gt;</code>. Pre-filled with the built-in defaults — edit to add or remove. Clear the field to fall back to the server defaults.</span></span>
+        <span>DKIM selectors<span class="desc">Comma- or space-separated list of selectors to probe. Pre-filled with the server's default list. <span id="domHint" style="color:var(--accent);"></span></span></span>
         <input type="text" id="optDkimSelectors" placeholder="loading defaults..." autocomplete="off">
       </div>
+      <label>
+        <input type="checkbox" id="optForceDkim">
+        <span>Force these selectors for every domain<span class="desc">By default, when the server has a per-domain DKIM list configured for the domain you query, that list is used instead of the field above. Tick this to override the per-domain config and check exactly the selectors above.</span></span>
+      </label>
     </div>
   </section>
 
@@ -122,7 +128,8 @@
 <script>
 const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
-const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDkim = $('#optDkimSelectors');
+const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
+let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
 let pollTimer = null;
 let lastDomain = '';
 
@@ -130,10 +137,11 @@ let lastDomain = '';
 // networks don't have to re-untick boxes on every visit. Stored client-side
 // only — never sent to the server outside of the validation request body.
 //
-// DKIM selectors: the box always shows a full list (defaults if untouched,
-// custom otherwise). Server-side semantics (DkimChecks.cs) are: if the
-// request includes a non-empty selector list, it replaces the built-in
-// defaults; if empty, the server falls back to its built-in CommonSelectors.
+// DKIM behaviour:
+//   • The box always shows a list (defaults if untouched, custom otherwise).
+//   • Server side: if the domain has a per-domain config entry it wins, else
+//     the request list is used, else the server's default list.
+//   • Tick "Force these selectors" to override per-domain config too.
 const OPTIONS_KEY = 'ednsv.userOptions';
 function parseSelectors(s) {
   return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
@@ -147,6 +155,7 @@ function loadUserOptions() {
     if (typeof o.enableSmtpProbes === 'boolean') optSmtp.checked = o.enableSmtpProbes;
     if (typeof o.enableHttpProbes === 'boolean') optHttp.checked = o.enableHttpProbes;
     if (typeof o.enableDnsbl === 'boolean')      optDnsbl.checked = o.enableDnsbl;
+    if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
     if (Array.isArray(o.dkimSelectors)) {
       optDkim.value = o.dkimSelectors.join(', ');
       dkimUserCustomized = true;
@@ -155,10 +164,11 @@ function loadUserOptions() {
 }
 function saveUserOptions() {
   const o = {
-    enableSmtpProbes: optSmtp.checked,
-    enableHttpProbes: optHttp.checked,
-    enableDnsbl:      optDnsbl.checked,
-    dkimSelectors:    parseSelectors(optDkim.value)
+    enableSmtpProbes:   optSmtp.checked,
+    enableHttpProbes:   optHttp.checked,
+    enableDnsbl:        optDnsbl.checked,
+    forceDkimSelectors: optForceDkim.checked,
+    dkimSelectors:      parseSelectors(optDkim.value)
   };
   try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
 }
@@ -167,26 +177,50 @@ function currentOptions() {
     enableSmtpProbes: optSmtp.checked,
     enableHttpProbes: optHttp.checked,
     enableDnsbl:      optDnsbl.checked,
+    forceDkimSelectors: optForceDkim.checked,
     additionalDkimSelectors: parseSelectors(optDkim.value)
   };
 }
-loadUserOptions();
-// If the user hasn't customized the DKIM list yet, fetch and pre-fill the
-// server-side defaults so the box reflects what will actually be probed.
-if (!dkimUserCustomized) {
-  fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
-    if (d && Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
-      optDkim.value = d.dkimSelectors.join(', ');
-  }).catch(() => {});
+
+function updateDomainHint() {
+  const dom = (input.value || '').trim().toLowerCase().replace(/\.$/, '');
+  const hint = document.getElementById('domHint');
+  if (!hint) return;
+  if (dom && perDomainDkim[dom]) {
+    const list = perDomainDkim[dom].join(', ');
+    hint.textContent = optForceDkim.checked
+      ? ` (per-domain config exists for ${dom} — overridden by "Force"; will probe: ${list})`
+      : ` (per-domain config will be used for ${dom}: ${list})`;
+  } else {
+    hint.textContent = '';
+  }
 }
+
+loadUserOptions();
+fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
+  if (!d) return;
+  if (d.perDomainDkimSelectors && typeof d.perDomainDkimSelectors === 'object')
+    perDomainDkim = d.perDomainDkimSelectors;
+  if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
+    optDkim.value = d.dkimSelectors.join(', ');
+  updateDomainHint();
+}).catch(() => {});
+
 [optSmtp, optHttp, optDnsbl].forEach(el => el.addEventListener('change', saveUserOptions));
+optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('blur', saveUserOptions);
+input.addEventListener('input', updateDomainHint);
 
-// Show the auth nav only when auth is enabled
+// Show the auth nav only when auth is enabled; reveal admin config link for admins
 fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
-  if (d && !d.disabled) document.getElementById('authNav').style.display = '';
+  if (!d) return;
+  if (!d.disabled) document.getElementById('authNav').style.display = '';
+  if (d.isAdmin || d.disabled) {
+    document.getElementById('adminConfigLink').style.display = '';
+    document.getElementById('adminConfigSep').style.display = '';
+  }
 }).catch(() => {});
 
 document.getElementById('signOut').addEventListener('click', async e => {

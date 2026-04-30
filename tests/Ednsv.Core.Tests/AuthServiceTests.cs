@@ -43,7 +43,7 @@ public sealed class AuthServiceTests : IDisposable
         var basicHit = auth.AuthenticateBasic("ednsv", token);
         Assert.NotNull(basicHit);
         Assert.Equal("ednsv", basicHit!.Username);
-        Assert.True(basicHit.CanIssue);
+        Assert.True(basicHit.IsAdmin);
 
         var bearerHit = auth.AuthenticateBearer(token);
         Assert.NotNull(bearerHit);
@@ -57,7 +57,7 @@ public sealed class AuthServiceTests : IDisposable
     public void Issue_CreatesUser_AndTokenAuthenticates()
     {
         var auth = new AuthService(_dir, AuthService.Hash("root"));
-        var result = auth.Issue("alice", canIssue: false, issuedBy: "ednsv", issuedFromIp: "1.2.3.4");
+        var result = auth.Issue("alice", isAdmin: false, issuedBy: "ednsv", issuedFromIp: "1.2.3.4");
 
         Assert.Equal(AuthService.IssueStatus.Success, result.Status);
         Assert.NotNull(result.Token);
@@ -68,7 +68,7 @@ public sealed class AuthServiceTests : IDisposable
         var hit = auth.AuthenticateBearer(result.Token!);
         Assert.NotNull(hit);
         Assert.Equal("alice", hit!.Username);
-        Assert.False(hit.CanIssue);
+        Assert.False(hit.IsAdmin);
     }
 
     [Fact]
@@ -172,6 +172,30 @@ public sealed class AuthServiceTests : IDisposable
 
         var bobView = auth.ListVisibleTo("bob");
         Assert.Empty(bobView);
+    }
+
+    [Fact]
+    public void Load_MigratesLegacyCanIssue_ToIsAdmin()
+    {
+        // A users.json written by the previous schema (canIssue) should still
+        // load and upgrade to IsAdmin transparently.
+        Directory.CreateDirectory(_dir);
+        var legacyJson = """
+        {
+          "users": [
+            { "username": "alice", "hash": "x", "issuedBy": "ednsv", "canIssue": true,  "issuedAt": "2025-01-01T00:00:00Z", "revoked": false },
+            { "username": "bob",   "hash": "y", "issuedBy": "ednsv", "canIssue": false, "issuedAt": "2025-01-01T00:00:00Z", "revoked": false }
+          ]
+        }
+        """;
+        File.WriteAllText(Path.Combine(_dir, "users.json"), legacyJson);
+
+        var auth = new AuthService(_dir, AuthService.Hash("root"));
+        auth.Load();
+        var users = auth.ListVisibleTo("ednsv");
+        Assert.Equal(2, users.Count);
+        Assert.True(users.First(u => u.Username == "alice").IsAdmin);
+        Assert.False(users.First(u => u.Username == "bob").IsAdmin);
     }
 
     [Fact]

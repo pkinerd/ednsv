@@ -56,6 +56,7 @@
 
   <div class="nav">
     <a href="/">&larr; Validator</a>
+    <a href="/config.html" id="configLink" style="display:none">Config</a>
     <span class="who" id="who"></span>
     <a href="#" id="signOut" style="color:var(--muted);margin-left:1rem">Sign out</a>
   </div>
@@ -70,7 +71,7 @@
         <input type="text" id="newUsername" placeholder="alice" autocomplete="off">
       </div>
       <div>
-        <label><input type="checkbox" id="newCanIssue"> Can issue tokens</label>
+        <label><input type="checkbox" id="newIsAdmin"> Admin (can issue tokens &amp; edit config)</label>
       </div>
       <div>
         <button id="issueBtn">Issue token</button>
@@ -123,7 +124,7 @@ function renderTable() {
     return;
   }
   let html = '<table><thead><tr>';
-  html += '<th>Username</th><th>Issued by</th><th>Issued at</th><th>From IP</th><th>Can issue</th><th>Status</th><th></th>';
+  html += '<th>Username</th><th>Issued by</th><th>Issued at</th><th>From IP</th><th>Admin</th><th>Status</th><th></th>';
   html += '</tr></thead><tbody>';
   for (const u of state.users) {
     const cls = u.revoked ? 'revoked' : '';
@@ -132,7 +133,7 @@ function renderTable() {
     html += `<td>${esc(u.issuedBy)}</td>`;
     html += `<td class="timestamp">${esc(fmtDate(u.issuedAt))}</td>`;
     html += `<td class="ip">${esc(u.issuedFromIp || '')}</td>`;
-    html += `<td>${u.canIssue ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>'}</td>`;
+    html += `<td>${u.isAdmin ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>'}</td>`;
     if (u.revoked) {
       const detail = u.revokedAt ? ` ${fmtDate(u.revokedAt)}` : '';
       const by = u.revokedBy ? ` by ${u.revokedBy}` : '';
@@ -156,11 +157,12 @@ async function refresh() {
   try {
     const data = await loadUsers();
     state.users = data.users || [];
-    state.me = { username: data.currentUser, canIssue: data.canIssue };
+    state.me = { username: data.currentUser, isAdmin: !!data.isAdmin };
     $('#who').textContent = data.disabled
       ? 'Auth disabled'
-      : `Signed in as ${state.me.username}${state.me.canIssue ? ' (can issue)' : ''}`;
-    $('#issuePanel').style.display = (state.me.canIssue && !data.disabled) ? '' : 'none';
+      : `Signed in as ${state.me.username}${state.me.isAdmin ? ' (admin)' : ''}`;
+    $('#issuePanel').style.display = (state.me.isAdmin && !data.disabled) ? '' : 'none';
+    $('#configLink').style.display = (state.me.isAdmin || data.disabled) ? '' : 'none';
     renderTable();
   } catch (err) {
     showMessage(err.message);
@@ -169,7 +171,7 @@ async function refresh() {
 
 async function issue() {
   const username = $('#newUsername').value.trim();
-  const canIssue = $('#newCanIssue').checked;
+  const isAdmin = $('#newIsAdmin').checked;
   if (!username) { showMessage('Username is required'); return; }
 
   $('#issueBtn').disabled = true;
@@ -177,7 +179,7 @@ async function issue() {
     const res = await fetch('/api/auth/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, canIssue })
+      body: JSON.stringify({ username, isAdmin })
     });
     const data = await res.json();
     if (!res.ok) { showMessage(data.error || `Failed (${res.status})`); return; }
@@ -195,7 +197,7 @@ async function issue() {
       catch { showMessage('Copy failed — select the token manually.'); }
     });
     $('#newUsername').value = '';
-    $('#newCanIssue').checked = false;
+    $('#newIsAdmin').checked = false;
     refresh();
   } catch (err) {
     showMessage(err.message);
