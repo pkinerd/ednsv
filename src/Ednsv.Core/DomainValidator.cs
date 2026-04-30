@@ -181,6 +181,7 @@ public class DomainValidator
 
             // SMTP
             new SmtpTlsCertCheck(),
+            new SmtpTlsChainCheck(),
             new SmtpTlsVersionCheck(),
             new SmtpBannerCheck(),
             new EhloCapabilitiesCheck(),
