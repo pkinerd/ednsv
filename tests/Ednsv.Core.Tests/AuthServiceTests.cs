@@ -199,6 +199,47 @@ public sealed class AuthServiceTests : IDisposable
     }
 
     [Fact]
+    public void Delete_OnlyRoot_OnlyRevoked_CascadesAndRemoves()
+    {
+        var auth = new AuthService(_dir, AuthService.Hash("root"));
+        var alice = auth.Issue("alice", true, "ednsv", null);
+        var bob = auth.Issue("bob", true, "alice", null);
+        var carol = auth.Issue("carol", false, "ednsv", null);
+
+        // Cannot delete an active user.
+        Assert.Equal(AuthService.DeleteStatus.NotRevoked,
+            auth.Delete("alice", "ednsv").Status);
+
+        // Non-root cannot delete even after revocation.
+        auth.Revoke("alice", "ednsv");
+        Assert.Equal(AuthService.DeleteStatus.NotAllowed,
+            auth.Delete("alice", "carol").Status);
+
+        // Root cannot delete the root account.
+        Assert.Equal(AuthService.DeleteStatus.NotAllowed,
+            auth.Delete("ednsv", "ednsv").Status);
+
+        // Root deletes alice → bob is wiped too (cascade), carol survives.
+        var result = auth.Delete("alice", "ednsv");
+        Assert.Equal(AuthService.DeleteStatus.Success, result.Status);
+        Assert.Contains("alice", result.Affected!);
+        Assert.Contains("bob", result.Affected!);
+        Assert.DoesNotContain("carol", result.Affected!);
+
+        var remaining = auth.ListVisibleTo("ednsv");
+        Assert.Single(remaining);
+        Assert.Equal("carol", remaining[0].Username);
+
+        // Re-issuing a deleted username is now allowed.
+        Assert.Equal(AuthService.IssueStatus.Success,
+            auth.Issue("alice", false, "ednsv", null).Status);
+
+        // Missing target.
+        Assert.Equal(AuthService.DeleteStatus.NotFound,
+            auth.Delete("nobody", "ednsv").Status);
+    }
+
+    [Fact]
     public void Persistence_RoundTripsAcrossInstances()
     {
         var rootHash = AuthService.Hash("root");

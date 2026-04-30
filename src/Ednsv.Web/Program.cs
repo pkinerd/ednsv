@@ -466,9 +466,10 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
 // GET /api/auth/me — current user info (or { disabled: true } if auth is off).
 app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.Ok(new { disabled = true, isAdmin = true });
+    if (auth.Disabled) return Results.Ok(new { disabled = true, isAdmin = true, isRoot = false });
     var u = (AuthService.User?)ctx.Items["AuthUser"];
-    return Results.Ok(new { disabled = false, username = u?.Username, isAdmin = u?.IsAdmin ?? false });
+    var isRoot = u?.Username.Equals(AuthService.RootUsername, StringComparison.OrdinalIgnoreCase) ?? false;
+    return Results.Ok(new { disabled = false, username = u?.Username, isAdmin = u?.IsAdmin ?? false, isRoot });
 });
 
 // POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
@@ -508,11 +509,13 @@ app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
     if (auth.Disabled) return Results.Ok(new { disabled = true, users = Array.Empty<object>() });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
     var list = auth.ListVisibleTo(u.Username);
+    var isRoot = u.Username.Equals(AuthService.RootUsername, StringComparison.OrdinalIgnoreCase);
     return Results.Ok(new
     {
         disabled = false,
         currentUser = u.Username,
         isAdmin = u.IsAdmin,
+        isRoot,
         users = list.Select(x => new
         {
             x.Username,
@@ -570,6 +573,22 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
         AuthService.RevokeStatus.NotFound => Results.NotFound(new { error = "user not found" }),
         AuthService.RevokeStatus.NotAllowed => Results.StatusCode(StatusCodes.Status403Forbidden),
         _ => Results.BadRequest(new { error = "revoke failed" })
+    };
+});
+
+// DELETE /api/auth/users/{username} — root-only permanent removal of a revoked user.
+app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    var u = (AuthService.User)ctx.Items["AuthUser"]!;
+    var result = auth.Delete(username, u.Username);
+    return result.Status switch
+    {
+        AuthService.DeleteStatus.Success => Results.Ok(new { deleted = result.Affected }),
+        AuthService.DeleteStatus.NotFound => Results.NotFound(new { error = "user not found" }),
+        AuthService.DeleteStatus.NotAllowed => Results.StatusCode(StatusCodes.Status403Forbidden),
+        AuthService.DeleteStatus.NotRevoked => Results.BadRequest(new { error = "user is not revoked; revoke first" }),
+        _ => Results.BadRequest(new { error = "delete failed" })
     };
 });
 

@@ -216,6 +216,41 @@ public sealed class AuthService
 
     public sealed record RevokeResult(RevokeStatus Status, IReadOnlyList<string>? Affected = null);
 
+    public enum DeleteStatus { Success, Disabled, NotFound, NotAllowed, NotRevoked }
+
+    public sealed record DeleteResult(DeleteStatus Status, IReadOnlyList<string>? Affected = null);
+
+    /// <summary>
+    /// Permanently removes a revoked user record. Only the root user may delete,
+    /// and only users that are already revoked. Cascades to descendants so a
+    /// subtree of revoked accounts is wiped together.
+    /// </summary>
+    public DeleteResult Delete(string targetUsername, string requestedBy)
+    {
+        if (Disabled) return new DeleteResult(DeleteStatus.Disabled);
+        if (string.IsNullOrEmpty(targetUsername)) return new DeleteResult(DeleteStatus.NotFound);
+        if (!requestedBy.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
+            return new DeleteResult(DeleteStatus.NotAllowed);
+        if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
+            return new DeleteResult(DeleteStatus.NotAllowed);
+
+        lock (_lock)
+        {
+            var target = _users.FirstOrDefault(u =>
+                u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
+            if (target == null) return new DeleteResult(DeleteStatus.NotFound);
+            if (!target.Revoked) return new DeleteResult(DeleteStatus.NotRevoked);
+
+            var toDelete = new List<User> { target };
+            toDelete.AddRange(GetDescendantsLocked(target.Username));
+            var names = new HashSet<string>(toDelete.Select(u => u.Username), StringComparer.OrdinalIgnoreCase);
+
+            _users.RemoveAll(u => names.Contains(u.Username));
+            SaveLocked();
+            return new DeleteResult(DeleteStatus.Success, names.ToArray());
+        }
+    }
+
     /// <summary>
     /// Revokes the target user and cascades to all descendants (everyone they
     /// issued, recursively). Caller must be the root user, or an ancestor of
