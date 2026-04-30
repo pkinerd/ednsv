@@ -65,7 +65,7 @@
 
   <div class="nav">
     <a href="/">Validator</a>
-    <a href="/tokens.html">Tokens</a>
+    <a href="/tokens.html" id="tokensLink" style="display:none">Tokens</a>
     <span class="current">Config</span>
     <span class="who" id="who"></span>
     <a href="#" id="signOut" class="signout">Sign out</a>
@@ -295,6 +295,7 @@ $('#signOut').addEventListener('click', async e => {
     } else {
       $('#who').textContent = `Signed in as ${me.username}${me.isAdmin ? ' (admin)' : ''}`;
     }
+    if (me.isAdmin || me.disabled) $('#tokensLink').style.display = '';
   } catch {}
   const cfg = await loadConfig();
   if (cfg) { current = cfg; fillForm(cfg); }

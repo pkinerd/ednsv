@@ -85,7 +85,7 @@
 
   <div class="nav" id="topNav" style="display:none">
     <span class="current">Validator</span>
-    <a href="/tokens.html">Tokens</a>
+    <a href="/tokens.html" id="tokensLink" style="display:none">Tokens</a>
     <a href="/config.html" id="adminConfigLink" style="display:none">Config</a>
     <span class="who" id="who"></span>
     <a href="#" id="signOut" class="signout">Sign out</a>
@@ -236,6 +236,7 @@ fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
   }
   if (d.isAdmin || d.disabled) {
     document.getElementById('adminConfigLink').style.display = '';
+    document.getElementById('tokensLink').style.display = '';
   }
 }).catch(() => {});
 
