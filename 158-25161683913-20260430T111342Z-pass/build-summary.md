@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #108 (attempt 1) |
-| **Run ID** | 24134253796 |
+| **Run** | #158 (attempt 1) |
+| **Run ID** | 25161683913 |
 | **Result** | pass |
-| **Commit** | 2fb5bfba1e2f7d956cd7b5cb44013c6581c548aa |
-| **Ref** | refs/pull/5/merge |
+| **Commit** | 95e1cfedd678faa844e9ee0e3041713cef4652ea |
+| **Ref** | refs/pull/13/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #5: Parallelize concurrent checks and add web API with live progress |
-| **Branch** | claude/review-code-organization-9xYIT |
+| **PR** | #13: Replace CanIssue with IsAdmin; add admin config screen + per-domain DKIM |
+| **Branch** | claude/add-admin-config-and-per-domain-dkim |
 
 ## Artifacts
 ```
