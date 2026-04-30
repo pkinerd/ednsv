@@ -11,6 +11,12 @@
   .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
   h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: var(--accent); }
   .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .nav { font-size: 0.85rem; margin-bottom: 1.5rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .nav a { color: var(--accent); text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .nav .current { color: var(--text); font-weight: 600; }
+  .nav .who { color: var(--muted); margin-left: auto; }
+  .nav .signout { color: var(--muted); }
   .search-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
   .search-form input { flex: 1; padding: 0.6rem 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
   .search-form input:focus { border-color: var(--accent); }
@@ -76,16 +82,18 @@
 <div class="container">
   <h1>ednsv</h1>
   <p class="subtitle">DNS &amp; Email Infrastructure Validator</p>
-  <p class="subtitle" id="authNav" style="display:none">
-    <a href="/tokens.html" style="color:var(--accent);text-decoration:none">tokens &rarr;</a>
-    &nbsp;&middot;&nbsp;
-    <a href="/config.html" id="adminConfigLink" style="color:var(--accent);text-decoration:none;display:none">config &rarr;</a>
-    <span id="adminConfigSep" style="display:none">&nbsp;&middot;&nbsp;</span>
-    <a href="#" id="signOut" style="color:var(--muted);text-decoration:none">sign out</a>
-  </p>
+
+  <div class="nav" id="topNav" style="display:none">
+    <span class="current">Validator</span>
+    <a href="/tokens.html" id="tokensLink" style="display:none">Tokens</a>
+    <a href="/config.html" id="adminConfigLink" style="display:none">Config</a>
+    <span class="who" id="who"></span>
+    <a href="#" id="signOut" class="signout">Sign out</a>
+  </div>
 
   <form class="search-form" id="form">
-    <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+    <input type="text" id="domain" list="domainHistory" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+    <datalist id="domainHistory"></datalist>
     <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
       <option value="">No recheck</option>
       <option value="Warning">Recheck warnings+</option>
@@ -213,15 +221,56 @@ optDkim.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('blur', saveUserOptions);
 input.addEventListener('input', updateDomainHint);
 
-// Show the auth nav only when auth is enabled; reveal admin config link for admins
+// Top nav: visible on every page. When auth is disabled the "who" slot
+// shows that, the sign-out link is hidden, and config is reachable as
+// admin-only checks pass.
 fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
   if (!d) return;
-  if (!d.disabled) document.getElementById('authNav').style.display = '';
+  document.getElementById('topNav').style.display = '';
+  if (d.disabled) {
+    document.getElementById('who').textContent = 'Auth disabled';
+    document.getElementById('signOut').style.display = 'none';
+  } else {
+    document.getElementById('who').textContent =
+      `Signed in as ${d.username}${d.isAdmin ? ' (admin)' : ''}`;
+  }
   if (d.isAdmin || d.disabled) {
     document.getElementById('adminConfigLink').style.display = '';
-    document.getElementById('adminConfigSep').style.display = '';
+    document.getElementById('tokensLink').style.display = '';
   }
 }).catch(() => {});
+
+// ── Domain history: keep a most-recently-used list of domains the user has
+// validated, persisted to localStorage. Strictly client-side; never sent to
+// the server. Backs the <datalist> for native autocomplete.
+const DOMAIN_HISTORY_KEY = 'ednsv.domainHistory';
+const DOMAIN_HISTORY_MAX = 50;
+function loadDomainHistory() {
+  try {
+    const raw = localStorage.getItem(DOMAIN_HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter(x => typeof x === 'string') : [];
+  } catch { return []; }
+}
+function saveDomainHistory(list) {
+  try { localStorage.setItem(DOMAIN_HISTORY_KEY, JSON.stringify(list.slice(0, DOMAIN_HISTORY_MAX))); } catch {}
+}
+function rememberDomain(d) {
+  const norm = (d || '').trim().toLowerCase().replace(/\.$/, '');
+  if (!norm) return;
+  const list = loadDomainHistory().filter(x => x !== norm);
+  list.unshift(norm);
+  saveDomainHistory(list);
+  renderDomainHistory();
+}
+function renderDomainHistory() {
+  const dl = document.getElementById('domainHistory');
+  if (!dl) return;
+  const list = loadDomainHistory();
+  dl.innerHTML = list.map(d => `<option value="${esc(d)}">`).join('');
+}
+renderDomainHistory();
 
 document.getElementById('signOut').addEventListener('click', async e => {
   e.preventDefault();
@@ -234,6 +283,7 @@ form.addEventListener('submit', async e => {
   const domain = input.value.trim();
   if (!domain) return;
   lastDomain = domain;
+  rememberDomain(domain);
   startValidation(domain, recheckSel.value || null);
 });
 
