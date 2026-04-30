@@ -15,6 +15,7 @@ public class SmtpProbeResult
     public bool SupportsStartTls { get; set; }
     public List<string> EhloCapabilities { get; set; } = new();
     public X509Certificate2? Certificate { get; set; }
+    public List<X509Certificate2>? CertChainIntermediates { get; set; }
     public string? CertSubject { get; set; }
     public string? CertIssuer { get; set; }
     public DateTime? CertExpiry { get; set; }
@@ -179,8 +180,30 @@ public class SmtpProbeService
                 {
                     try
                     {
+                        List<X509Certificate2>? capturedIntermediates = null;
                         var sslStream = new SslStream(stream, false,
-                            (sender, cert, chain, errors) => true);
+                            (sender, cert, chain, errors) =>
+                            {
+                                if (chain != null && cert != null)
+                                {
+                                    // ChainPolicy.ExtraStore holds the intermediate certificates the
+                                    // peer sent in the TLS handshake (.NET populates it from
+                                    // SSL_get_peer_cert_chain on Linux / the equivalent on Windows
+                                    // before invoking this callback). chain.ChainElements is the
+                                    // *built* chain and may include intermediates pulled from the
+                                    // local OS trust store, so it is not a reliable indicator of
+                                    // what the server actually served.
+                                    using var leafCopy = new X509Certificate2(cert);
+                                    var leafThumbprint = leafCopy.Thumbprint;
+                                    capturedIntermediates = chain.ChainPolicy.ExtraStore
+                                        .Cast<X509Certificate2>()
+                                        .Where(c => c.Thumbprint != leafThumbprint &&
+                                                    !string.Equals(c.Subject, c.Issuer, StringComparison.OrdinalIgnoreCase))
+                                        .Select(c => new X509Certificate2(c.RawData))
+                                        .ToList();
+                                }
+                                return true;
+                            });
                         var authTask = sslStream.AuthenticateAsClientAsync(host);
                         if (await Task.WhenAny(authTask, Task.Delay(_timeout)) != authTask)
                         {
@@ -197,6 +220,7 @@ public class SmtpProbeService
                         {
                             var cert2 = new X509Certificate2(sslStream.RemoteCertificate);
                             result.Certificate = cert2;
+                            result.CertChainIntermediates = capturedIntermediates;
                             result.CertSubject = cert2.Subject;
                             result.CertIssuer = cert2.Issuer;
                             result.CertExpiry = cert2.NotAfter;
@@ -292,7 +316,7 @@ public class SmtpProbeService
         if (_rcptCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        (bool accepted, string response) lastResult = default;
+        (bool accepted, string response) lastResult = (false, "");
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
             lastResult = await ProbeRcptAttemptAsync(host, address);
@@ -498,6 +522,7 @@ public class SmtpProbeService
                 CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
                 CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
                 CertRawBase64 = kvp.Value.Certificate != null ? Convert.ToBase64String(kvp.Value.Certificate.RawData) : null,
+                CertChainIntermediatesBase64 = kvp.Value.CertChainIntermediates?.Select(c => Convert.ToBase64String(c.RawData)).ToList(),
                 TlsProtocol = kvp.Value.TlsProtocol.ToString(), TlsCipherSuite = kvp.Value.TlsCipherSuite,
                 SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,
                 ConnectTimeMs = kvp.Value.ConnectTimeMs, BannerTimeMs = kvp.Value.BannerTimeMs,
@@ -519,11 +544,22 @@ public class SmtpProbeService
                 try { cert = new X509Certificate2(Convert.FromBase64String(kvp.Value.CertRawBase64)); }
                 catch { /* ignore corrupt cached cert data */ }
             }
+            List<X509Certificate2>? intermediates = null;
+            if (kvp.Value.CertChainIntermediatesBase64?.Count > 0)
+            {
+                intermediates = new List<X509Certificate2>();
+                foreach (var b64 in kvp.Value.CertChainIntermediatesBase64)
+                {
+                    try { intermediates.Add(new X509Certificate2(Convert.FromBase64String(b64))); }
+                    catch { /* ignore corrupt cached cert data */ }
+                }
+            }
             _probeCache.Import($"smtp:{kvp.Key}", new SmtpProbeResult
             {
                 Connected = kvp.Value.Connected, Banner = kvp.Value.Banner,
                 SupportsStartTls = kvp.Value.SupportsStartTls, EhloCapabilities = kvp.Value.EhloCapabilities,
-                Certificate = cert, CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
+                Certificate = cert, CertChainIntermediates = intermediates,
+                CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
                 CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
                 TlsProtocol = proto, TlsCipherSuite = kvp.Value.TlsCipherSuite,
                 SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,

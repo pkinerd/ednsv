@@ -90,6 +90,80 @@ public class SmtpTlsCertCheck : ICheck
     }
 }
 
+public class SmtpTlsChainCheck : ICheck
+{
+    public string Name => "SMTP TLS Certificate Chain";
+    public CheckCategory Category => CheckCategory.SMTP;
+
+    public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
+    {
+        var result = new CheckResult { CheckName = Name, Category = Category };
+
+        try
+        {
+            if (!ctx.MxHosts.Any())
+            {
+                result.Severity = ctx.SeverityForMissing(ctx.MxLookupFailed);
+                result.Summary = "No MX hosts to check certificate chains";
+                return new List<CheckResult> { result };
+            }
+
+            int unreachable = 0;
+            int hostsChecked = 0;
+            foreach (var mxHost in ctx.MxHosts)
+            {
+                var probe = await ctx.GetOrProbeSmtpAsync(mxHost);
+                if (probe.Certificate == null)
+                {
+                    if (!probe.Connected)
+                        unreachable++;
+                    continue;
+                }
+
+                hostsChecked++;
+                result.Details.Add($"{mxHost}:");
+
+                var intermediates = probe.CertChainIntermediates ?? new List<System.Security.Cryptography.X509Certificates.X509Certificate2>();
+                if (intermediates.Count > 0)
+                {
+                    result.Details.Add($"  Intermediate CA(s) served ({intermediates.Count}):");
+                    foreach (var ic in intermediates)
+                        result.Details.Add($"    {ic.Subject}");
+                }
+                else
+                {
+                    // The leaf cert is itself self-signed — no intermediates expected
+                    if (string.Equals(probe.Certificate.Subject, probe.Certificate.Issuer, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.Details.Add($"  Self-signed leaf certificate — no intermediates needed");
+                    }
+                    else
+                    {
+                        result.Warnings.Add(
+                            $"{mxHost}: Server is not serving intermediate CA certificate(s). " +
+                            $"Issuer '{probe.Certificate.Issuer}' is not the same as Subject — clients without the intermediate cached locally may fail to verify the chain.");
+                    }
+                }
+            }
+
+            result.Severity = result.Errors.Any() ? CheckSeverity.Error :
+                              result.Warnings.Any() ? CheckSeverity.Warning :
+                              hostsChecked == 0 ? CheckSeverity.Info : CheckSeverity.Pass;
+            result.Summary = hostsChecked == 0
+                ? "No TLS-enabled MX hosts to check certificate chains"
+                : $"Checked certificate chain completeness for {hostsChecked} MX host(s)";
+            result.AdjustForUnreachableHosts(ctx.MxHosts.Count, unreachable);
+        }
+        catch (Exception ex)
+        {
+            result.Severity = CheckSeverity.Error;
+            result.Errors.Add(ex.Message);
+        }
+
+        return new List<CheckResult> { result };
+    }
+}
+
 public class DaneTlsaCertMatchCheck : ICheck
 {
     public string Name => "DANE TLSA Cert Match";
