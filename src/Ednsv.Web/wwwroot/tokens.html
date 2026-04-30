@@ -57,6 +57,7 @@
   <div class="nav">
     <a href="/">&larr; Validator</a>
     <span class="who" id="who"></span>
+    <a href="#" id="signOut" style="color:var(--muted);margin-left:1rem">Sign out</a>
   </div>
 
   <div id="messages"></div>
@@ -219,6 +220,12 @@ async function revokeUser(username) {
 
 $('#issueBtn').addEventListener('click', issue);
 $('#newUsername').addEventListener('keydown', e => { if (e.key === 'Enter') issue(); });
+
+$('#signOut').addEventListener('click', async e => {
+  e.preventDefault();
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.href = '/login.html';
+});
 
 refresh();
 </script>

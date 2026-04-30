@@ -113,7 +113,8 @@ else
 
 // ── Auth middleware ──────────────────────────────────────────────────────
 // Runs before static files so the entire site requires credentials when enabled.
-// Accepts either Authorization: Bearer <token> or Authorization: Basic user:token.
+// Auth resolution order: ednsv-auth cookie → Authorization: Bearer → Authorization: Basic.
+// Public paths (login page + login/logout endpoints) pass through without auth.
 app.Use(async (ctx, next) =>
 {
     if (authService.Disabled)
@@ -122,53 +123,56 @@ app.Use(async (ctx, next) =>
         return;
     }
 
-    AuthService.User? user = null;
-    string? raw = ctx.Request.Headers.Authorization;
-    if (!string.IsNullOrEmpty(raw))
+    var path = ctx.Request.Path.Value ?? "";
+    if (path.Equals("/login.html", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
     {
-        if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        await next();
+        return;
+    }
+
+    AuthService.User? user = null;
+
+    if (ctx.Request.Cookies.TryGetValue("ednsv-auth", out var cookieToken) && !string.IsNullOrEmpty(cookieToken))
+        user = authService.AuthenticateBearer(cookieToken);
+
+    if (user == null)
+    {
+        string? raw = ctx.Request.Headers.Authorization;
+        if (!string.IsNullOrEmpty(raw))
         {
-            user = authService.AuthenticateBearer(raw["Bearer ".Length..].Trim());
-        }
-        else if (raw.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            try
+            if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
-                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(raw["Basic ".Length..].Trim()));
-                var idx = decoded.IndexOf(':');
-                if (idx >= 0)
-                    user = authService.AuthenticateBasic(decoded[..idx], decoded[(idx + 1)..]);
+                user = authService.AuthenticateBearer(raw["Bearer ".Length..].Trim());
             }
-            catch (FormatException) { /* bad base64 → treat as unauth */ }
+            else if (raw.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(raw["Basic ".Length..].Trim()));
+                    var idx = decoded.IndexOf(':');
+                    if (idx >= 0)
+                        user = authService.AuthenticateBasic(decoded[..idx], decoded[(idx + 1)..]);
+                }
+                catch (FormatException) { /* bad base64 → treat as unauth */ }
+            }
         }
     }
 
     if (user == null)
     {
-        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
         ctx.Response.Headers.CacheControl = "no-store";
-
-        // Browsers can suppress the Basic-auth prompt when (a) the body is
-        // application/json or (b) the WWW-Authenticate list also advertises a
-        // scheme they don't natively support (e.g. Bearer). Sniff the Accept
-        // header: for browser navigations, advertise Basic only and return a
-        // tiny HTML body; for API clients, advertise both and return JSON.
         var accept = ctx.Request.Headers.Accept.ToString();
-        var browser = accept.Contains("text/html", StringComparison.OrdinalIgnoreCase);
-
-        ctx.Response.Headers.Append("WWW-Authenticate", "Basic realm=\"ednsv\"");
-        if (!browser)
-            ctx.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"ednsv\"");
-
-        if (browser)
+        if (accept.Contains("text/html", StringComparison.OrdinalIgnoreCase))
         {
-            ctx.Response.ContentType = "text/html; charset=utf-8";
-            await ctx.Response.WriteAsync("<!doctype html><title>ednsv</title><h1>401 Unauthorized</h1>");
+            // Browser navigation → redirect to login page
+            ctx.Response.Redirect("/login.html");
+            return;
         }
-        else
-        {
-            await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
-        }
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        ctx.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"ednsv\"");
+        await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
         return;
     }
 
@@ -318,6 +322,37 @@ app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
     return Results.Ok(new { disabled = false, username = u?.Username, canIssue = u?.CanIssue ?? false });
 });
 
+// POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
+app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (string.IsNullOrEmpty(req.Username) || string.IsNullOrEmpty(req.Token))
+        return Results.BadRequest(new { error = "username and token are required" });
+
+    var user = auth.AuthenticateBasic(req.Username, req.Token);
+    if (user == null)
+    {
+        return Results.Json(new { error = "invalid credentials" }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    ctx.Response.Cookies.Append("ednsv-auth", req.Token, new CookieOptions
+    {
+        HttpOnly = true,
+        SameSite = SameSiteMode.Strict,
+        Secure = ctx.Request.IsHttps,
+        Path = "/",
+        MaxAge = TimeSpan.FromDays(30)
+    });
+    return Results.Ok(new { username = user.Username, canIssue = user.CanIssue });
+});
+
+// POST /api/auth/logout — clears the session cookie.
+app.MapPost("/api/auth/logout", (HttpContext ctx) =>
+{
+    ctx.Response.Cookies.Delete("ednsv-auth", new CookieOptions { Path = "/" });
+    return Results.Ok(new { ok = true });
+});
+
 // GET /api/auth/users — list users visible to the caller (descendants; root sees all).
 app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
 {
@@ -396,6 +431,8 @@ app.Run();
 record ValidateRequest(string? Domain, ValidationOptions? Options = null, string? RecheckSeverity = null);
 
 record IssueTokenRequest(string? Username, bool CanIssue);
+
+record LoginRequest(string? Username, string? Token);
 
 enum JobStatus { Running, Completed, Failed }
 
