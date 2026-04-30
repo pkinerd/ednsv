@@ -316,7 +316,7 @@ public class SmtpProbeService
         if (_rcptCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        (bool accepted, string response) lastResult = default;
+        (bool accepted, string response) lastResult = (false, "");
         for (int attempt = 0; attempt < MaxRetries; attempt++)
         {
             lastResult = await ProbeRcptAttemptAsync(host, address);
