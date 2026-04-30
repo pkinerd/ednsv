@@ -274,7 +274,20 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 // GET /api/validate/{domain}
 // Synchronous convenience endpoint — runs validation and returns the full report.
 // Times out after 3 minutes.
-app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
+//
+// Query parameters mirror the CLI flags so the GET form is as flexible as POST:
+//   ?recheck=warning|error|critical     bypass cache for matching prior issues
+//   ?noSmtp=true                        skip SMTP probes (--no-smtp)
+//   ?noHttp=true                        skip HTTP/HTTPS probes (--no-http)
+//   ?noDnsbl=true                       skip DNSBL queries (--no-dnsbl)
+//   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl
+//   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
+//   ?axfr=true                          enable AXFR test
+//   ?catchAll=true                      enable catch-all detection
+//   ?openRelay=true                     enable open-relay test
+//   ?openResolver=true                  enable open-resolver test
+//   ?privateDnsbl=true                  include private/registered DNSBLs
+app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, string? recheck,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
     CacheManager cache, ValidationOptions defaults, CancellationToken ct) =>
 {
@@ -290,12 +303,35 @@ app.MapGet("/api/validate/{domain}", async (string domain, string? recheck,
         Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
         validator.RecheckDeps = cache.GetRecheckDeps(domain, recheckSev);
 
+    // Build per-request options, starting from server defaults so admin-pinned
+    // categories stay disabled regardless of query-string input (AND-logic).
+    bool ParseBool(string name) =>
+        bool.TryParse(httpCtx.Request.Query[name].ToString(), out var v) && v;
+    var restricted = ParseBool("restricted");
+    var options = new ValidationOptions
+    {
+        EnableSmtpProbes = defaults.EnableSmtpProbes && !restricted && !ParseBool("noSmtp"),
+        EnableHttpProbes = defaults.EnableHttpProbes && !restricted && !ParseBool("noHttp"),
+        EnableDnsbl      = defaults.EnableDnsbl      && !restricted && !ParseBool("noDnsbl"),
+        EnableAxfr         = ParseBool("axfr"),
+        EnableCatchAll     = ParseBool("catchAll"),
+        EnableOpenRelay    = ParseBool("openRelay"),
+        EnableOpenResolver = ParseBool("openResolver"),
+        EnablePrivateDnsbl = ParseBool("privateDnsbl"),
+        AdditionalDkimSelectors = defaults.AdditionalDkimSelectors
+    };
+    var dkimRaw = httpCtx.Request.Query["dkimSelectors"].ToString();
+    if (!string.IsNullOrWhiteSpace(dkimRaw))
+        options.AdditionalDkimSelectors = dkimRaw
+            .Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
+
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
     cts.CancelAfter(TimeSpan.FromMinutes(3));
 
     try
     {
-        var report = await validator.ValidateAsync(domain, defaults);
+        var report = await validator.ValidateAsync(domain, options);
         _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
         cache.RequestFlush();
         return Results.Ok(report);
@@ -326,6 +362,10 @@ app.MapPost("/api/cache/flush", async (CacheManager cache) =>
 
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories));
+
+// GET /api/defaults — surface defaults the UI needs to pre-fill option fields
+// (currently the built-in DKIM selector list).
+app.MapGet("/api/defaults", () => Results.Ok(new { dkimSelectors = DkimSelectorsCheck.CommonSelectors }));
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 

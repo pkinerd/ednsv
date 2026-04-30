@@ -60,11 +60,8 @@
   .filter-bar button.active { border-color: var(--accent); background: #1e3a5f; color: var(--text); }
   .recheck-btn { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--warn); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
   .recheck-btn:hover { border-color: var(--warn); }
-  details.options { margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
-  details.options > summary { padding: 0.5rem 0.75rem; cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--muted); list-style: none; }
-  details.options > summary::before { content: '\25B6'; display: inline-block; margin-right: 0.4rem; transition: transform 0.15s; font-size: 0.7rem; }
-  details.options[open] > summary::before { transform: rotate(90deg); }
-  details.options[open] > summary { color: var(--text); border-bottom: 1px solid var(--border); }
+  .options { margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  .options-title { padding: 0.5rem 0.75rem; font-size: 0.85rem; color: var(--text); border-bottom: 1px solid var(--border); }
   .options-body { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
   .options-body label { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.82rem; cursor: pointer; }
   .options-body label input[type="checkbox"] { margin-top: 0.15rem; accent-color: var(--accent); }
@@ -96,8 +93,8 @@
     <button type="submit" id="btn">Validate</button>
   </form>
 
-  <details class="options" id="optionsPanel">
-    <summary>Validation options</summary>
+  <section class="options" id="optionsPanel">
+    <div class="options-title">Validation options</div>
     <div class="options-body">
       <label>
         <input type="checkbox" id="optSmtp" checked>
@@ -112,11 +109,11 @@
         <span>Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc. Disable when blocklist providers refuse or rate-limit your resolver.</span></span>
       </label>
       <div class="field">
-        <span>Additional DKIM selectors<span class="desc">Comma- or space-separated list to probe in addition to the defaults (default, google, selector1, selector2).</span></span>
-        <input type="text" id="optDkimSelectors" placeholder="e.g. mail, k1, dkim2024" autocomplete="off">
+        <span>DKIM selectors<span class="desc">Comma- or space-separated list of selectors to probe at <code>&lt;selector&gt;._domainkey.&lt;domain&gt;</code>. Pre-filled with the built-in defaults — edit to add or remove. Clear the field to fall back to the server defaults.</span></span>
+        <input type="text" id="optDkimSelectors" placeholder="loading defaults..." autocomplete="off">
       </div>
     </div>
-  </details>
+  </section>
 
   <div id="status"></div>
   <div id="results"></div>
@@ -132,7 +129,16 @@ let lastDomain = '';
 // ── Validation options: persist to localStorage so users in restricted
 // networks don't have to re-untick boxes on every visit. Stored client-side
 // only — never sent to the server outside of the validation request body.
+//
+// DKIM selectors: the box always shows a full list (defaults if untouched,
+// custom otherwise). Server-side semantics (DkimChecks.cs) are: if the
+// request includes a non-empty selector list, it replaces the built-in
+// defaults; if empty, the server falls back to its built-in CommonSelectors.
 const OPTIONS_KEY = 'ednsv.userOptions';
+function parseSelectors(s) {
+  return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
+}
+let dkimUserCustomized = false;  // true once the user edits the field or had a saved value
 function loadUserOptions() {
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
@@ -141,18 +147,18 @@ function loadUserOptions() {
     if (typeof o.enableSmtpProbes === 'boolean') optSmtp.checked = o.enableSmtpProbes;
     if (typeof o.enableHttpProbes === 'boolean') optHttp.checked = o.enableHttpProbes;
     if (typeof o.enableDnsbl === 'boolean')      optDnsbl.checked = o.enableDnsbl;
-    if (Array.isArray(o.additionalDkimSelectors)) optDkim.value = o.additionalDkimSelectors.join(', ');
+    if (Array.isArray(o.dkimSelectors)) {
+      optDkim.value = o.dkimSelectors.join(', ');
+      dkimUserCustomized = true;
+    }
   } catch { /* ignore corrupt storage */ }
-}
-function parseSelectors(s) {
-  return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
 }
 function saveUserOptions() {
   const o = {
     enableSmtpProbes: optSmtp.checked,
     enableHttpProbes: optHttp.checked,
     enableDnsbl:      optDnsbl.checked,
-    additionalDkimSelectors: parseSelectors(optDkim.value)
+    dkimSelectors:    parseSelectors(optDkim.value)
   };
   try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
 }
@@ -165,7 +171,16 @@ function currentOptions() {
   };
 }
 loadUserOptions();
+// If the user hasn't customized the DKIM list yet, fetch and pre-fill the
+// server-side defaults so the box reflects what will actually be probed.
+if (!dkimUserCustomized) {
+  fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
+    if (d && Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
+      optDkim.value = d.dkimSelectors.join(', ');
+  }).catch(() => {});
+}
 [optSmtp, optHttp, optDnsbl].forEach(el => el.addEventListener('change', saveUserOptions));
+optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('blur', saveUserOptions);
 
