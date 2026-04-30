@@ -8,7 +8,7 @@ public class DkimSelectorsCheck : ICheck
     public string Name => "DKIM Selectors";
     public CheckCategory Category => CheckCategory.DKIM;
 
-    private static readonly string[] CommonSelectors =
+    public static readonly string[] CommonSelectors =
     {
         "default", "google", "selector1", "selector2", "k1", "k2", "k3",
         "s1", "s2", "s3", "dkim", "mail", "email", "smtp",

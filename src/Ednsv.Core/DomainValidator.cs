@@ -566,43 +566,55 @@ public class DomainValidator
             // SMTP probes + PTR for MX hosts — each host probed in parallel since
             // they go to different servers. Only limit to avoid overwhelming a single
             // provider's fleet (cap at 6 concurrent SMTP probes).
-            var smtpMaxConcurrency = Math.Min(mxHosts.Count, 6);
-            var smtpSemaphore = new SemaphoreSlim(smtpMaxConcurrency);
-            TraceLog($"[SMTP] PREFETCH {mxHosts.Count} MX hosts, concurrency-limit={smtpMaxConcurrency}");
-            int smtpProbesStarted = 0;
-            foreach (var host in mxHosts)
+            // Skipped entirely when SMTP probes are disabled (--no-smtp); checks
+            // that depend on probe results will return their own "skipped" Info.
+            if (ctx.Options.EnableSmtpProbes)
             {
-                // Resolve MX host IPs then probe — chained but non-blocking to other tasks
-                var h = host;
-                allTasks.Add(Task.Run(async () =>
+                var smtpMaxConcurrency = Math.Min(mxHosts.Count, 6);
+                var smtpSemaphore = new SemaphoreSlim(smtpMaxConcurrency);
+                TraceLog($"[SMTP] PREFETCH {mxHosts.Count} MX hosts, concurrency-limit={smtpMaxConcurrency}");
+                int smtpProbesStarted = 0;
+                foreach (var host in mxHosts)
                 {
-                    var ips = await _dns.ResolveAAsync(h);
-                    // PTR lookups for MX IPs
-                    var ptrTasks = ips.Select(ip => _dns.ResolvePtrAsync(ip));
-
-                    // SMTP probe on port 25 — must complete before checks.
-                    // Store result in ctx.SmtpProbeCache so concurrent checks
-                    // reuse it without hitting ProbeCache (which bypasses on recheck).
-                    var semSw = Trace != null ? Stopwatch.StartNew() : null;
-                    await smtpSemaphore.WaitAsync();
-                    var semWaitMs = semSw?.ElapsedMilliseconds ?? 0;
-                    try
+                    // Resolve MX host IPs then probe — chained but non-blocking to other tasks
+                    var h = host;
+                    allTasks.Add(Task.Run(async () =>
                     {
-                        if (semWaitMs > 0)
-                            TraceLog($"[SMTP] SEMAPHORE WAIT {h}:25 waited {semWaitMs}ms (slots={smtpSemaphore.CurrentCount}/{smtpMaxConcurrency})");
-                        Interlocked.Increment(ref smtpProbesStarted);
-                        var probeResult = await _smtp.ProbeSmtpAsync(h, 25);
-                        ctx.SmtpProbeCache.TryAdd(h, probeResult);
-                    }
-                    finally { smtpSemaphore.Release(); }
+                        var ips = await _dns.ResolveAAsync(h);
+                        // PTR lookups for MX IPs
+                        var ptrTasks = ips.Select(ip => _dns.ResolvePtrAsync(ip));
 
-                    await Task.WhenAll(ptrTasks);
-                }));
+                        // SMTP probe on port 25 — must complete before checks.
+                        // Store result in ctx.SmtpProbeCache so concurrent checks
+                        // reuse it without hitting ProbeCache (which bypasses on recheck).
+                        var semSw = Trace != null ? Stopwatch.StartNew() : null;
+                        await smtpSemaphore.WaitAsync();
+                        var semWaitMs = semSw?.ElapsedMilliseconds ?? 0;
+                        try
+                        {
+                            if (semWaitMs > 0)
+                                TraceLog($"[SMTP] SEMAPHORE WAIT {h}:25 waited {semWaitMs}ms (slots={smtpSemaphore.CurrentCount}/{smtpMaxConcurrency})");
+                            Interlocked.Increment(ref smtpProbesStarted);
+                            var probeResult = await _smtp.ProbeSmtpAsync(h, 25);
+                            ctx.SmtpProbeCache.TryAdd(h, probeResult);
+                        }
+                        finally { smtpSemaphore.Release(); }
 
-                // Submission port probes — fire-and-forget, cached by the time
-                // SubmissionPortsCheck runs in the concurrent tier
-                _ = Task.Run(() => _smtp.ProbePortAsync(h, 587));
-                _ = Task.Run(() => _smtp.ProbePortAsync(h, 465));
+                        await Task.WhenAll(ptrTasks);
+                    }));
+
+                    // Submission port probes — fire-and-forget, cached by the time
+                    // SubmissionPortsCheck runs in the concurrent tier
+                    _ = Task.Run(() => _smtp.ProbePortAsync(host, 587));
+                    _ = Task.Run(() => _smtp.ProbePortAsync(host, 465));
+                }
+            }
+            else
+            {
+                TraceLog($"[SMTP] PREFETCH SKIPPED (EnableSmtpProbes=false)");
+                // Still resolve MX IPs for DNS-only checks (rDNS, etc.)
+                foreach (var host in mxHosts)
+                    allTasks.Add(_dns.ResolveAAsync(host));
             }
 
             await Task.WhenAll(allTasks);

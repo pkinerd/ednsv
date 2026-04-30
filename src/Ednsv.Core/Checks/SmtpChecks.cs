@@ -13,6 +13,9 @@ public class SmtpTlsCertCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -97,6 +100,9 @@ public class SmtpTlsChainCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -171,6 +177,9 @@ public class DaneTlsaCertMatchCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -299,6 +308,9 @@ public class SmtpBannerCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -370,6 +382,9 @@ public class SmtpBannerRdnsMatchCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -479,6 +494,9 @@ public class SmtpTransactionTimingCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -579,6 +597,9 @@ public class EhloCapabilitiesCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -642,6 +663,9 @@ public class SubmissionPortsCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -738,6 +762,9 @@ public class PostmasterAddressCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -816,6 +843,9 @@ public class AbuseAddressCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -894,6 +924,9 @@ public class OpenRelayCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.Options.EnableOpenRelay)
@@ -957,6 +990,9 @@ public class CatchAllDetectionCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.Options.EnableCatchAll)
@@ -1014,6 +1050,9 @@ public class SmtpStarttlsEnforcementCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -1079,6 +1118,9 @@ public class SmtpIpv6ConnectivityCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try

@@ -17,6 +17,9 @@ public class SmtpSizeCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.MxHosts.Any())
@@ -345,6 +348,9 @@ public class SmtpRequireTlsCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.MxHosts.Any())
@@ -527,6 +533,9 @@ public class CertificateTransparencyCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableHttpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: HTTP/HTTPS probes disabled (--no-http)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
