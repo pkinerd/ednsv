@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #96 (attempt 1) |
-| **Run ID** | 24070574386 |
+| **Run** | #148 (attempt 1) |
+| **Run ID** | 25145251481 |
 | **Result** | pass |
-| **Commit** | f0b49fb1bd0476809fa2c436aa9af0832f370f28 |
-| **Ref** | refs/pull/4/merge |
+| **Commit** | 1c15e10310e0628537e278b59583b6495c42fa28 |
+| **Ref** | refs/pull/10/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #4: Add support for validating multiple domains in a single run |
-| **Branch** | claude/multi-domain-file-input-Mqheq |
+| **PR** | #10: Add Docker image build and push to CI/CD pipeline |
+| **Branch** | claude/add-docker-ci-build-iaIP8 |
 
 ## Artifacts
 ```
