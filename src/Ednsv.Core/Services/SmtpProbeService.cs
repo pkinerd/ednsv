@@ -186,12 +186,16 @@ public class SmtpProbeService
                             {
                                 if (chain != null && chain.ChainElements.Count > 1 && cert != null)
                                 {
-                                    var leafThumbprint = new X509Certificate2(cert).Thumbprint;
+                                    using var leafCopy = new X509Certificate2(cert);
+                                    var leafThumbprint = leafCopy.Thumbprint;
+                                    // Clone each intermediate by raw bytes — the chain's X509Certificate2
+                                    // instances are disposed when SslStream releases the chain after the
+                                    // callback returns, leaving the original handles invalid.
                                     capturedIntermediates = chain.ChainElements
                                         .Cast<X509ChainElement>()
-                                        .Select(e => e.Certificate)
-                                        .Where(c => c.Thumbprint != leafThumbprint &&
-                                                    !string.Equals(c.Subject, c.Issuer, StringComparison.OrdinalIgnoreCase))
+                                        .Where(e => e.Certificate.Thumbprint != leafThumbprint &&
+                                                    !string.Equals(e.Certificate.Subject, e.Certificate.Issuer, StringComparison.OrdinalIgnoreCase))
+                                        .Select(e => new X509Certificate2(e.Certificate.RawData))
                                         .ToList();
                                 }
                                 return true;
