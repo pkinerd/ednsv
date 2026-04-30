@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ednsv - Tokens</title>
+<style>
+  :root { --bg: #0f172a; --surface: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --pass: #4ade80; --warn: #fbbf24; --error: #f87171; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: var(--accent); }
+  h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--text); }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
+  .nav { font-size: 0.85rem; margin-bottom: 1.5rem; display: flex; gap: 1rem; align-items: center; }
+  .nav a { color: var(--accent); text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .nav .who { color: var(--muted); margin-left: auto; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  .panel h2 { margin-top: 0; }
+  label { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 0.25rem; }
+  input[type=text] { padding: 0.5rem 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; width: 100%; max-width: 320px; }
+  input[type=text]:focus { border-color: var(--accent); }
+  input[type=checkbox] { margin-right: 0.4rem; vertical-align: middle; }
+  .row { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; margin-bottom: 0.75rem; }
+  button { padding: 0.5rem 1rem; background: var(--accent); color: var(--bg); border: none; border-radius: 4px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { background: transparent; color: var(--error); border: 1px solid var(--error); font-weight: 500; padding: 0.3rem 0.7rem; }
+  button.danger:hover { background: var(--error); color: var(--bg); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.75rem; text-transform: uppercase; }
+  tr.revoked td { color: var(--muted); text-decoration: line-through; }
+  tr.revoked td.actions { text-decoration: none; }
+  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.72rem; }
+  .pill.yes { background: #166534; color: var(--pass); }
+  .pill.no { background: #334155; color: var(--muted); }
+  .pill.revoked { background: #7f1d1d; color: var(--error); }
+  .msg { padding: 0.7rem 1rem; border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; }
+  .msg.error { background: #7f1d1d33; border: 1px solid var(--error); color: var(--error); }
+  .msg.warn { background: #71401233; border: 1px solid var(--warn); color: var(--warn); }
+  .token-display { background: var(--bg); border: 1px solid var(--accent); border-radius: 4px; padding: 1rem; margin-top: 0.5rem; }
+  .token-display .new-token { font-family: inherit; font-size: 0.95rem; word-break: break-all; user-select: all; padding: 0.5rem; background: var(--surface); border-radius: 4px; margin: 0.5rem 0; color: var(--accent); }
+  .token-display .copy { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .empty { color: var(--muted); font-size: 0.85rem; padding: 1rem; text-align: center; }
+  td.actions { text-align: right; white-space: nowrap; }
+  .ip { color: var(--muted); }
+  .timestamp { color: var(--muted); font-size: 0.78rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ednsv tokens</h1>
+  <p class="subtitle">Manage authentication tokens for the API and web UI.</p>
+
+  <div class="nav">
+    <a href="/">&larr; Validator</a>
+    <span class="who" id="who"></span>
+    <a href="#" id="signOut" style="color:var(--muted);margin-left:1rem">Sign out</a>
+  </div>
+
+  <div id="messages"></div>
+
+  <div class="panel" id="issuePanel" style="display:none">
+    <h2>Issue new token</h2>
+    <div class="row">
+      <div>
+        <label for="newUsername">Username</label>
+        <input type="text" id="newUsername" placeholder="alice" autocomplete="off">
+      </div>
+      <div>
+        <label><input type="checkbox" id="newCanIssue"> Can issue tokens</label>
+      </div>
+      <div>
+        <button id="issueBtn">Issue token</button>
+      </div>
+    </div>
+    <div id="newTokenWrap"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Tokens</h2>
+    <div id="tableWrap"><div class="empty">Loading...</div></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+
+let state = { me: null, users: [] };
+
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (!res.ok) throw new Error(`auth/me failed: ${res.status}`);
+  return res.json();
+}
+
+async function loadUsers() {
+  const res = await fetch('/api/auth/users');
+  if (!res.ok) throw new Error(`auth/users failed: ${res.status}`);
+  return res.json();
+}
+
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  return d.toISOString().replace('T', ' ').replace(/\..+/, '') + ' UTC';
+}
+
+function showMessage(text, kind = 'error') {
+  const m = $('#messages');
+  m.innerHTML = `<div class="msg ${kind}">${esc(text)}</div>`;
+  setTimeout(() => { if (m.firstChild?.textContent === text) m.innerHTML = ''; }, 6000);
+}
+
+function renderTable() {
+  const wrap = $('#tableWrap');
+  if (!state.users.length) {
+    wrap.innerHTML = '<div class="empty">No tokens issued yet.</div>';
+    return;
+  }
+  let html = '<table><thead><tr>';
+  html += '<th>Username</th><th>Issued by</th><th>Issued at</th><th>From IP</th><th>Can issue</th><th>Status</th><th></th>';
+  html += '</tr></thead><tbody>';
+  for (const u of state.users) {
+    const cls = u.revoked ? 'revoked' : '';
+    html += `<tr class="${cls}">`;
+    html += `<td>${esc(u.username)}</td>`;
+    html += `<td>${esc(u.issuedBy)}</td>`;
+    html += `<td class="timestamp">${esc(fmtDate(u.issuedAt))}</td>`;
+    html += `<td class="ip">${esc(u.issuedFromIp || '')}</td>`;
+    html += `<td>${u.canIssue ? '<span class="pill yes">yes</span>' : '<span class="pill no">no</span>'}</td>`;
+    if (u.revoked) {
+      const detail = u.revokedAt ? ` ${fmtDate(u.revokedAt)}` : '';
+      const by = u.revokedBy ? ` by ${u.revokedBy}` : '';
+      html += `<td><span class="pill revoked">revoked</span><div class="timestamp">${esc(detail + by)}</div></td>`;
+      html += '<td class="actions"></td>';
+    } else {
+      html += `<td><span class="pill yes">active</span></td>`;
+      html += `<td class="actions"><button class="danger" data-revoke="${esc(u.username)}">Revoke</button></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll('button[data-revoke]').forEach(btn => {
+    btn.addEventListener('click', () => revokeUser(btn.dataset.revoke));
+  });
+}
+
+async function refresh() {
+  try {
+    const data = await loadUsers();
+    state.users = data.users || [];
+    state.me = { username: data.currentUser, canIssue: data.canIssue };
+    $('#who').textContent = data.disabled
+      ? 'Auth disabled'
+      : `Signed in as ${state.me.username}${state.me.canIssue ? ' (can issue)' : ''}`;
+    $('#issuePanel').style.display = (state.me.canIssue && !data.disabled) ? '' : 'none';
+    renderTable();
+  } catch (err) {
+    showMessage(err.message);
+  }
+}
+
+async function issue() {
+  const username = $('#newUsername').value.trim();
+  const canIssue = $('#newCanIssue').checked;
+  if (!username) { showMessage('Username is required'); return; }
+
+  $('#issueBtn').disabled = true;
+  try {
+    const res = await fetch('/api/auth/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, canIssue })
+    });
+    const data = await res.json();
+    if (!res.ok) { showMessage(data.error || `Failed (${res.status})`); return; }
+
+    const wrap = $('#newTokenWrap');
+    wrap.innerHTML = `
+      <div class="token-display">
+        <div><strong>Token for ${esc(data.user.username)}</strong> — copy this now, it will not be shown again.</div>
+        <div class="new-token" id="tokenValue">${esc(data.token)}</div>
+        <button class="copy" id="copyBtn">Copy to clipboard</button>
+      </div>
+    `;
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(data.token); showMessage('Token copied to clipboard.', 'warn'); }
+      catch { showMessage('Copy failed — select the token manually.'); }
+    });
+    $('#newUsername').value = '';
+    $('#newCanIssue').checked = false;
+    refresh();
+  } catch (err) {
+    showMessage(err.message);
+  } finally {
+    $('#issueBtn').disabled = false;
+  }
+}
+
+async function revokeUser(username) {
+  if (!confirm(`Revoke ${username} and all tokens they issued?`)) return;
+  try {
+    const res = await fetch(`/api/auth/users/${encodeURIComponent(username)}/revoke`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { showMessage(data.error || `Failed (${res.status})`); return; }
+    const n = (data.revoked || []).length;
+    showMessage(`Revoked ${n} ${n === 1 ? 'token' : 'tokens'}: ${(data.revoked || []).join(', ')}`, 'warn');
+    refresh();
+  } catch (err) {
+    showMessage(err.message);
+  }
+}
+
+$('#issueBtn').addEventListener('click', issue);
+$('#newUsername').addEventListener('keydown', e => { if (e.key === 'Enter') issue(); });
+
+$('#signOut').addEventListener('click', async e => {
+  e.preventDefault();
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.href = '/login.html';
+});
+
+refresh();
+</script>
+</body>
+</html>

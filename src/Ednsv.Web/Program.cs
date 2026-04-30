@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Ednsv.Core;
@@ -17,7 +18,9 @@ builder.Logging.AddSimpleConsole(options =>
 });
 
 // ── Configuration ────────────────────────────────────────────────────────
-var cacheDir = builder.Configuration.GetValue<string>("CacheDir") ?? ".ednsv-cache";
+var dataDir = builder.Configuration.GetValue<string>("DataDir") ?? ".ednsv-data";
+var cacheDir = Path.Combine(dataDir, "cache");
+var authDir = Path.Combine(dataDir, "auth");
 var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
@@ -25,6 +28,11 @@ var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
 var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", true); // default ON for privacy
 var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
+
+// Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
+var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
+    ?? builder.Configuration.GetValue<string>("AuthTokenHash")
+    ?? AuthService.DisabledMarker;
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
@@ -70,6 +78,11 @@ builder.Services.AddSingleton(defaultOptions);
 var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
 builder.Services.AddSingleton(cacheManager);
 
+// ── Auth ─────────────────────────────────────────────────────────────────
+var authService = new AuthService(authDir, authTokenHash);
+authService.Load();
+builder.Services.AddSingleton(authService);
+
 // ── In-flight validation tracking ────────────────────────────────────────
 var validationTracker = new ValidationTracker();
 builder.Services.AddSingleton(validationTracker);
@@ -92,6 +105,80 @@ if (cacheResult != null)
 
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
+
+if (authService.Disabled)
+    app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none). All endpoints are open.");
+else
+    app.Logger.LogInformation("Authentication enabled. Root user: '{User}'. Auth data: {Path}", AuthService.RootUsername, authDir);
+
+// ── Auth middleware ──────────────────────────────────────────────────────
+// Runs before static files so the entire site requires credentials when enabled.
+// Auth resolution order: ednsv-auth cookie → Authorization: Bearer → Authorization: Basic.
+// Public paths (login page + login/logout endpoints) pass through without auth.
+app.Use(async (ctx, next) =>
+{
+    if (authService.Disabled)
+    {
+        await next();
+        return;
+    }
+
+    var path = ctx.Request.Path.Value ?? "";
+    if (path.Equals("/login.html", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
+    {
+        await next();
+        return;
+    }
+
+    AuthService.User? user = null;
+
+    if (ctx.Request.Cookies.TryGetValue("ednsv-auth", out var cookieToken) && !string.IsNullOrEmpty(cookieToken))
+        user = authService.AuthenticateBearer(cookieToken);
+
+    if (user == null)
+    {
+        string? raw = ctx.Request.Headers.Authorization;
+        if (!string.IsNullOrEmpty(raw))
+        {
+            if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                user = authService.AuthenticateBearer(raw["Bearer ".Length..].Trim());
+            }
+            else if (raw.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(raw["Basic ".Length..].Trim()));
+                    var idx = decoded.IndexOf(':');
+                    if (idx >= 0)
+                        user = authService.AuthenticateBasic(decoded[..idx], decoded[(idx + 1)..]);
+                }
+                catch (FormatException) { /* bad base64 → treat as unauth */ }
+            }
+        }
+    }
+
+    if (user == null)
+    {
+        ctx.Response.Headers.CacheControl = "no-store";
+        var accept = ctx.Request.Headers.Accept.ToString();
+        if (accept.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            // Browser navigation → redirect to login page
+            ctx.Response.Redirect("/login.html");
+            return;
+        }
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        ctx.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"ednsv\"");
+        await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
+        return;
+    }
+
+    ctx.Items["AuthUser"] = user;
+    await next();
+});
 
 // ── Static files (wwwroot/index.html) ────────────────────────────────────
 app.UseDefaultFiles();
@@ -225,11 +312,127 @@ app.MapPost("/api/cache/flush", async (CacheManager cache) =>
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories));
 
+// ── Auth endpoints ───────────────────────────────────────────────────────
+
+// GET /api/auth/me — current user info (or { disabled: true } if auth is off).
+app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.Ok(new { disabled = true });
+    var u = (AuthService.User?)ctx.Items["AuthUser"];
+    return Results.Ok(new { disabled = false, username = u?.Username, canIssue = u?.CanIssue ?? false });
+});
+
+// POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
+app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (string.IsNullOrEmpty(req.Username) || string.IsNullOrEmpty(req.Token))
+        return Results.BadRequest(new { error = "username and token are required" });
+
+    var user = auth.AuthenticateBasic(req.Username, req.Token);
+    if (user == null)
+    {
+        return Results.Json(new { error = "invalid credentials" }, statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    ctx.Response.Cookies.Append("ednsv-auth", req.Token, new CookieOptions
+    {
+        HttpOnly = true,
+        SameSite = SameSiteMode.Strict,
+        Secure = ctx.Request.IsHttps,
+        Path = "/",
+        MaxAge = TimeSpan.FromDays(30)
+    });
+    return Results.Ok(new { username = user.Username, canIssue = user.CanIssue });
+});
+
+// POST /api/auth/logout — clears the session cookie.
+app.MapPost("/api/auth/logout", (HttpContext ctx) =>
+{
+    ctx.Response.Cookies.Delete("ednsv-auth", new CookieOptions { Path = "/" });
+    return Results.Ok(new { ok = true });
+});
+
+// GET /api/auth/users — list users visible to the caller (descendants; root sees all).
+app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.Ok(new { disabled = true, users = Array.Empty<object>() });
+    var u = (AuthService.User)ctx.Items["AuthUser"]!;
+    var list = auth.ListVisibleTo(u.Username);
+    return Results.Ok(new
+    {
+        disabled = false,
+        currentUser = u.Username,
+        canIssue = u.CanIssue,
+        users = list.Select(x => new
+        {
+            x.Username,
+            x.CanIssue,
+            x.IssuedBy,
+            x.IssuedAt,
+            x.IssuedFromIp,
+            x.Revoked,
+            x.RevokedAt,
+            x.RevokedBy
+        })
+    });
+});
+
+// POST /api/auth/users — issue a new token. Returns the raw token exactly once.
+app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    var u = (AuthService.User)ctx.Items["AuthUser"]!;
+    if (!u.CanIssue) return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+    var ip = ctx.Connection.RemoteIpAddress?.ToString();
+    var result = auth.Issue(req.Username ?? "", req.CanIssue, u.Username, ip);
+    return result.Status switch
+    {
+        AuthService.IssueStatus.Success => Results.Ok(new
+        {
+            token = result.Token,
+            user = new
+            {
+                result.User!.Username,
+                result.User.CanIssue,
+                result.User.IssuedBy,
+                result.User.IssuedAt,
+                result.User.IssuedFromIp,
+                result.User.Hash
+            }
+        }),
+        AuthService.IssueStatus.UsernameTaken => Results.Conflict(new { error = "username taken" }),
+        AuthService.IssueStatus.InvalidUsername => Results.BadRequest(new { error = "invalid username (allowed: letters, digits, '.', '_', '-', max 64 chars)" }),
+        _ => Results.BadRequest(new { error = "issue failed" })
+    };
+});
+
+// POST /api/auth/users/{username}/revoke — cascade-revoke target and descendants.
+app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext ctx, AuthService auth) =>
+{
+    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    var u = (AuthService.User)ctx.Items["AuthUser"]!;
+    var result = auth.Revoke(username, u.Username);
+    return result.Status switch
+    {
+        AuthService.RevokeStatus.Success => Results.Ok(new { revoked = result.Affected }),
+        AuthService.RevokeStatus.AlreadyRevoked => Results.Ok(new { revoked = Array.Empty<string>(), note = "already revoked" }),
+        AuthService.RevokeStatus.NotFound => Results.NotFound(new { error = "user not found" }),
+        AuthService.RevokeStatus.NotAllowed => Results.StatusCode(StatusCodes.Status403Forbidden),
+        _ => Results.BadRequest(new { error = "revoke failed" })
+    };
+});
+
 app.Run();
 
 // ── Supporting types ─────────────────────────────────────────────────────
 
 record ValidateRequest(string? Domain, ValidationOptions? Options = null, string? RecheckSeverity = null);
+
+record IssueTokenRequest(string? Username, bool CanIssue);
+
+record LoginRequest(string? Username, string? Token);
 
 enum JobStatus { Running, Completed, Failed }
 

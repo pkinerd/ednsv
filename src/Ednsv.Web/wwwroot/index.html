@@ -66,6 +66,11 @@
 <div class="container">
   <h1>ednsv</h1>
   <p class="subtitle">DNS &amp; Email Infrastructure Validator</p>
+  <p class="subtitle" id="authNav" style="display:none">
+    <a href="/tokens.html" style="color:var(--accent);text-decoration:none">tokens &rarr;</a>
+    &nbsp;&middot;&nbsp;
+    <a href="#" id="signOut" style="color:var(--muted);text-decoration:none">sign out</a>
+  </p>
 
   <form class="search-form" id="form">
     <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
@@ -87,6 +92,17 @@ const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
 let pollTimer = null;
 let lastDomain = '';
+
+// Show the auth nav only when auth is enabled
+fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
+  if (d && !d.disabled) document.getElementById('authNav').style.display = '';
+}).catch(() => {});
+
+document.getElementById('signOut').addEventListener('click', async e => {
+  e.preventDefault();
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.href = '/login.html';
+});
 
 form.addEventListener('submit', async e => {
   e.preventDefault();
