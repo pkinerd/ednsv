@@ -66,6 +66,7 @@
 <div class="container">
   <h1>ednsv</h1>
   <p class="subtitle">DNS &amp; Email Infrastructure Validator</p>
+  <p class="subtitle" id="authNav" style="display:none"><a href="/tokens.html" style="color:var(--accent);text-decoration:none">tokens &rarr;</a></p>
 
   <form class="search-form" id="form">
     <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
@@ -87,6 +88,11 @@ const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
 let pollTimer = null;
 let lastDomain = '';
+
+// Show the tokens link only when auth is enabled (otherwise the page would 401 endlessly)
+fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
+  if (d && !d.disabled) document.getElementById('authNav').style.display = '';
+}).catch(() => {});
 
 form.addEventListener('submit', async e => {
   e.preventDefault();
