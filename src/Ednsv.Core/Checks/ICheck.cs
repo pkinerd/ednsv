@@ -120,7 +120,29 @@ public class ValidationOptions
     public bool EnableOpenRelay { get; set; } = false;
     public bool EnableOpenResolver { get; set; } = false;
     public string OpenResolverTestDomain { get; set; } = "www.google.com";
+
+    /// <summary>
+    /// Caller-supplied DKIM selector list. By default this is used only when
+    /// the domain has no per-domain entry in <see cref="PerDomainDkimSelectors"/>;
+    /// set <see cref="ForceDkimSelectors"/> to make it win even over per-domain config.
+    /// When non-empty it replaces the built-in/default list rather than augmenting it.
+    /// </summary>
     public List<string> AdditionalDkimSelectors { get; set; } = new();
+
+    /// <summary>
+    /// When true, <see cref="AdditionalDkimSelectors"/> overrides any per-domain
+    /// DKIM config. When false (default), per-domain config wins.
+    /// </summary>
+    public bool ForceDkimSelectors { get; set; } = false;
+
+    /// <summary>
+    /// Per-domain DKIM selector overrides keyed by lowercase bare domain name.
+    /// When the domain being validated has an entry, those selectors are used
+    /// instead of the default list.
+    /// </summary>
+    public Dictionary<string, List<string>> PerDomainDkimSelectors { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Include blocklists that require a private/registered DNS resolver
     /// (e.g. Spamhaus, Barracuda, SURBL, URIBL). These return false positives

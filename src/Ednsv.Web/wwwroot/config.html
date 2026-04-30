@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ednsv - Config</title>
+<style>
+  :root { --bg: #0f172a; --surface: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8; --pass: #4ade80; --warn: #fbbf24; --error: #f87171; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; color: var(--accent); }
+  h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; color: var(--text); }
+  .subtitle { color: var(--muted); font-size: 0.85rem; margin-bottom: 1rem; }
+  .nav { font-size: 0.85rem; margin-bottom: 1.5rem; display: flex; gap: 1rem; align-items: center; }
+  .nav a { color: var(--accent); text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+  .nav .who { color: var(--muted); margin-left: auto; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+  .panel h2 { margin-top: 0; }
+  label { display: block; font-size: 0.85rem; color: var(--text); margin-bottom: 0.4rem; }
+  label.cb { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: pointer; }
+  label.cb input { accent-color: var(--accent); }
+  label .desc { display: block; color: var(--muted); font-size: 0.75rem; margin-top: 0.15rem; font-weight: normal; }
+  input[type=text], textarea { width: 100%; padding: 0.5rem 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.85rem; outline: none; }
+  input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 6rem; line-height: 1.4; white-space: pre; }
+  textarea.json { min-height: 18rem; tab-size: 2; }
+  button { padding: 0.5rem 1rem; background: var(--accent); color: var(--bg); border: none; border-radius: 4px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  button.secondary:hover { border-color: var(--accent); }
+  button.danger { background: transparent; color: var(--error); border: 1px solid var(--error); }
+  button.danger:hover { background: var(--error); color: var(--bg); }
+  .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+  .msg { padding: 0.7rem 1rem; border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; }
+  .msg.error { background: #7f1d1d33; border: 1px solid var(--error); color: var(--error); }
+  .msg.ok { background: #16653433; border: 1px solid var(--pass); color: var(--pass); }
+  .msg.warn { background: #71401233; border: 1px solid var(--warn); color: var(--warn); }
+  .field { margin-bottom: 0.9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.72rem; text-transform: uppercase; }
+  td input[type=text] { font-size: 0.8rem; }
+  td.dom { width: 240px; }
+  td.actions-col { width: 60px; text-align: right; }
+  .empty { color: var(--muted); font-size: 0.85rem; padding: 0.5rem 0; }
+  .add-row { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; align-items: flex-end; }
+  .add-row .col { flex: 1; min-width: 180px; }
+  .pre { font-family: inherit; }
+  .tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
+  .tabs button { background: transparent; color: var(--muted); border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 0.5rem 0.8rem; font-weight: 500; }
+  .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ednsv config</h1>
+  <p class="subtitle">Server-side defaults persisted to <code>config.json</code>. Admin only.</p>
+
+  <div class="nav">
+    <a href="/">&larr; Validator</a>
+    <a href="/tokens.html">Tokens</a>
+    <span class="who" id="who"></span>
+    <a href="#" id="signOut" style="color:var(--muted);margin-left:1rem">Sign out</a>
+  </div>
+
+  <div id="messages"></div>
+
+  <div class="tabs">
+    <button data-tab="form" class="active">Form</button>
+    <button data-tab="json">JSON</button>
+  </div>
+
+  <div class="tab-pane active" id="tab-form">
+    <div class="panel">
+      <h2>Default network options</h2>
+      <p class="subtitle">When disabled here, callers cannot re-enable the category for any request (AND-merge with request options).</p>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgSmtp"> SMTP probes (port 25 / 465 / 587)<span class="desc">Disable to skip outbound SMTP across all validations.</span></label>
+      </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgHttp"> HTTP/HTTPS lookups<span class="desc">MTA-STS, security.txt, BIMI, Certificate Transparency.</span></label>
+      </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgDnsbl"> Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc.</span></label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Default DKIM selectors</h2>
+      <p class="subtitle">Used when a domain has no per-domain entry below and the request supplies no explicit list. Comma- or whitespace-separated.</p>
+      <textarea id="cfgDefaultDkim" placeholder="default, google, selector1, ..."></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Per-domain DKIM selectors</h2>
+      <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
+      <table id="domTable">
+        <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
+        <tbody id="domTableBody"></tbody>
+      </table>
+      <div class="add-row">
+        <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
+        <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
+        <div><button class="secondary" id="addDomainBtn">Add</button></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="saveBtn">Save config</button>
+      <button class="secondary" id="reloadBtn">Discard / reload</button>
+    </div>
+  </div>
+
+  <div class="tab-pane" id="tab-json">
+    <div class="panel">
+      <h2>Raw JSON</h2>
+      <p class="subtitle">Edit the full config.json document. Validates on save.</p>
+      <textarea id="rawJson" class="json" spellcheck="false"></textarea>
+      <div class="actions">
+        <button id="saveJsonBtn">Save JSON</button>
+        <button class="secondary" id="reloadJsonBtn">Reload from server</button>
+        <button class="secondary" id="syncFromFormBtn">Sync from form</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+let current = null;  // last server snapshot
+
+function showMessage(text, kind = 'error') {
+  const m = $('#messages');
+  m.innerHTML = `<div class="msg ${kind}">${esc(text)}</div>`;
+  setTimeout(() => { if (m.firstChild?.textContent === text) m.innerHTML = ''; }, 5000);
+}
+
+function parseList(s) {
+  return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
+}
+
+async function loadConfig() {
+  const res = await fetch('/api/config');
+  if (res.status === 403) { showMessage('Forbidden — admin only.'); return null; }
+  if (!res.ok) { showMessage(`Load failed: ${res.status}`); return null; }
+  return res.json();
+}
+
+function fillForm(cfg) {
+  $('#cfgSmtp').checked = !!cfg.enableSmtpProbes;
+  $('#cfgHttp').checked = !!cfg.enableHttpProbes;
+  $('#cfgDnsbl').checked = !!cfg.enableDnsbl;
+  $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
+  renderDomTable(cfg.dkimSelectors || {});
+  $('#rawJson').value = JSON.stringify(cfg, null, 2);
+}
+
+function renderDomTable(map) {
+  const tbody = $('#domTableBody');
+  const keys = Object.keys(map);
+  if (keys.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  for (const k of keys.sort()) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="dom"><input type="text" data-dom="" value="${esc(k)}" data-orig="${esc(k)}"></td>
+      <td><input type="text" data-sel="${esc(k)}" value="${esc((map[k] || []).join(', '))}"></td>
+      <td class="actions-col"><button class="danger" data-remove="${esc(k)}">Remove</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('button[data-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tr = btn.closest('tr');
+      tr.remove();
+      if (!$('#domTableBody').children.length)
+        $('#domTableBody').innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
+    });
+  });
+}
+
+function collectFormConfig() {
+  // Read per-domain table fresh from inputs (so renames/edits are picked up)
+  const dkim = {};
+  $('#domTableBody').querySelectorAll('tr').forEach(tr => {
+    const domInput = tr.querySelector('input[data-dom]');
+    const selInput = tr.querySelector('input[data-sel]');
+    if (!domInput || !selInput) return;
+    const k = (domInput.value || '').trim().replace(/\.$/, '').toLowerCase();
+    const list = parseList(selInput.value);
+    if (k && list.length) dkim[k] = list;
+  });
+  return {
+    enableSmtpProbes: $('#cfgSmtp').checked,
+    enableHttpProbes: $('#cfgHttp').checked,
+    enableDnsbl:      $('#cfgDnsbl').checked,
+    defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
+    dkimSelectors: dkim
+  };
+}
+
+async function saveConfig(payload) {
+  const res = await fetch('/api/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  let data;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) { showMessage((data && data.error) || `Save failed: ${res.status}`); return null; }
+  return data;
+}
+
+$('#addDomainBtn').addEventListener('click', () => {
+  const dom = ($('#newDomain').value || '').trim().replace(/\.$/, '').toLowerCase();
+  const sels = parseList($('#newSelectors').value);
+  if (!dom) { showMessage('Domain is required'); return; }
+  if (!sels.length) { showMessage('At least one selector is required'); return; }
+  // Merge into current snapshot, then re-render
+  const map = (current && current.dkimSelectors) ? { ...current.dkimSelectors } : {};
+  // Pick up edits already in the table
+  const formNow = collectFormConfig();
+  Object.assign(map, formNow.dkimSelectors);
+  map[dom] = sels;
+  current = { ...(current || {}), ...formNow, dkimSelectors: map };
+  renderDomTable(map);
+  $('#newDomain').value = '';
+  $('#newSelectors').value = '';
+});
+
+$('#saveBtn').addEventListener('click', async () => {
+  const payload = collectFormConfig();
+  const result = await saveConfig(payload);
+  if (result) { current = result; fillForm(result); showMessage('Config saved.', 'ok'); }
+});
+
+$('#reloadBtn').addEventListener('click', async () => {
+  const cfg = await loadConfig();
+  if (cfg) { current = cfg; fillForm(cfg); showMessage('Reloaded from server.', 'warn'); }
+});
+
+$('#saveJsonBtn').addEventListener('click', async () => {
+  let parsed;
+  try { parsed = JSON.parse($('#rawJson').value); }
+  catch (e) { showMessage(`Invalid JSON: ${e.message}`); return; }
+  const result = await saveConfig(parsed);
+  if (result) { current = result; fillForm(result); showMessage('Config saved.', 'ok'); }
+});
+
+$('#reloadJsonBtn').addEventListener('click', async () => {
+  const cfg = await loadConfig();
+  if (cfg) { current = cfg; fillForm(cfg); showMessage('Reloaded from server.', 'warn'); }
+});
+
+$('#syncFromFormBtn').addEventListener('click', () => {
+  $('#rawJson').value = JSON.stringify(collectFormConfig(), null, 2);
+});
+
+// Tab switching
+document.querySelectorAll('.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'json') $('#rawJson').value = JSON.stringify(collectFormConfig(), null, 2);
+  });
+});
+
+$('#signOut').addEventListener('click', async e => {
+  e.preventDefault();
+  try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
+  location.href = '/login.html';
+});
+
+(async () => {
+  // Show who you are
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.disabled) $('#who').textContent = 'Auth disabled';
+    else $('#who').textContent = `Signed in as ${me.username}${me.isAdmin ? ' (admin)' : ''}`;
+  } catch {}
+  const cfg = await loadConfig();
+  if (cfg) { current = cfg; fillForm(cfg); }
+})();
+</script>
+</body>
+</html>

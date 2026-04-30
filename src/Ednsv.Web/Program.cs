@@ -71,18 +71,39 @@ var traceMasker = maskTrace
     ? (!string.IsNullOrEmpty(maskSalt) ? new TraceMasker(maskSalt) : new TraceMasker())
     : null;
 
-// ── Default validation options ────────────────────────────────────────────
-var defaultOptions = new ValidationOptions
+// ── App config (persisted to {dataDir}/config.json) ──────────────────────
+// On first run, seed from env vars + DkimSelectorsCheck.CommonSelectors so an
+// out-of-the-box install matches built-in behavior. After that the file is the
+// source of truth and admins edit it via the web UI.
+var configService = new ConfigService(dataDir);
+var seedConfig = new AppConfig
 {
     EnableSmtpProbes = defaultEnableSmtpProbes,
     EnableHttpProbes = defaultEnableHttpProbes,
-    EnableDnsbl      = defaultEnableDnsbl
+    EnableDnsbl      = defaultEnableDnsbl,
+    DefaultDkimSelectors = !string.IsNullOrEmpty(dkimSelectorsStr)
+        ? dkimSelectorsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
+        : DkimSelectorsCheck.CommonSelectors.ToList()
 };
-if (!string.IsNullOrEmpty(dkimSelectorsStr))
-    defaultOptions.AdditionalDkimSelectors = dkimSelectorsStr
-        .Split(',', StringSplitOptions.RemoveEmptyEntries)
-        .Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
-builder.Services.AddSingleton(defaultOptions);
+configService.LoadOrSeed(seedConfig);
+builder.Services.AddSingleton(configService);
+
+// Default validation options track the live config snapshot. Endpoints that
+// compose per-request options pull a fresh snapshot from ConfigService.
+ValidationOptions BuildDefaultOptions()
+{
+    var cfg = configService.Snapshot();
+    return new ValidationOptions
+    {
+        EnableSmtpProbes        = cfg.EnableSmtpProbes,
+        EnableHttpProbes        = cfg.EnableHttpProbes,
+        EnableDnsbl             = cfg.EnableDnsbl,
+        AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
+        PerDomainDkimSelectors  = cfg.DkimSelectors
+            .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
+    };
+}
 
 // ── Cache manager ────────────────────────────────────────────────────────
 var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
@@ -187,6 +208,16 @@ app.Use(async (ctx, next) =>
     }
 
     ctx.Items["AuthUser"] = user;
+
+    // Admin-only static pages: gate /config.html before static files serve it.
+    var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
+    if (pathLower == "/config.html" && !user.IsAdmin)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await ctx.Response.WriteAsync("Forbidden: admin only");
+        return;
+    }
+
     await next();
 });
 
@@ -200,7 +231,7 @@ app.UseStaticFiles();
 // Starts an async validation and returns a job ID.
 app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, ValidationOptions defaults, ILogger<Program> logger) =>
+    CacheManager cache, ILogger<Program> logger) =>
 {
     var domain = req.Domain?.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -211,12 +242,17 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
-    // Merge request options with server defaults (request takes precedence for
-    // most fields). Network-category toggles use AND-logic: if the operator has
-    // disabled a category via env-var, clients cannot re-enable it.
+    // Merge request options with the live config snapshot. Network-category
+    // toggles use AND-logic: an admin-disabled category via config.json cannot
+    // be re-enabled by a client. Per-domain DKIM selectors and the global
+    // default DKIM list are pulled from config (clients can still override
+    // via AdditionalDkimSelectors / ForceDkimSelectors).
+    var defaults = BuildDefaultOptions();
     var options = req.Options ?? new ValidationOptions();
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
+    if (options.PerDomainDkimSelectors.Count == 0)
+        options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
     options.EnableSmtpProbes = options.EnableSmtpProbes && defaults.EnableSmtpProbes;
     options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
     options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
@@ -289,7 +325,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?privateDnsbl=true                  include private/registered DNSBLs
 app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, string? recheck,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, ValidationOptions defaults, CancellationToken ct) =>
+    CacheManager cache, CancellationToken ct) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -303,8 +339,10 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
         validator.RecheckDeps = cache.GetRecheckDeps(domain, recheckSev);
 
-    // Build per-request options, starting from server defaults so admin-pinned
-    // categories stay disabled regardless of query-string input (AND-logic).
+    // Build per-request options, starting from the live config snapshot so
+    // admin-pinned categories stay disabled regardless of query-string input
+    // (AND-logic) and per-domain DKIM config is honoured.
+    var defaults = BuildDefaultOptions();
     bool ParseBool(string name) =>
         bool.TryParse(httpCtx.Request.Query[name].ToString(), out var v) && v;
     var restricted = ParseBool("restricted");
@@ -318,7 +356,9 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableOpenRelay    = ParseBool("openRelay"),
         EnableOpenResolver = ParseBool("openResolver"),
         EnablePrivateDnsbl = ParseBool("privateDnsbl"),
-        AdditionalDkimSelectors = defaults.AdditionalDkimSelectors
+        ForceDkimSelectors = ParseBool("forceDkimSelectors"),
+        AdditionalDkimSelectors = defaults.AdditionalDkimSelectors,
+        PerDomainDkimSelectors  = defaults.PerDomainDkimSelectors
     };
     var dkimRaw = httpCtx.Request.Query["dkimSelectors"].ToString();
     if (!string.IsNullOrWhiteSpace(dkimRaw))
@@ -363,18 +403,72 @@ app.MapPost("/api/cache/flush", async (CacheManager cache) =>
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories));
 
-// GET /api/defaults — surface defaults the UI needs to pre-fill option fields
-// (currently the built-in DKIM selector list).
-app.MapGet("/api/defaults", () => Results.Ok(new { dkimSelectors = DkimSelectorsCheck.CommonSelectors }));
+// GET /api/defaults — surface server-side defaults the UI needs to pre-fill
+// the validation form (default DKIM list and the per-domain overrides map so
+// the UI can hide/show the Force-selectors checkbox per domain).
+app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
+{
+    var cfg = cfgSvc.Snapshot();
+    return Results.Ok(new
+    {
+        enableSmtpProbes = cfg.EnableSmtpProbes,
+        enableHttpProbes = cfg.EnableHttpProbes,
+        enableDnsbl      = cfg.EnableDnsbl,
+        dkimSelectors    = cfg.DefaultDkimSelectors.Count > 0
+            ? cfg.DefaultDkimSelectors
+            : DkimSelectorsCheck.CommonSelectors.ToList(),
+        perDomainDkimSelectors = cfg.DkimSelectors
+    });
+});
+
+// ── Config endpoints (admin-only) ────────────────────────────────────────
+
+static bool RequireAdmin(HttpContext ctx, AuthService auth, out IResult? error)
+{
+    error = null;
+    if (auth.Disabled) return true; // auth disabled → all callers treated as admin
+    var u = (AuthService.User?)ctx.Items["AuthUser"];
+    if (u == null || !u.IsAdmin)
+    {
+        error = Results.StatusCode(StatusCodes.Status403Forbidden);
+        return false;
+    }
+    return true;
+}
+
+// GET /api/config — return the current persisted config.
+app.MapGet("/api/config", (HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    return Results.Ok(cfgSvc.Snapshot());
+});
+
+// PUT /api/config — replace the config and persist to disk.
+app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    AppConfig? incoming;
+    try
+    {
+        incoming = await ctx.Request.ReadFromJsonAsync<AppConfig>();
+    }
+    catch (JsonException ex)
+    {
+        return Results.BadRequest(new { error = $"invalid JSON: {ex.Message}" });
+    }
+    if (incoming == null) return Results.BadRequest(new { error = "body is required" });
+    cfgSvc.Replace(incoming);
+    return Results.Ok(cfgSvc.Snapshot());
+});
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 
 // GET /api/auth/me — current user info (or { disabled: true } if auth is off).
 app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.Ok(new { disabled = true });
+    if (auth.Disabled) return Results.Ok(new { disabled = true, isAdmin = true });
     var u = (AuthService.User?)ctx.Items["AuthUser"];
-    return Results.Ok(new { disabled = false, username = u?.Username, canIssue = u?.CanIssue ?? false });
+    return Results.Ok(new { disabled = false, username = u?.Username, isAdmin = u?.IsAdmin ?? false });
 });
 
 // POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
@@ -398,7 +492,7 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService a
         Path = "/",
         MaxAge = TimeSpan.FromDays(30)
     });
-    return Results.Ok(new { username = user.Username, canIssue = user.CanIssue });
+    return Results.Ok(new { username = user.Username, isAdmin = user.IsAdmin });
 });
 
 // POST /api/auth/logout — clears the session cookie.
@@ -418,11 +512,11 @@ app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
     {
         disabled = false,
         currentUser = u.Username,
-        canIssue = u.CanIssue,
+        isAdmin = u.IsAdmin,
         users = list.Select(x => new
         {
             x.Username,
-            x.CanIssue,
+            x.IsAdmin,
             x.IssuedBy,
             x.IssuedAt,
             x.IssuedFromIp,
@@ -438,10 +532,10 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
 {
     if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
-    if (!u.CanIssue) return Results.StatusCode(StatusCodes.Status403Forbidden);
+    if (!u.IsAdmin) return Results.StatusCode(StatusCodes.Status403Forbidden);
 
     var ip = ctx.Connection.RemoteIpAddress?.ToString();
-    var result = auth.Issue(req.Username ?? "", req.CanIssue, u.Username, ip);
+    var result = auth.Issue(req.Username ?? "", req.IsAdmin, u.Username, ip);
     return result.Status switch
     {
         AuthService.IssueStatus.Success => Results.Ok(new
@@ -450,7 +544,7 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
             user = new
             {
                 result.User!.Username,
-                result.User.CanIssue,
+                result.User.IsAdmin,
                 result.User.IssuedBy,
                 result.User.IssuedAt,
                 result.User.IssuedFromIp,
@@ -485,7 +579,7 @@ app.Run();
 
 record ValidateRequest(string? Domain, ValidationOptions? Options = null, string? RecheckSeverity = null);
 
-record IssueTokenRequest(string? Username, bool CanIssue);
+record IssueTokenRequest(string? Username, bool IsAdmin);
 
 record LoginRequest(string? Username, string? Token);
 
