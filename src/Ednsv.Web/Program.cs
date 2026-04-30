@@ -146,7 +146,11 @@ app.Use(async (ctx, next) =>
     if (user == null)
     {
         ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        ctx.Response.Headers.WWWAuthenticate = "Basic realm=\"ednsv\", Bearer realm=\"ednsv\"";
+        // Send two separate WWW-Authenticate headers — browsers don't reliably
+        // parse comma-separated challenges on a single line, and without Basic
+        // recognized first they skip the login prompt and just render the body.
+        ctx.Response.Headers.Append("WWW-Authenticate", "Basic realm=\"ednsv\"");
+        ctx.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"ednsv\"");
         await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
         return;
     }
