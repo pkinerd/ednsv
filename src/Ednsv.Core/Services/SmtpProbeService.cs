@@ -184,18 +184,22 @@ public class SmtpProbeService
                         var sslStream = new SslStream(stream, false,
                             (sender, cert, chain, errors) =>
                             {
-                                if (chain != null && chain.ChainElements.Count > 1 && cert != null)
+                                if (chain != null && cert != null)
                                 {
+                                    // ChainPolicy.ExtraStore holds the intermediate certificates the
+                                    // peer sent in the TLS handshake (.NET populates it from
+                                    // SSL_get_peer_cert_chain on Linux / the equivalent on Windows
+                                    // before invoking this callback). chain.ChainElements is the
+                                    // *built* chain and may include intermediates pulled from the
+                                    // local OS trust store, so it is not a reliable indicator of
+                                    // what the server actually served.
                                     using var leafCopy = new X509Certificate2(cert);
                                     var leafThumbprint = leafCopy.Thumbprint;
-                                    // Clone each intermediate by raw bytes — the chain's X509Certificate2
-                                    // instances are disposed when SslStream releases the chain after the
-                                    // callback returns, leaving the original handles invalid.
-                                    capturedIntermediates = chain.ChainElements
-                                        .Cast<X509ChainElement>()
-                                        .Where(e => e.Certificate.Thumbprint != leafThumbprint &&
-                                                    !string.Equals(e.Certificate.Subject, e.Certificate.Issuer, StringComparison.OrdinalIgnoreCase))
-                                        .Select(e => new X509Certificate2(e.Certificate.RawData))
+                                    capturedIntermediates = chain.ChainPolicy.ExtraStore
+                                        .Cast<X509Certificate2>()
+                                        .Where(c => c.Thumbprint != leafThumbprint &&
+                                                    !string.Equals(c.Subject, c.Issuer, StringComparison.OrdinalIgnoreCase))
+                                        .Select(c => new X509Certificate2(c.RawData))
                                         .ToList();
                                 }
                                 return true;
