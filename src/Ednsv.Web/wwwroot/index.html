@@ -60,6 +60,19 @@
   .filter-bar button.active { border-color: var(--accent); background: #1e3a5f; color: var(--text); }
   .recheck-btn { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--warn); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
   .recheck-btn:hover { border-color: var(--warn); }
+  details.options { margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  details.options > summary { padding: 0.5rem 0.75rem; cursor: pointer; user-select: none; font-size: 0.85rem; color: var(--muted); list-style: none; }
+  details.options > summary::before { content: '\25B6'; display: inline-block; margin-right: 0.4rem; transition: transform 0.15s; font-size: 0.7rem; }
+  details.options[open] > summary::before { transform: rotate(90deg); }
+  details.options[open] > summary { color: var(--text); border-bottom: 1px solid var(--border); }
+  .options-body { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .options-body label { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.82rem; cursor: pointer; }
+  .options-body label input[type="checkbox"] { margin-top: 0.15rem; accent-color: var(--accent); }
+  .options-body label .desc { display: block; color: var(--muted); font-size: 0.75rem; margin-top: 0.1rem; }
+  .options-body .field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .options-body .field span { font-size: 0.82rem; }
+  .options-body .field input[type="text"] { padding: 0.4rem 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
+  .options-body .field input[type="text"]:focus { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -83,6 +96,28 @@
     <button type="submit" id="btn">Validate</button>
   </form>
 
+  <details class="options" id="optionsPanel">
+    <summary>Validation options</summary>
+    <div class="options-body">
+      <label>
+        <input type="checkbox" id="optSmtp" checked>
+        <span>SMTP probes (port 25 / 465 / 587)<span class="desc">Disable when outbound SMTP is blocked. Skips MX STARTTLS, TLS cert, banner, postmaster/abuse, submission ports, IPv6 SMTP.</span></span>
+      </label>
+      <label>
+        <input type="checkbox" id="optHttp" checked>
+        <span>HTTP/HTTPS lookups<span class="desc">MTA-STS, security.txt, BIMI, Certificate Transparency (crt.sh). Disable when outbound HTTPS is blocked.</span></span>
+      </label>
+      <label>
+        <input type="checkbox" id="optDnsbl" checked>
+        <span>Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc. Disable when blocklist providers refuse or rate-limit your resolver.</span></span>
+      </label>
+      <div class="field">
+        <span>Additional DKIM selectors<span class="desc">Comma- or space-separated list to probe in addition to the defaults (default, google, selector1, selector2).</span></span>
+        <input type="text" id="optDkimSelectors" placeholder="e.g. mail, k1, dkim2024" autocomplete="off">
+      </div>
+    </div>
+  </details>
+
   <div id="status"></div>
   <div id="results"></div>
 </div>
@@ -90,8 +125,49 @@
 <script>
 const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
+const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDkim = $('#optDkimSelectors');
 let pollTimer = null;
 let lastDomain = '';
+
+// ── Validation options: persist to localStorage so users in restricted
+// networks don't have to re-untick boxes on every visit. Stored client-side
+// only — never sent to the server outside of the validation request body.
+const OPTIONS_KEY = 'ednsv.userOptions';
+function loadUserOptions() {
+  try {
+    const raw = localStorage.getItem(OPTIONS_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (typeof o.enableSmtpProbes === 'boolean') optSmtp.checked = o.enableSmtpProbes;
+    if (typeof o.enableHttpProbes === 'boolean') optHttp.checked = o.enableHttpProbes;
+    if (typeof o.enableDnsbl === 'boolean')      optDnsbl.checked = o.enableDnsbl;
+    if (Array.isArray(o.additionalDkimSelectors)) optDkim.value = o.additionalDkimSelectors.join(', ');
+  } catch { /* ignore corrupt storage */ }
+}
+function parseSelectors(s) {
+  return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
+}
+function saveUserOptions() {
+  const o = {
+    enableSmtpProbes: optSmtp.checked,
+    enableHttpProbes: optHttp.checked,
+    enableDnsbl:      optDnsbl.checked,
+    additionalDkimSelectors: parseSelectors(optDkim.value)
+  };
+  try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
+}
+function currentOptions() {
+  return {
+    enableSmtpProbes: optSmtp.checked,
+    enableHttpProbes: optHttp.checked,
+    enableDnsbl:      optDnsbl.checked,
+    additionalDkimSelectors: parseSelectors(optDkim.value)
+  };
+}
+loadUserOptions();
+[optSmtp, optHttp, optDnsbl].forEach(el => el.addEventListener('change', saveUserOptions));
+optDkim.addEventListener('change', saveUserOptions);
+optDkim.addEventListener('blur', saveUserOptions);
 
 // Show the auth nav only when auth is enabled
 fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
@@ -118,7 +194,7 @@ async function startValidation(domain, recheckSeverity) {
   const recheckLabel = recheckSeverity ? ` (recheck >= ${recheckSeverity})` : '';
   statusEl.textContent = `Starting validation for ${domain}${recheckLabel}...`;
 
-  const body = { domain };
+  const body = { domain, options: currentOptions() };
   if (recheckSeverity) body.recheckSeverity = recheckSeverity;
 
   try {

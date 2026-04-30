@@ -50,6 +50,11 @@ var maskTraceOption = new Option<bool>("--mask-trace", () => true, "Mask hostnam
 var noMaskTraceOption = new Option<bool>("--no-mask-trace", "Disable masking of private details in log output");
 var maskSaltOption = new Option<string?>("--mask-salt", "Static salt for consistent hashes across runs (base64, hex, or passphrase)");
 var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
+// Network-category opt-out flags (default ON; pass to disable in restricted environments)
+var noSmtpOption = new Option<bool>("--no-smtp", "Skip all SMTP probes (port 25/465/587). Use in environments where outbound SMTP is blocked. Affected categories: SMTP, DANE, MX STARTTLS, Postmaster/Abuse, Submission ports, IPv6 SMTP");
+var noHttpOption = new Option<bool>("--no-http", "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked");
+var noDnsblOption = new Option<bool>("--no-dnsbl", "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver");
+var restrictedNetworkOption = new Option<bool>("--restricted-network", "Convenience preset: equivalent to --no-smtp --no-http --no-dnsbl. Run only DNS-based checks against your configured resolver");
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
@@ -76,7 +81,11 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     maskTraceOption,
     noMaskTraceOption,
     maskSaltOption,
-    liveIndexOption
+    liveIndexOption,
+    noSmtpOption,
+    noHttpOption,
+    noDnsblOption,
+    restrictedNetworkOption
 };
 
 rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
@@ -189,6 +198,14 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         }
     }
 
+    // Network-category toggles: default ON, opt-out via --no-* flags or --restricted-network preset
+    var restricted = parseResult.GetValueForOption(restrictedNetworkOption);
+    var noSmtp = restricted || parseResult.GetValueForOption(noSmtpOption);
+    var noHttp = restricted || parseResult.GetValueForOption(noHttpOption);
+    var noDnsbl = restricted || parseResult.GetValueForOption(noDnsblOption);
+    if (restricted)
+        Console.Error.WriteLine("[--restricted-network] SMTP, HTTP/HTTPS, and DNSBL checks are disabled.");
+
     var options = new ValidationOptions
     {
         EnableAxfr = axfr,
@@ -197,7 +214,10 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         EnableOpenResolver = enableOpenResolver,
         OpenResolverTestDomain = resolverTestDomain ?? "www.google.com",
         AdditionalDkimSelectors = parsedSelectors,
-        EnablePrivateDnsbl = enablePrivateDnsbl
+        EnablePrivateDnsbl = enablePrivateDnsbl,
+        EnableSmtpProbes = !noSmtp,
+        EnableHttpProbes = !noHttp,
+        EnableDnsbl = !noDnsbl
     };
 
     // --trace: detailed timing diagnostics

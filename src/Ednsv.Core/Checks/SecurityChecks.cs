@@ -170,6 +170,9 @@ public class MtaStsCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableHttpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: HTTP/HTTPS probes disabled (--no-http)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -503,6 +506,9 @@ public class BimiCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableHttpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: HTTP/HTTPS probes disabled (--no-http)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -1049,6 +1055,9 @@ public class SecurityTxtCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableHttpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: HTTP/HTTPS probes disabled (--no-http)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try

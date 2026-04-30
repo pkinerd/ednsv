@@ -54,8 +54,8 @@ public class MxRecordsCheck : ICheck
                     foreach (var ptr in ptrInfo)
                         result.Details.Add($"  {ptr}");
 
-                    // Probe STARTTLS
-                    if (aRecs.Any())
+                    // Probe STARTTLS — skipped when SMTP probes are disabled (--no-smtp).
+                    if (aRecs.Any() && ctx.Options.EnableSmtpProbes)
                     {
                         var probe = await ctx.GetOrProbeSmtpAsync(host);
                         if (probe.Connected)
@@ -284,6 +284,9 @@ public class MxBackupSecurityCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try

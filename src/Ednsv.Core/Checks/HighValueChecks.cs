@@ -87,6 +87,9 @@ public class SmtpTlsVersionCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableSmtpProbes)
+            return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.MxHosts.Any())
@@ -496,6 +499,9 @@ public class ExtendedDnsblCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDnsbl)
+            return CheckContext.SkippedResult(this, "Skipped: DNSBL queries disabled (--no-dnsbl)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         var allMxIps = ctx.MxHostIps.Values.SelectMany(v => v).Distinct()

@@ -28,6 +28,11 @@ var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
 var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", true); // default ON for privacy
 var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
+// Network-category server defaults (default ON; operators can centrally disable
+// a category for the whole instance — clients cannot re-enable what's disabled here).
+var defaultEnableSmtpProbes = builder.Configuration.GetValue<bool>("EnableSmtpProbes", true);
+var defaultEnableHttpProbes = builder.Configuration.GetValue<bool>("EnableHttpProbes", true);
+var defaultEnableDnsbl      = builder.Configuration.GetValue<bool>("EnableDnsbl",      true);
 
 // Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
 var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
@@ -67,7 +72,12 @@ var traceMasker = maskTrace
     : null;
 
 // ── Default validation options ────────────────────────────────────────────
-var defaultOptions = new ValidationOptions();
+var defaultOptions = new ValidationOptions
+{
+    EnableSmtpProbes = defaultEnableSmtpProbes,
+    EnableHttpProbes = defaultEnableHttpProbes,
+    EnableDnsbl      = defaultEnableDnsbl
+};
 if (!string.IsNullOrEmpty(dkimSelectorsStr))
     defaultOptions.AdditionalDkimSelectors = dkimSelectorsStr
         .Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -201,10 +211,15 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
-    // Merge request options with server defaults (request takes precedence)
+    // Merge request options with server defaults (request takes precedence for
+    // most fields). Network-category toggles use AND-logic: if the operator has
+    // disabled a category via env-var, clients cannot re-enable it.
     var options = req.Options ?? new ValidationOptions();
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
+    options.EnableSmtpProbes = options.EnableSmtpProbes && defaults.EnableSmtpProbes;
+    options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
+    options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });

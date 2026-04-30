@@ -148,6 +148,9 @@ public class IpBlocklistCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDnsbl)
+            return CheckContext.SkippedResult(this, "Skipped: DNSBL queries disabled (--no-dnsbl)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -250,6 +253,9 @@ public class MxHostnameBlocklistCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDnsbl)
+            return CheckContext.SkippedResult(this, "Skipped: DNSBL queries disabled (--no-dnsbl)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.Options.EnablePrivateDnsbl)
@@ -352,6 +358,9 @@ public class DomainBlocklistCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDnsbl)
+            return CheckContext.SkippedResult(this, "Skipped: DNSBL queries disabled (--no-dnsbl)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         if (!ctx.Options.EnablePrivateDnsbl)

@@ -104,6 +104,13 @@ public class CheckContext
 
     // Per-validation diagnostic counters — thread-safe, not shared across validations.
     public ConcurrentBag<string> QueryErrors { get; } = new();
+
+    /// <summary>
+    /// Build a single Info-severity result indicating a check was skipped because
+    /// its network category is disabled (--no-smtp / --no-http / --no-dnsbl).
+    /// </summary>
+    public static List<CheckResult> SkippedResult(ICheck check, string reason) =>
+        new() { new CheckResult { CheckName = check.Name, Category = check.Category, Severity = CheckSeverity.Info, Summary = reason } };
 }
 
 public class ValidationOptions
@@ -120,4 +127,10 @@ public class ValidationOptions
     /// or refuse queries from public resolvers like Google/Cloudflare.
     /// </summary>
     public bool EnablePrivateDnsbl { get; set; } = false;
+
+    // Network-category toggles (default ON; flip off in restricted environments
+    // where outbound SMTP / HTTP / public DNSBL queries are blocked).
+    public bool EnableSmtpProbes { get; set; } = true;
+    public bool EnableHttpProbes { get; set; } = true;
+    public bool EnableDnsbl { get; set; } = true;
 }
