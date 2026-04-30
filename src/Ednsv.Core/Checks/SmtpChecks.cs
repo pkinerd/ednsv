@@ -38,6 +38,18 @@ public class SmtpTlsCertCheck : ICheck
                     if (probe.CertSans?.Any() == true)
                         result.Details.Add($"  SANs: {string.Join(", ", probe.CertSans)}");
 
+                    // Report intermediate chain
+                    if (probe.CertChainIntermediates?.Any() == true)
+                    {
+                        result.Details.Add($"  Intermediate CA(s):");
+                        foreach (var ic in probe.CertChainIntermediates)
+                            result.Details.Add($"    {ic.Subject}");
+                    }
+                    else
+                    {
+                        result.Warnings.Add($"{mxHost}: Server is not providing intermediate CA certificate(s) — clients without the intermediate cached may fail to verify the chain");
+                    }
+
                     // Check expiry
                     if (probe.CertExpiry < DateTime.UtcNow)
                     {
