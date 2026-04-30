@@ -146,12 +146,26 @@ app.Use(async (ctx, next) =>
     if (user == null)
     {
         ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-        // Send two separate WWW-Authenticate headers — browsers don't reliably
-        // parse comma-separated challenges on a single line, and without Basic
-        // recognized first they skip the login prompt and just render the body.
+        // Two separate WWW-Authenticate headers — browsers don't reliably parse
+        // comma-separated challenges on a single line.
         ctx.Response.Headers.Append("WWW-Authenticate", "Basic realm=\"ednsv\"");
         ctx.Response.Headers.Append("WWW-Authenticate", "Bearer realm=\"ednsv\"");
-        await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
+        ctx.Response.Headers.CacheControl = "no-store";
+
+        // Browsers suppress the native Basic-auth prompt when the 401 body is
+        // application/json (Chrome treats it as a "data" response and just
+        // renders it). Send minimal HTML for browser-shaped requests so the
+        // prompt fires; keep JSON for API clients.
+        var accept = ctx.Request.Headers.Accept.ToString();
+        if (accept.Contains("text/html", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Response.ContentType = "text/html; charset=utf-8";
+            await ctx.Response.WriteAsync("<!doctype html><title>ednsv</title><h1>401 Unauthorized</h1>");
+        }
+        else
+        {
+            await ctx.Response.WriteAsJsonAsync(new { error = "unauthorized" });
+        }
         return;
     }
 
