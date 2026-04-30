@@ -2,13 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #97 (attempt 1) |
-| **Run ID** | 24076173932 |
+| **Run** | #149 (attempt 1) |
+| **Run ID** | 25146504809 |
 | **Result** | pass |
-| **Commit** | 4c0188181cfc0698b0de2abebe79ba102e417720 |
-| **Ref** | refs/heads/main |
-| **Event** | push |
+| **Commit** | c90b410eed909c0b6975719458088553a83f9a5c |
+| **Ref** | refs/pull/11/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #11: Add token-based authentication and token management UI |
+| **Branch** | claude/add-lightweight-auth-wrEVH |
 
 ## Artifacts
 ```
