@@ -338,22 +338,19 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
-    // Merge request options with the live config snapshot. Network-category
-    // toggles use AND-logic: an admin-disabled category via config.json cannot
-    // be re-enabled by a client. Per-domain DKIM selectors and the global
-    // default DKIM list are pulled from config (clients can still override
-    // via AdditionalDkimSelectors / ForceDkimSelectors).
+    // Config supplies defaults only — the request body wins. When the client
+    // omits Options entirely we fall back to the config snapshot wholesale;
+    // when the client sends Options we trust them as authoritative for the
+    // network-category toggles. Per-domain DKIM selectors and the global
+    // default DKIM list are still pulled from config when the request hasn't
+    // supplied any (clients can override via AdditionalDkimSelectors /
+    // ForceDkimSelectors).
     var defaults = BuildDefaultOptions();
-    var options = req.Options ?? new ValidationOptions();
+    var options = req.Options ?? defaults;
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
     if (options.PerDomainDkimSelectors.Count == 0)
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
-    options.EnableSmtpProbes = options.EnableSmtpProbes && defaults.EnableSmtpProbes;
-    options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
-    options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
-    options.EnableDirectDns  = options.EnableDirectDns  && defaults.EnableDirectDns;
-    options.EnableDoh        = options.EnableDoh        && defaults.EnableDoh;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
@@ -602,6 +599,65 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
 })
 .WithName("UpdateConfig")
 .WithTags("Config");
+
+// ── Debug / diagnostics (admin-only) ─────────────────────────────────────
+
+// GET /api/debug/proxy?url=https://example.com/foo
+// Reports what HttpClient.DefaultProxy resolves for the given URL plus the
+// proxy-related env vars actually visible to the running process. Useful
+// when "(HTTP 0)" failures suggest the proxy env vars aren't being picked
+// up — e.g. NO_PROXY is suffix-matching the host, the vars were set after
+// the process started, or the docker container didn't inherit them.
+app.MapGet("/api/debug/proxy", (HttpContext ctx, AuthService auth, string? url) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
+        return Results.BadRequest(new { error = "url must be an absolute URI, e.g. ?url=https://example.com/foo" });
+
+    Uri? proxyUri = null;
+    bool bypassed = false;
+    string? error = null;
+    try
+    {
+        proxyUri = HttpClient.DefaultProxy.GetProxy(u);
+        bypassed = HttpClient.DefaultProxy.IsBypassed(u);
+    }
+    catch (Exception ex)
+    {
+        error = $"{ex.GetType().Name}: {ex.Message}";
+    }
+
+    string? Pick(params string[] names) =>
+        names.Select(Environment.GetEnvironmentVariable).FirstOrDefault(v => !string.IsNullOrEmpty(v));
+
+    // Use a dictionary so the JSON serializer's camelCase policy doesn't
+    // rewrite the env-var keys (HTTPS_PROXY → httpS_PROXY etc.).
+    var envSeenByProcess = new Dictionary<string, string?>
+    {
+        ["HTTPS_PROXY"] = Pick("HTTPS_PROXY", "https_proxy"),
+        ["HTTP_PROXY"]  = Pick("HTTP_PROXY", "http_proxy"),
+        ["ALL_PROXY"]   = Pick("ALL_PROXY", "all_proxy"),
+        ["NO_PROXY"]    = Pick("NO_PROXY", "no_proxy")
+    };
+
+    return Results.Ok(new
+    {
+        target = u.ToString(),
+        proxyResolved = proxyUri?.ToString(),
+        bypassed,
+        error,
+        envSeenByProcess,
+        notes = new[]
+        {
+            "proxyResolved == target URL itself means HttpClient is going direct (no proxy applied).",
+            "bypassed=true means NO_PROXY matched — entries starting with '.' suffix-match.",
+            "Env vars listed here are what THIS process sees right now; if they differ from your shell, the process didn't inherit them.",
+            "DefaultProxy is initialised once on first use; vars set AFTER the process started are not picked up."
+        }
+    });
+})
+.WithName("DebugProxy")
+.WithTags("Debug");
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 

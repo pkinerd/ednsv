@@ -24,11 +24,11 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `FlushIntervalSeconds` | int      | `120`            | How often the cache manager flushes pending writes to `DataDir/cache/`. |
 | `DnsServer`            | string   | OS resolvers     | Comma-separated list of DNS resolver IPs (e.g. `1.1.1.1,8.8.8.8`). Invalid entries are ignored; if none parse, OS resolvers are used. |
 | `DkimSelectors`        | string   | built-in list    | Comma-separated default DKIM selectors used when seeding `config.json` on first run. After first run the persisted config wins. |
-| `EnableSmtpProbes`     | bool     | `true`           | Server-wide kill-switch (AND-logic): clients cannot re-enable a category disabled here. |
-| `EnableHttpProbes`     | bool     | `true`           | Same kill-switch semantics. |
-| `EnableDnsbl`          | bool     | `true`           | Same kill-switch semantics. |
-| `EnableDirectDns`      | bool     | `true`           | Same kill-switch semantics. Allows checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable when outbound raw DNS is blocked but a configured recursive resolver works — propagation, lame-delegation, SOA-serial, glue-record, parent-delegation, open-recursive-resolver and AXFR checks are reported as skipped instead of timing out. |
-| `EnableDoh`            | bool     | `false`          | When set, the public-resolver propagation check uses Google + Cloudflare's JSON DNS-over-HTTPS endpoints over HTTPS instead of raw UDP/53 — this routes through `HTTPS_PROXY` when configured. Useful in the common shape "no raw DNS egress, HTTPS proxy available". Only the propagation check has a DoH path; the auth-NS direct checks remain gated by `EnableDirectDns`. |
+| `EnableSmtpProbes`     | bool     | `true`           | Server-wide **default** for the validator UI — surfaced via `/api/defaults`. POST `/api/validate` request body overrides; new web sessions inherit this when the user hasn't ticked anything. |
+| `EnableHttpProbes`     | bool     | `true`           | Same — server-side default, request-body wins. |
+| `EnableDnsbl`          | bool     | `true`           | Same — server-side default, request-body wins. |
+| `EnableDirectDns`      | bool     | `true`           | Same — server-side default, request-body wins. Allows checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Set to `false` when outbound raw DNS is blocked but a configured recursive resolver works — propagation, lame-delegation, SOA-serial, glue-record, parent-delegation, open-recursive-resolver and AXFR checks are reported as skipped instead of timing out. |
+| `EnableDoh`            | bool     | `false`          | Same — server-side default, request-body wins. When the validation runs with this set, the public-resolver propagation check uses Google + Cloudflare's JSON DNS-over-HTTPS endpoints over HTTPS instead of raw UDP/53 — this routes through `HTTPS_PROXY` when configured. Useful in the common shape "no raw DNS egress, HTTPS proxy available". Only the propagation check has a DoH path; the auth-NS direct checks remain gated by `EnableDirectDns`. |
 | `Trace`                | bool     | `false`          | Emits per-check trace messages at `Debug` level. See **Trace logging** below. |
 | `MaskTrace`            | bool     | `true`           | Hashes domains/recipients in trace output for privacy. |
 | `MaskSalt`             | string   | random per-run   | Stable salt for `MaskTrace` hashes — set this to keep hashes consistent across runs. |
@@ -200,6 +200,33 @@ path above applies normally.
 - Env vars are read **once** when `HttpClient.DefaultProxy` is initialised.
   Set them in the unit/compose file or before `dotnet` is invoked — don't
   expect a running container to pick up changes.
+
+### Diagnosing proxy issues
+
+Admin-only endpoint `GET /api/debug/proxy?url=https://example.com/foo`
+returns the proxy URL .NET would actually use for that target, whether
+`NO_PROXY` would bypass it, and the proxy-related env vars currently
+visible to the running process. Useful when an HTTP probe shows
+`(HTTP 0)` (BIMI logo, MTA-STS policy, security.txt, crt.sh) — the
+endpoint will tell you whether the issue is "vars not seen by the
+process", "NO_PROXY suffix-matching the host", or "DefaultProxy
+resolved nothing":
+
+```json
+{
+  "target": "https://amplify.valimail.com/bimi/...svg",
+  "proxyResolved": "http://proxy.corp.local:3128/",
+  "bypassed": false,
+  "envSeenByProcess": {
+    "HTTPS_PROXY": "http://proxy.corp.local:3128",
+    "NO_PROXY": "localhost,.internal.example.com"
+  }
+}
+```
+
+If `proxyResolved` equals `target`, the proxy isn't being applied — most
+commonly `NO_PROXY` is matching, or the env vars aren't visible to this
+process.
 
 ## Authentication
 
