@@ -20,6 +20,17 @@ public sealed class AppConfig
     public bool EnableDnsbl { get; set; } = true;
 
     /// <summary>
+    /// Allow direct UDP/TCP 53 queries to specific authoritative nameservers and
+    /// public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) — used by propagation,
+    /// lame-delegation, SOA-serial, glue-record, parent-delegation, AXFR and
+    /// open-recursive-resolver checks. Disable in environments where outbound
+    /// raw DNS is blocked but a local recursive resolver is permitted; checks
+    /// that depend on direct DNS are reported as skipped.
+    /// </summary>
+    [JsonPropertyName("enableDirectDns")]
+    public bool EnableDirectDns { get; set; } = true;
+
+    /// <summary>
     /// Default DKIM selectors probed when a domain has no per-domain entry
     /// and the request supplies no explicit list.
     /// </summary>
@@ -100,6 +111,7 @@ public sealed class ConfigService
                 EnableSmtpProbes = _current.EnableSmtpProbes,
                 EnableHttpProbes = _current.EnableHttpProbes,
                 EnableDnsbl = _current.EnableDnsbl,
+                EnableDirectDns = _current.EnableDirectDns,
                 DefaultDkimSelectors = new List<string>(_current.DefaultDkimSelectors),
                 DkimSelectors = new Dictionary<string, List<string>>(
                     _current.DkimSelectors.Select(kv =>

@@ -119,6 +119,10 @@
         <input type="checkbox" id="optDnsbl" checked>
         <span>Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc. Disable when blocklist providers refuse or rate-limit your resolver.</span></span>
       </label>
+      <label>
+        <input type="checkbox" id="optDirectDns" checked>
+        <span>Direct DNS / external resolvers<span class="desc">Allow checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable when outbound raw DNS is blocked but the configured resolver works — propagation, lame delegation, SOA serial, glue records, parent delegation, open-recursive-resolver and AXFR checks are skipped.</span></span>
+      </label>
       <div class="field">
         <span>DKIM selectors<span class="desc">Comma- or space-separated list of selectors to probe. Pre-filled with the server's default list. <span id="domHint" style="color:var(--accent);"></span></span></span>
         <input type="text" id="optDkimSelectors" placeholder="loading defaults..." autocomplete="off">
@@ -137,7 +141,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
-const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
+const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
 let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
 let pollTimer = null;
 let lastDomain = '';
@@ -156,14 +160,19 @@ function parseSelectors(s) {
   return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
 }
 let dkimUserCustomized = false;  // true once the user edits the field or had a saved value
+// Keys that came from localStorage on this page load — server defaults from
+// /api/defaults override only the keys NOT in this set, so a fresh user/session
+// inherits the admin config rather than the optimistic HTML "checked" defaults.
+const userOverrideKeys = new Set();
 function loadUserOptions() {
   try {
     const raw = localStorage.getItem(OPTIONS_KEY);
     if (!raw) return;
     const o = JSON.parse(raw);
-    if (typeof o.enableSmtpProbes === 'boolean') optSmtp.checked = o.enableSmtpProbes;
-    if (typeof o.enableHttpProbes === 'boolean') optHttp.checked = o.enableHttpProbes;
-    if (typeof o.enableDnsbl === 'boolean')      optDnsbl.checked = o.enableDnsbl;
+    if (typeof o.enableSmtpProbes === 'boolean') { optSmtp.checked = o.enableSmtpProbes;       userOverrideKeys.add('smtp'); }
+    if (typeof o.enableHttpProbes === 'boolean') { optHttp.checked = o.enableHttpProbes;       userOverrideKeys.add('http'); }
+    if (typeof o.enableDnsbl === 'boolean')      { optDnsbl.checked = o.enableDnsbl;           userOverrideKeys.add('dnsbl'); }
+    if (typeof o.enableDirectDns === 'boolean')  { optDirectDns.checked = o.enableDirectDns;   userOverrideKeys.add('directDns'); }
     if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
     if (Array.isArray(o.dkimSelectors)) {
       optDkim.value = o.dkimSelectors.join(', ');
@@ -176,6 +185,7 @@ function saveUserOptions() {
     enableSmtpProbes:   optSmtp.checked,
     enableHttpProbes:   optHttp.checked,
     enableDnsbl:        optDnsbl.checked,
+    enableDirectDns:    optDirectDns.checked,
     forceDkimSelectors: optForceDkim.checked,
     dkimSelectors:      parseSelectors(optDkim.value)
   };
@@ -186,6 +196,7 @@ function currentOptions() {
     enableSmtpProbes: optSmtp.checked,
     enableHttpProbes: optHttp.checked,
     enableDnsbl:      optDnsbl.checked,
+    enableDirectDns:  optDirectDns.checked,
     forceDkimSelectors: optForceDkim.checked,
     additionalDkimSelectors: parseSelectors(optDkim.value)
   };
@@ -208,6 +219,14 @@ function updateDomainHint() {
 loadUserOptions();
 fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (!d) return;
+  // Server config wins for any option the current user hasn't explicitly saved.
+  // A category disabled in config.json is rendered as unchecked here even though
+  // the HTML default is `checked` — that default only ever applies on a brief
+  // first paint before /api/defaults responds.
+  if (!userOverrideKeys.has('smtp')      && typeof d.enableSmtpProbes === 'boolean') optSmtp.checked      = d.enableSmtpProbes;
+  if (!userOverrideKeys.has('http')      && typeof d.enableHttpProbes === 'boolean') optHttp.checked      = d.enableHttpProbes;
+  if (!userOverrideKeys.has('dnsbl')     && typeof d.enableDnsbl      === 'boolean') optDnsbl.checked     = d.enableDnsbl;
+  if (!userOverrideKeys.has('directDns') && typeof d.enableDirectDns  === 'boolean') optDirectDns.checked = d.enableDirectDns;
   if (d.perDomainDkimSelectors && typeof d.perDomainDkimSelectors === 'object')
     perDomainDkim = d.perDomainDkimSelectors;
   if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
@@ -215,7 +234,7 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   updateDomainHint();
 }).catch(() => {});
 
-[optSmtp, optHttp, optDnsbl].forEach(el => el.addEventListener('change', saveUserOptions));
+[optSmtp, optHttp, optDnsbl, optDirectDns].forEach(el => el.addEventListener('change', saveUserOptions));
 optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);

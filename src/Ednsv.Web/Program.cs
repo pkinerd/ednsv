@@ -34,6 +34,7 @@ var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
 var defaultEnableSmtpProbes = builder.Configuration.GetValue<bool>("EnableSmtpProbes", true);
 var defaultEnableHttpProbes = builder.Configuration.GetValue<bool>("EnableHttpProbes", true);
 var defaultEnableDnsbl      = builder.Configuration.GetValue<bool>("EnableDnsbl",      true);
+var defaultEnableDirectDns  = builder.Configuration.GetValue<bool>("EnableDirectDns",  true);
 
 // Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
 var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
@@ -82,6 +83,7 @@ var seedConfig = new AppConfig
     EnableSmtpProbes = defaultEnableSmtpProbes,
     EnableHttpProbes = defaultEnableHttpProbes,
     EnableDnsbl      = defaultEnableDnsbl,
+    EnableDirectDns  = defaultEnableDirectDns,
     DefaultDkimSelectors = !string.IsNullOrEmpty(dkimSelectorsStr)
         ? dkimSelectorsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
@@ -100,6 +102,7 @@ ValidationOptions BuildDefaultOptions()
         EnableSmtpProbes        = cfg.EnableSmtpProbes,
         EnableHttpProbes        = cfg.EnableHttpProbes,
         EnableDnsbl             = cfg.EnableDnsbl,
+        EnableDirectDns         = cfg.EnableDirectDns,
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
             .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
@@ -296,6 +299,7 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     options.EnableSmtpProbes = options.EnableSmtpProbes && defaults.EnableSmtpProbes;
     options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
     options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
+    options.EnableDirectDns  = options.EnableDirectDns  && defaults.EnableDirectDns;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
@@ -360,7 +364,8 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?noSmtp=true                        skip SMTP probes (--no-smtp)
 //   ?noHttp=true                        skip HTTP/HTTPS probes (--no-http)
 //   ?noDnsbl=true                       skip DNSBL queries (--no-dnsbl)
-//   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl
+//   ?noDirectDns=true                   skip checks that talk directly to nameservers / public resolvers
+//   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl + noDirectDns
 //   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
 //   ?axfr=true                          enable AXFR test
 //   ?catchAll=true                      enable catch-all detection
@@ -395,6 +400,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableSmtpProbes = defaults.EnableSmtpProbes && !restricted && !ParseBool("noSmtp"),
         EnableHttpProbes = defaults.EnableHttpProbes && !restricted && !ParseBool("noHttp"),
         EnableDnsbl      = defaults.EnableDnsbl      && !restricted && !ParseBool("noDnsbl"),
+        EnableDirectDns  = defaults.EnableDirectDns  && !restricted && !ParseBool("noDirectDns"),
         EnableAxfr         = ParseBool("axfr"),
         EnableCatchAll     = ParseBool("catchAll"),
         EnableOpenRelay    = ParseBool("openRelay"),
@@ -466,6 +472,7 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
         enableSmtpProbes = cfg.EnableSmtpProbes,
         enableHttpProbes = cfg.EnableHttpProbes,
         enableDnsbl      = cfg.EnableDnsbl,
+        enableDirectDns  = cfg.EnableDirectDns,
         dkimSelectors    = cfg.DefaultDkimSelectors.Count > 0
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),

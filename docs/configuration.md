@@ -27,6 +27,7 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `EnableSmtpProbes`     | bool     | `true`           | Server-wide kill-switch (AND-logic): clients cannot re-enable a category disabled here. |
 | `EnableHttpProbes`     | bool     | `true`           | Same kill-switch semantics. |
 | `EnableDnsbl`          | bool     | `true`           | Same kill-switch semantics. |
+| `EnableDirectDns`      | bool     | `true`           | Same kill-switch semantics. Allows checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable when outbound raw DNS is blocked but a configured recursive resolver works — propagation, lame-delegation, SOA-serial, glue-record, parent-delegation, open-recursive-resolver and AXFR checks are reported as skipped instead of timing out. |
 | `Trace`                | bool     | `false`          | Emits per-check trace messages at `Debug` level. See **Trace logging** below. |
 | `MaskTrace`            | bool     | `true`           | Hashes domains/recipients in trace output for privacy. |
 | `MaskSalt`             | string   | random per-run   | Stable salt for `MaskTrace` hashes — set this to keep hashes consistent across runs. |

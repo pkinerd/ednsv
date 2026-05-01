@@ -181,6 +181,9 @@ public class DnsPropagationCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to public resolvers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         var resolverResults = new Dictionary<string, List<string>>();
@@ -403,6 +406,9 @@ public class NsGlueRecordCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to parent nameservers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try

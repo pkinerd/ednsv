@@ -155,4 +155,13 @@ public class ValidationOptions
     public bool EnableSmtpProbes { get; set; } = true;
     public bool EnableHttpProbes { get; set; } = true;
     public bool EnableDnsbl { get; set; } = true;
+
+    /// <summary>
+    /// Allow checks to talk directly to specific authoritative nameservers and
+    /// public resolvers (propagation, lame delegation, SOA-serial consistency,
+    /// glue records, parent-side delegation, open-recursive-resolver, AXFR).
+    /// When false, those checks are skipped and the regular configured resolver
+    /// is the only DNS path used.
+    /// </summary>
+    public bool EnableDirectDns { get; set; } = true;
 }

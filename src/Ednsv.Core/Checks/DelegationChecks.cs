@@ -148,6 +148,9 @@ public class DelegationConsistencyCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to parent nameservers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category, Severity = CheckSeverity.Info };
 
         try
