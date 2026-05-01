@@ -31,6 +31,17 @@ public sealed class AppConfig
     public bool EnableDirectDns { get; set; } = true;
 
     /// <summary>
+    /// Enable DNS-over-HTTPS for the public-resolver propagation check
+    /// (8.8.8.8 / 1.1.1.1). When set, that check uses HTTPS to the
+    /// providers' JSON DoH endpoints instead of raw UDP/53, which routes
+    /// through HTTPS_PROXY when configured. The auth-NS direct-DNS checks
+    /// (lame delegation, SOA serial, glue, parent delegation, AXFR) have
+    /// no DoH equivalent — they remain gated by <see cref="EnableDirectDns"/>.
+    /// </summary>
+    [JsonPropertyName("enableDoh")]
+    public bool EnableDoh { get; set; } = false;
+
+    /// <summary>
     /// Default DKIM selectors probed when a domain has no per-domain entry
     /// and the request supplies no explicit list.
     /// </summary>
@@ -123,6 +134,7 @@ public sealed class ConfigService
                 EnableHttpProbes = _current.EnableHttpProbes,
                 EnableDnsbl = _current.EnableDnsbl,
                 EnableDirectDns = _current.EnableDirectDns,
+                EnableDoh = _current.EnableDoh,
                 DefaultDkimSelectors = new List<string>(_current.DefaultDkimSelectors),
                 DkimSelectors = new Dictionary<string, List<string>>(
                     _current.DkimSelectors.Select(kv =>

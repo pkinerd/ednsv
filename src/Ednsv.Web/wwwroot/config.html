@@ -95,6 +95,9 @@
       <div class="field">
         <label class="cb"><input type="checkbox" id="cfgDirectDns"> Direct DNS / external resolvers<span class="desc">Allow checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable in environments where outbound raw DNS is blocked but a local recursive resolver works — propagation, lame-delegation, SOA-serial, glue, parent-delegation, open-recursive-resolver and AXFR checks are skipped.</span></label>
       </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgDoh"> DNS-over-HTTPS for propagation check<span class="desc">When set, the propagation check queries Google and Cloudflare's JSON DoH endpoints over HTTPS instead of raw UDP/53, so it routes through HTTPS_PROXY and works in environments without raw DNS egress. The other direct-DNS checks (lame delegation, SOA serial, glue, parent delegation, AXFR) have no DoH equivalent and remain gated by the option above.</span></label>
+      </div>
     </div>
 
     <div class="panel">
@@ -170,6 +173,7 @@ function fillForm(cfg) {
   $('#cfgHttp').checked = !!cfg.enableHttpProbes;
   $('#cfgDnsbl').checked = !!cfg.enableDnsbl;
   $('#cfgDirectDns').checked = cfg.enableDirectDns !== false;
+  $('#cfgDoh').checked = !!cfg.enableDoh;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
   $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');
   renderDomTable(cfg.dkimSelectors || {});
@@ -219,6 +223,7 @@ function collectFormConfig() {
     enableHttpProbes: $('#cfgHttp').checked,
     enableDnsbl:      $('#cfgDnsbl').checked,
     enableDirectDns:  $('#cfgDirectDns').checked,
+    enableDoh:        $('#cfgDoh').checked,
     defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
     dkimSelectors: dkim,
     knownDomains: parseList($('#cfgKnownDomains').value)

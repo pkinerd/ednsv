@@ -58,6 +58,7 @@ var defaultEnableSmtpProbes = builder.Configuration.GetValue<bool>("EnableSmtpPr
 var defaultEnableHttpProbes = builder.Configuration.GetValue<bool>("EnableHttpProbes", true);
 var defaultEnableDnsbl      = builder.Configuration.GetValue<bool>("EnableDnsbl",      true);
 var defaultEnableDirectDns  = builder.Configuration.GetValue<bool>("EnableDirectDns",  true);
+var defaultEnableDoh        = builder.Configuration.GetValue<bool>("EnableDoh",        false);
 
 // Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
 var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
@@ -107,6 +108,7 @@ var seedConfig = new AppConfig
     EnableHttpProbes = defaultEnableHttpProbes,
     EnableDnsbl      = defaultEnableDnsbl,
     EnableDirectDns  = defaultEnableDirectDns,
+    EnableDoh        = defaultEnableDoh,
     DefaultDkimSelectors = !string.IsNullOrEmpty(dkimSelectorsStr)
         ? dkimSelectorsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
@@ -126,6 +128,7 @@ ValidationOptions BuildDefaultOptions()
         EnableHttpProbes        = cfg.EnableHttpProbes,
         EnableDnsbl             = cfg.EnableDnsbl,
         EnableDirectDns         = cfg.EnableDirectDns,
+        EnableDoh               = cfg.EnableDoh,
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
             .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
@@ -350,6 +353,7 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
     options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
     options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
     options.EnableDirectDns  = options.EnableDirectDns  && defaults.EnableDirectDns;
+    options.EnableDoh        = options.EnableDoh        && defaults.EnableDoh;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
@@ -415,6 +419,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?noHttp=true                        skip HTTP/HTTPS probes (--no-http)
 //   ?noDnsbl=true                       skip DNSBL queries (--no-dnsbl)
 //   ?noDirectDns=true                   skip checks that talk directly to nameservers / public resolvers
+//   ?noDoh=true                         force the propagation check to use raw UDP/53 even when DoH is enabled
 //   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl + noDirectDns
 //   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
 //   ?axfr=true                          enable AXFR test
@@ -471,6 +476,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableHttpProbes = defaults.EnableHttpProbes && !restricted && !ParseBool("noHttp"),
         EnableDnsbl      = defaults.EnableDnsbl      && !restricted && !ParseBool("noDnsbl"),
         EnableDirectDns  = defaults.EnableDirectDns  && !restricted && !ParseBool("noDirectDns"),
+        EnableDoh        = defaults.EnableDoh        && !ParseBool("noDoh"),
         EnableAxfr         = ParseBool("axfr"),
         EnableCatchAll     = ParseBool("catchAll"),
         EnableOpenRelay    = ParseBool("openRelay"),

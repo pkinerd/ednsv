@@ -164,4 +164,11 @@ public class ValidationOptions
     /// is the only DNS path used.
     /// </summary>
     public bool EnableDirectDns { get; set; } = true;
+
+    /// <summary>
+    /// When true, the public-resolver propagation check (Google + Cloudflare)
+    /// uses DNS-over-HTTPS instead of raw UDP/53. Routes through HTTPS_PROXY
+    /// when configured. The other direct-DNS checks have no DoH equivalent.
+    /// </summary>
+    public bool EnableDoh { get; set; } = false;
 }
