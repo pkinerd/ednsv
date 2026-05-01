@@ -304,7 +304,14 @@ jobs:
           retention-days: 30
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Docker — build the Web UI image, push on non-PR events
+  # Docker — build and push the Web UI image. Tags:
+  #   latest        → default branch only (release pointer)
+  #   latest-any    → every successful build (rolling tip; whichever finishes last wins)
+  #   branch-<name> → push events on any branch (slashes sanitized to dashes)
+  #   pr-<number>   → pull-request events from same-repo branches
+  #   sha-<short>   → every build (immutable, content-identifying)
+  # Fork PRs build but do not push (the workflow's GITHUB_TOKEN has no GHCR
+  # write permission for forks); their image is verified locally only.
   # ──────────────────────────────────────────────────────────────────────────
   docker:
     name: Build & Push Docker Image
@@ -320,11 +327,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Determine push eligibility
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: steps.gate.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -337,17 +355,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,format=short
+            type=ref,event=branch,prefix=branch-
+            type=ref,event=pr,prefix=pr-
+            type=sha,format=short,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest-any
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ steps.gate.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
