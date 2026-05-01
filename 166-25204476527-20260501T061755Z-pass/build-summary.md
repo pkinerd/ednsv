@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #115 (attempt 1) |
-| **Run ID** | 24163474874 |
+| **Run** | #166 (attempt 1) |
+| **Run ID** | 25204476527 |
 | **Result** | pass |
-| **Commit** | 378c21f242427dc3f6688d8eb2d28ed30a0f0e84 |
-| **Ref** | refs/pull/5/merge |
+| **Commit** | 9c0c2050f64db7dc79d61b6988138dcb15978b49 |
+| **Ref** | refs/pull/16/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #5: Parallelize concurrent checks and add web API with live progress |
-| **Branch** | claude/review-code-organization-9xYIT |
+| **PR** | #16: Add EnableDirectDns configuration option to control direct DNS queries |
+| **Branch** | claude/document-env-config-iJwE4 |
 
 ## Artifacts
 ```

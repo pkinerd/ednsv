@@ -1,0 +1,1652 @@
+﻿2026-05-01T06:17:04.9294779Z Current runner version: '2.334.0'
+2026-05-01T06:17:04.9319327Z ##[group]Runner Image Provisioner
+2026-05-01T06:17:04.9320474Z Hosted Compute Agent
+2026-05-01T06:17:04.9321092Z Version: 20260213.493
+2026-05-01T06:17:04.9321703Z Commit: 5c115507f6dd24b8de37d8bbe0bb4509d0cc0fa3
+2026-05-01T06:17:04.9322445Z Build Date: 2026-02-13T00:28:41Z
+2026-05-01T06:17:04.9323128Z Worker ID: {9de8c5ab-50c0-459c-9e5b-8b7bae3753bf}
+2026-05-01T06:17:04.9323801Z Azure Region: centralus
+2026-05-01T06:17:04.9324420Z ##[endgroup]
+2026-05-01T06:17:04.9325735Z ##[group]Operating System
+2026-05-01T06:17:04.9326332Z Ubuntu
+2026-05-01T06:17:04.9326832Z 24.04.4
+2026-05-01T06:17:04.9327329Z LTS
+2026-05-01T06:17:04.9327764Z ##[endgroup]
+2026-05-01T06:17:04.9328302Z ##[group]Runner Image
+2026-05-01T06:17:04.9328940Z Image: ubuntu-24.04
+2026-05-01T06:17:04.9329427Z Version: 20260413.86.1
+2026-05-01T06:17:04.9330884Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260413.86/images/ubuntu/Ubuntu2404-Readme.md
+2026-05-01T06:17:04.9332269Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260413.86
+2026-05-01T06:17:04.9333199Z ##[endgroup]
+2026-05-01T06:17:04.9334333Z ##[group]GITHUB_TOKEN Permissions
+2026-05-01T06:17:04.9336132Z Contents: read
+2026-05-01T06:17:04.9336795Z Metadata: read
+2026-05-01T06:17:04.9337268Z Packages: write
+2026-05-01T06:17:04.9337766Z ##[endgroup]
+2026-05-01T06:17:04.9339884Z Secret source: Actions
+2026-05-01T06:17:04.9341164Z Prepare workflow directory
+2026-05-01T06:17:04.9918434Z Prepare all required actions
+2026-05-01T06:17:04.9955548Z Getting action download info
+2026-05-01T06:17:05.4326819Z Download action repository 'actions/checkout@v4' (SHA:34e114876b0b11c390a56381ad16ebd13914f8d5)
+2026-05-01T06:17:05.5215026Z Download action repository 'docker/setup-buildx-action@v3' (SHA:8d2750c68a42422c14e847fe6c8ac0403b4cbd6f)
+2026-05-01T06:17:06.2397347Z Download action repository 'docker/login-action@v3' (SHA:c94ce9fb468520275223c153574b00df6fe4bcc9)
+2026-05-01T06:17:06.9733808Z Download action repository 'docker/metadata-action@v5' (SHA:c299e40c65443455700f0fdfc63efafe5b349051)
+2026-05-01T06:17:07.7734310Z Download action repository 'docker/build-push-action@v6' (SHA:10e90e3645eae34f1e60eeb005ba3a3d33f178e8)
+2026-05-01T06:17:08.5869603Z Complete job name: Build & Push Docker Image
+2026-05-01T06:17:08.6468855Z ##[group]Run actions/checkout@v4
+2026-05-01T06:17:08.6469360Z with:
+2026-05-01T06:17:08.6469556Z   repository: pkinerd/ednsv
+2026-05-01T06:17:08.6469952Z   token: ***
+2026-05-01T06:17:08.6470352Z   ssh-strict: true
+2026-05-01T06:17:08.6470548Z   ssh-user: git
+2026-05-01T06:17:08.6470754Z   persist-credentials: true
+2026-05-01T06:17:08.6470980Z   clean: true
+2026-05-01T06:17:08.6471190Z   sparse-checkout-cone-mode: true
+2026-05-01T06:17:08.6471433Z   fetch-depth: 1
+2026-05-01T06:17:08.6471621Z   fetch-tags: false
+2026-05-01T06:17:08.6471817Z   show-progress: true
+2026-05-01T06:17:08.6472020Z   lfs: false
+2026-05-01T06:17:08.6472192Z   submodules: false
+2026-05-01T06:17:08.6472407Z   set-safe-directory: true
+2026-05-01T06:17:08.6472793Z env:
+2026-05-01T06:17:08.6472966Z   REGISTRY: ghcr.io
+2026-05-01T06:17:08.6473162Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:08.6473367Z ##[endgroup]
+2026-05-01T06:17:08.7618348Z Syncing repository: pkinerd/ednsv
+2026-05-01T06:17:08.7619730Z ##[group]Getting Git version info
+2026-05-01T06:17:08.7620321Z Working directory is '/home/runner/work/ednsv/ednsv'
+2026-05-01T06:17:08.7620886Z [command]/usr/bin/git version
+2026-05-01T06:17:08.7658503Z git version 2.53.0
+2026-05-01T06:17:08.7682399Z ##[endgroup]
+2026-05-01T06:17:08.7696369Z Temporarily overriding HOME='/home/runner/work/_temp/fb9c31ca-be98-4fe6-8f17-2633b0636c0e' before making global git config changes
+2026-05-01T06:17:08.7697140Z Adding repository directory to the temporary git global config as a safe directory
+2026-05-01T06:17:08.7702003Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ednsv/ednsv
+2026-05-01T06:17:08.7734612Z Deleting the contents of '/home/runner/work/ednsv/ednsv'
+2026-05-01T06:17:08.7737982Z ##[group]Initializing the repository
+2026-05-01T06:17:08.7742359Z [command]/usr/bin/git init /home/runner/work/ednsv/ednsv
+2026-05-01T06:17:08.7801020Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-05-01T06:17:08.7802355Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-05-01T06:17:08.7803165Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-05-01T06:17:08.7803764Z hint: call:
+2026-05-01T06:17:08.7804082Z hint:
+2026-05-01T06:17:08.7804481Z hint: 	git config --global init.defaultBranch <name>
+2026-05-01T06:17:08.7804958Z hint:
+2026-05-01T06:17:08.7805380Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-05-01T06:17:08.7806143Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-05-01T06:17:08.7806728Z hint:
+2026-05-01T06:17:08.7807023Z hint: 	git branch -m <name>
+2026-05-01T06:17:08.7807380Z hint:
+2026-05-01T06:17:08.7807851Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-05-01T06:17:08.7808664Z Initialized empty Git repository in /home/runner/work/ednsv/ednsv/.git/
+2026-05-01T06:17:08.7814747Z [command]/usr/bin/git remote add origin https://github.com/pkinerd/ednsv
+2026-05-01T06:17:08.7845443Z ##[endgroup]
+2026-05-01T06:17:08.7846009Z ##[group]Disabling automatic garbage collection
+2026-05-01T06:17:08.7850678Z [command]/usr/bin/git config --local gc.auto 0
+2026-05-01T06:17:08.7879244Z ##[endgroup]
+2026-05-01T06:17:08.7879625Z ##[group]Setting up auth
+2026-05-01T06:17:08.7886585Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-05-01T06:17:08.7916630Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-05-01T06:17:08.8199594Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-05-01T06:17:08.8229799Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-05-01T06:17:08.8467099Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-05-01T06:17:08.8496804Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-05-01T06:17:08.8728658Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-05-01T06:17:08.8763714Z ##[endgroup]
+2026-05-01T06:17:08.8764268Z ##[group]Fetching the repository
+2026-05-01T06:17:08.8772614Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +9c0c2050f64db7dc79d61b6988138dcb15978b49:refs/remotes/pull/16/merge
+2026-05-01T06:17:09.3136758Z From https://github.com/pkinerd/ednsv
+2026-05-01T06:17:09.3222304Z  * [new ref]         9c0c2050f64db7dc79d61b6988138dcb15978b49 -> pull/16/merge
+2026-05-01T06:17:09.3224153Z ##[endgroup]
+2026-05-01T06:17:09.3224731Z ##[group]Determining the checkout info
+2026-05-01T06:17:09.3225320Z ##[endgroup]
+2026-05-01T06:17:09.3225690Z [command]/usr/bin/git sparse-checkout disable
+2026-05-01T06:17:09.3226733Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-05-01T06:17:09.3249600Z ##[group]Checking out the ref
+2026-05-01T06:17:09.3254169Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/16/merge
+2026-05-01T06:17:09.3354500Z Note: switching to 'refs/remotes/pull/16/merge'.
+2026-05-01T06:17:09.3354883Z 
+2026-05-01T06:17:09.3355205Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-05-01T06:17:09.3355948Z changes and commit them, and you can discard any commits you make in this
+2026-05-01T06:17:09.3356688Z state without impacting any branches by switching back to a branch.
+2026-05-01T06:17:09.3357405Z 
+2026-05-01T06:17:09.3357692Z If you want to create a new branch to retain commits you create, you may
+2026-05-01T06:17:09.3358380Z do so (now or later) by using -c with the switch command. Example:
+2026-05-01T06:17:09.3358785Z 
+2026-05-01T06:17:09.3358896Z   git switch -c <new-branch-name>
+2026-05-01T06:17:09.3359064Z 
+2026-05-01T06:17:09.3359166Z Or undo this operation with:
+2026-05-01T06:17:09.3359316Z 
+2026-05-01T06:17:09.3359395Z   git switch -
+2026-05-01T06:17:09.3359552Z 
+2026-05-01T06:17:09.3359784Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-05-01T06:17:09.3360265Z 
+2026-05-01T06:17:09.3360629Z HEAD is now at 9c0c205 Merge beae99682f2ec5c7613d87a397bd49cdd0705b8e into c3b8810b0a631149fccfb03993b64a8b9ea36d8a
+2026-05-01T06:17:09.3363136Z ##[endgroup]
+2026-05-01T06:17:09.3399469Z [command]/usr/bin/git log -1 --format=%H
+2026-05-01T06:17:09.3422754Z 9c0c2050f64db7dc79d61b6988138dcb15978b49
+2026-05-01T06:17:09.3618822Z ##[group]Run if [ "pull_request" != "pull_request" ]; then
+2026-05-01T06:17:09.3619307Z [36;1mif [ "pull_request" != "pull_request" ]; then[0m
+2026-05-01T06:17:09.3619639Z [36;1m  echo "push=true" >> "$GITHUB_OUTPUT"[0m
+2026-05-01T06:17:09.3619967Z [36;1melif [ "pkinerd/ednsv" = "pkinerd/ednsv" ]; then[0m
+2026-05-01T06:17:09.3620549Z [36;1m  echo "push=true" >> "$GITHUB_OUTPUT"[0m
+2026-05-01T06:17:09.3620810Z [36;1melse[0m
+2026-05-01T06:17:09.3621047Z [36;1m  echo "push=false" >> "$GITHUB_OUTPUT"[0m
+2026-05-01T06:17:09.3621311Z [36;1mfi[0m
+2026-05-01T06:17:09.3646386Z shell: /usr/bin/bash -e {0}
+2026-05-01T06:17:09.3646639Z env:
+2026-05-01T06:17:09.3646829Z   REGISTRY: ghcr.io
+2026-05-01T06:17:09.3647050Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:09.3647262Z ##[endgroup]
+2026-05-01T06:17:09.3799924Z ##[group]Run docker/setup-buildx-action@v3
+2026-05-01T06:17:09.3800427Z with:
+2026-05-01T06:17:09.3800618Z   driver: docker-container
+2026-05-01T06:17:09.3800837Z   use: true
+2026-05-01T06:17:09.3801026Z   keep-state: false
+2026-05-01T06:17:09.3801221Z   cache-binary: true
+2026-05-01T06:17:09.3801409Z   cleanup: true
+2026-05-01T06:17:09.3801592Z   install: false
+2026-05-01T06:17:09.3801764Z env:
+2026-05-01T06:17:09.3801928Z   REGISTRY: ghcr.io
+2026-05-01T06:17:09.3802121Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:09.3802339Z ##[endgroup]
+2026-05-01T06:17:09.6304048Z ##[group]Docker info
+2026-05-01T06:17:09.6330753Z [command]/usr/bin/docker version
+2026-05-01T06:17:09.6795892Z Client: Docker Engine - Community
+2026-05-01T06:17:09.6798628Z  Version:           28.0.4
+2026-05-01T06:17:09.6799049Z  API version:       1.48
+2026-05-01T06:17:09.6799403Z  Go version:        go1.23.7
+2026-05-01T06:17:09.6799750Z  Git commit:        b8034c0
+2026-05-01T06:17:09.6800545Z  Built:             Tue Mar 25 15:07:16 2025
+2026-05-01T06:17:09.6800958Z  OS/Arch:           linux/amd64
+2026-05-01T06:17:09.6801302Z  Context:           default
+2026-05-01T06:17:09.6801506Z 
+2026-05-01T06:17:09.6801674Z Server: Docker Engine - Community
+2026-05-01T06:17:09.6802028Z  Engine:
+2026-05-01T06:17:09.6802276Z   Version:          28.0.4
+2026-05-01T06:17:09.6802659Z   API version:      1.48 (minimum version 1.24)
+2026-05-01T06:17:09.6803090Z   Go version:       go1.23.7
+2026-05-01T06:17:09.6803421Z   Git commit:       6430e49
+2026-05-01T06:17:09.6803867Z   Built:            Tue Mar 25 15:07:16 2025
+2026-05-01T06:17:09.6804253Z   OS/Arch:          linux/amd64
+2026-05-01T06:17:09.6804603Z   Experimental:     false
+2026-05-01T06:17:09.6804908Z  containerd:
+2026-05-01T06:17:09.6805181Z   Version:          v2.2.2
+2026-05-01T06:17:09.6805588Z   GitCommit:        301b2dac98f15c27117da5c8af12118a041a31d9
+2026-05-01T06:17:09.6806083Z  runc:
+2026-05-01T06:17:09.6806334Z   Version:          1.3.4
+2026-05-01T06:17:09.6806698Z   GitCommit:        v1.3.4-0-gd6d73eb8
+2026-05-01T06:17:09.6807106Z  docker-init:
+2026-05-01T06:17:09.6807391Z   Version:          0.19.0
+2026-05-01T06:17:09.6807722Z   GitCommit:        de40ad0
+2026-05-01T06:17:09.6853261Z [command]/usr/bin/docker info
+2026-05-01T06:17:09.8155652Z Client: Docker Engine - Community
+2026-05-01T06:17:09.8166586Z  Version:    28.0.4
+2026-05-01T06:17:09.8167002Z  Context:    default
+2026-05-01T06:17:09.8167539Z  Debug Mode: false
+2026-05-01T06:17:09.8167919Z  Plugins:
+2026-05-01T06:17:09.8168218Z   buildx: Docker Buildx (Docker Inc.)
+2026-05-01T06:17:09.8168627Z     Version:  v0.33.0
+2026-05-01T06:17:09.8169075Z     Path:     /usr/libexec/docker/cli-plugins/docker-buildx
+2026-05-01T06:17:09.8169605Z   compose: Docker Compose (Docker Inc.)
+2026-05-01T06:17:09.8170001Z     Version:  v2.38.2
+2026-05-01T06:17:09.8170639Z     Path:     /usr/libexec/docker/cli-plugins/docker-compose
+2026-05-01T06:17:09.8171010Z 
+2026-05-01T06:17:09.8171134Z Server:
+2026-05-01T06:17:09.8171423Z  Containers: 0
+2026-05-01T06:17:09.8171708Z   Running: 0
+2026-05-01T06:17:09.8171978Z   Paused: 0
+2026-05-01T06:17:09.8172251Z   Stopped: 0
+2026-05-01T06:17:09.8172511Z  Images: 6
+2026-05-01T06:17:09.8172797Z  Server Version: 28.0.4
+2026-05-01T06:17:09.8173146Z  Storage Driver: overlay2
+2026-05-01T06:17:09.8173493Z   Backing Filesystem: extfs
+2026-05-01T06:17:09.8173847Z   Supports d_type: true
+2026-05-01T06:17:09.8174178Z   Using metacopy: false
+2026-05-01T06:17:09.8174502Z   Native Overlay Diff: false
+2026-05-01T06:17:09.8174848Z   userxattr: false
+2026-05-01T06:17:09.8175147Z  Logging Driver: json-file
+2026-05-01T06:17:09.8175480Z  Cgroup Driver: systemd
+2026-05-01T06:17:09.8175794Z  Cgroup Version: 2
+2026-05-01T06:17:09.8176072Z  Plugins:
+2026-05-01T06:17:09.8176340Z   Volume: local
+2026-05-01T06:17:09.8176687Z   Network: bridge host ipvlan macvlan null overlay
+2026-05-01T06:17:09.8177331Z   Log: awslogs fluentd gcplogs gelf journald json-file local splunk syslog
+2026-05-01T06:17:09.8177893Z  Swarm: inactive
+2026-05-01T06:17:09.8178689Z  Runtimes: io.containerd.runc.v2 runc
+2026-05-01T06:17:09.8179104Z  Default Runtime: runc
+2026-05-01T06:17:09.8179446Z  Init Binary: docker-init
+2026-05-01T06:17:09.8179904Z  containerd version: 301b2dac98f15c27117da5c8af12118a041a31d9
+2026-05-01T06:17:09.8180749Z  runc version: v1.3.4-0-gd6d73eb8
+2026-05-01T06:17:09.8181144Z  init version: de40ad0
+2026-05-01T06:17:09.8181459Z  Security Options:
+2026-05-01T06:17:09.8181754Z   apparmor
+2026-05-01T06:17:09.8182008Z   seccomp
+2026-05-01T06:17:09.8182286Z    Profile: builtin
+2026-05-01T06:17:09.8182578Z   cgroupns
+2026-05-01T06:17:09.8182861Z  Kernel Version: 6.17.0-1010-azure
+2026-05-01T06:17:09.8183250Z  Operating System: Ubuntu 24.04.4 LTS
+2026-05-01T06:17:09.8183643Z  OSType: linux
+2026-05-01T06:17:09.8183934Z  Architecture: x86_64
+2026-05-01T06:17:09.8184254Z  CPUs: 4
+2026-05-01T06:17:09.8184515Z  Total Memory: 15.61GiB
+2026-05-01T06:17:09.8184844Z  Name: runnervmeorf1
+2026-05-01T06:17:09.8185233Z  ID: e27c7740-8587-4822-9bec-fa47c65630a3
+2026-05-01T06:17:09.8185650Z  Docker Root Dir: /var/lib/docker
+2026-05-01T06:17:09.8186031Z  Debug Mode: false
+2026-05-01T06:17:09.8186341Z  Username: githubactions
+2026-05-01T06:17:09.8186685Z  Experimental: false
+2026-05-01T06:17:09.8187008Z  Insecure Registries:
+2026-05-01T06:17:09.8191908Z   ::1/128
+2026-05-01T06:17:09.8192196Z   127.0.0.0/8
+2026-05-01T06:17:09.8192503Z  Live Restore Enabled: false
+2026-05-01T06:17:09.8192745Z 
+2026-05-01T06:17:09.8193263Z ##[endgroup]
+2026-05-01T06:17:09.8708346Z ##[group]Buildx version
+2026-05-01T06:17:09.8732746Z [command]/usr/bin/docker buildx version
+2026-05-01T06:17:09.9195934Z github.com/docker/buildx v0.33.0 f7897eba028583e0071642db3c011e860444f8cf
+2026-05-01T06:17:09.9229033Z ##[endgroup]
+2026-05-01T06:17:09.9404870Z ##[group]Inspecting default docker context
+2026-05-01T06:17:09.9546884Z [
+2026-05-01T06:17:09.9547904Z   {
+2026-05-01T06:17:09.9548521Z     "Name": "default",
+2026-05-01T06:17:09.9548978Z     "Metadata": {},
+2026-05-01T06:17:09.9549588Z     "Endpoints": {
+2026-05-01T06:17:09.9550420Z       "docker": {
+2026-05-01T06:17:09.9550835Z         "Host": "unix:///var/run/docker.sock",
+2026-05-01T06:17:09.9551511Z         "SkipTLSVerify": false
+2026-05-01T06:17:09.9552361Z       }
+2026-05-01T06:17:09.9552764Z     },
+2026-05-01T06:17:09.9553104Z     "TLSMaterial": {},
+2026-05-01T06:17:09.9553756Z     "Storage": {
+2026-05-01T06:17:09.9554168Z       "MetadataPath": "<IN MEMORY>",
+2026-05-01T06:17:09.9554695Z       "TLSPath": "<IN MEMORY>"
+2026-05-01T06:17:09.9555249Z     }
+2026-05-01T06:17:09.9555658Z   }
+2026-05-01T06:17:09.9555983Z ]
+2026-05-01T06:17:09.9556640Z ##[endgroup]
+2026-05-01T06:17:09.9557178Z ##[group]Creating a new builder instance
+2026-05-01T06:17:10.0899578Z [command]/usr/bin/docker buildx create --name builder-70b342f0-3255-48b3-9b68-1c86246ed84d --driver docker-container --buildkitd-flags --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host --use
+2026-05-01T06:17:10.1636560Z builder-70b342f0-3255-48b3-9b68-1c86246ed84d
+2026-05-01T06:17:10.1685683Z ##[endgroup]
+2026-05-01T06:17:10.1686368Z ##[group]Booting builder
+2026-05-01T06:17:10.1723082Z [command]/usr/bin/docker buildx inspect --bootstrap --builder builder-70b342f0-3255-48b3-9b68-1c86246ed84d
+2026-05-01T06:17:10.2290776Z #1 [internal] booting buildkit
+2026-05-01T06:17:10.3797005Z #1 pulling image moby/buildkit:buildx-stable-1
+2026-05-01T06:17:14.4275790Z #1 pulling image moby/buildkit:buildx-stable-1 4.2s done
+2026-05-01T06:17:14.5790546Z #1 creating container buildx_buildkit_builder-70b342f0-3255-48b3-9b68-1c86246ed84d0
+2026-05-01T06:17:14.6453176Z #1 creating container buildx_buildkit_builder-70b342f0-3255-48b3-9b68-1c86246ed84d0 0.2s done
+2026-05-01T06:17:14.6475154Z #1 DONE 4.4s
+2026-05-01T06:17:14.6768099Z Name:          builder-70b342f0-3255-48b3-9b68-1c86246ed84d
+2026-05-01T06:17:14.6791466Z Driver:        docker-container
+2026-05-01T06:17:14.6793830Z Last Activity: 2026-05-01 06:17:10 +0000 UTC
+2026-05-01T06:17:14.6810836Z 
+2026-05-01T06:17:14.6811759Z Nodes:
+2026-05-01T06:17:14.6812159Z Name:                  builder-70b342f0-3255-48b3-9b68-1c86246ed84d0
+2026-05-01T06:17:14.6812564Z Endpoint:              unix:///var/run/docker.sock
+2026-05-01T06:17:14.6812900Z Status:                running
+2026-05-01T06:17:14.6813412Z BuildKit daemon flags: --allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host
+2026-05-01T06:17:14.6814178Z BuildKit version:      v0.29.0
+2026-05-01T06:17:14.6814720Z Platforms:             linux/amd64, linux/amd64/v2, linux/amd64/v3, linux/386
+2026-05-01T06:17:14.6815247Z Labels:
+2026-05-01T06:17:14.6815601Z  org.mobyproject.buildkit.worker.executor:         oci
+2026-05-01T06:17:14.6816223Z  org.mobyproject.buildkit.worker.hostname:         aaced093d26d
+2026-05-01T06:17:14.6816632Z  org.mobyproject.buildkit.worker.network:          host
+2026-05-01T06:17:14.6817109Z  org.mobyproject.buildkit.worker.oci.process-mode: sandbox
+2026-05-01T06:17:14.6818457Z  org.mobyproject.buildkit.worker.selinux.enabled:  false
+2026-05-01T06:17:14.6819390Z  org.mobyproject.buildkit.worker.snapshotter:      overlayfs
+2026-05-01T06:17:14.6819942Z GC Policy rule#0:
+2026-05-01T06:17:14.6820482Z  All:            false
+2026-05-01T06:17:14.6821026Z  Filters:        type==source.local,type==exec.cachemount,type==source.git.checkout
+2026-05-01T06:17:14.6821669Z  Keep Duration:  48h0m0s
+2026-05-01T06:17:14.6822007Z  Max Used Space: 488.3MiB
+2026-05-01T06:17:14.6822322Z GC Policy rule#1:
+2026-05-01T06:17:14.6822611Z  All:            false
+2026-05-01T06:17:14.6822950Z  Keep Duration:  1440h0m0s
+2026-05-01T06:17:14.6823290Z  Reserved Space: 9.313GiB
+2026-05-01T06:17:14.6823613Z  Max Used Space: 93.13GiB
+2026-05-01T06:17:14.6823931Z  Min Free Space: 27.01GiB
+2026-05-01T06:17:14.6824240Z GC Policy rule#2:
+2026-05-01T06:17:14.6824543Z  All:            false
+2026-05-01T06:17:14.6824874Z  Reserved Space: 9.313GiB
+2026-05-01T06:17:14.6825184Z  Max Used Space: 93.13GiB
+2026-05-01T06:17:14.6825511Z  Min Free Space: 27.01GiB
+2026-05-01T06:17:14.6825812Z GC Policy rule#3:
+2026-05-01T06:17:14.6826082Z  All:            true
+2026-05-01T06:17:14.6826364Z  Reserved Space: 9.313GiB
+2026-05-01T06:17:14.6826571Z  Max Used Space: 93.13GiB
+2026-05-01T06:17:14.6827010Z  Min Free Space: 27.01GiB
+2026-05-01T06:17:14.6828115Z ##[endgroup]
+2026-05-01T06:17:14.7738814Z ##[group]Inspect builder
+2026-05-01T06:17:14.7741094Z {
+2026-05-01T06:17:14.7741346Z   "nodes": [
+2026-05-01T06:17:14.7741621Z     {
+2026-05-01T06:17:14.7741981Z       "name": "builder-70b342f0-3255-48b3-9b68-1c86246ed84d0",
+2026-05-01T06:17:14.7742506Z       "endpoint": "unix:///var/run/docker.sock",
+2026-05-01T06:17:14.7742852Z       "status": "running",
+2026-05-01T06:17:14.7743366Z       "buildkitd-flags": "--allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host",
+2026-05-01T06:17:14.7743881Z       "buildkit": "v0.29.0",
+2026-05-01T06:17:14.7744288Z       "platforms": "linux/amd64,linux/amd64/v2,linux/amd64/v3,linux/386",
+2026-05-01T06:17:14.7744807Z       "features": {
+2026-05-01T06:17:14.7745277Z         "Automatically load images to the Docker Engine image store": true,
+2026-05-01T06:17:14.7745877Z         "Cache export": true,
+2026-05-01T06:17:14.7746222Z         "Direct push": true,
+2026-05-01T06:17:14.7746526Z         "Docker exporter": true,
+2026-05-01T06:17:14.7746770Z         "Multi-platform build": true,
+2026-05-01T06:17:14.7747019Z         "OCI exporter": true
+2026-05-01T06:17:14.7747315Z       },
+2026-05-01T06:17:14.7747562Z       "labels": {
+2026-05-01T06:17:14.7747997Z         "org.mobyproject.buildkit.worker.executor": "oci",
+2026-05-01T06:17:14.7748468Z         "org.mobyproject.buildkit.worker.hostname": "aaced093d26d",
+2026-05-01T06:17:14.7748865Z         "org.mobyproject.buildkit.worker.network": "host",
+2026-05-01T06:17:14.7749262Z         "org.mobyproject.buildkit.worker.oci.process-mode": "sandbox",
+2026-05-01T06:17:14.7749693Z         "org.mobyproject.buildkit.worker.selinux.enabled": "false",
+2026-05-01T06:17:14.7750662Z         "org.mobyproject.buildkit.worker.snapshotter": "overlayfs"
+2026-05-01T06:17:14.7751006Z       },
+2026-05-01T06:17:14.7751188Z       "gcPolicy": [
+2026-05-01T06:17:14.7751377Z         {
+2026-05-01T06:17:14.7751571Z           "all": false,
+2026-05-01T06:17:14.7751823Z           "filter": [
+2026-05-01T06:17:14.7752067Z             "type==source.local",
+2026-05-01T06:17:14.7752315Z             "type==exec.cachemount",
+2026-05-01T06:17:14.7752583Z             "type==source.git.checkout"
+2026-05-01T06:17:14.7752818Z           ],
+2026-05-01T06:17:14.7753013Z           "keepDuration": "48h0m0s",
+2026-05-01T06:17:14.7753249Z           "maxUsedSpace": "488.3MiB"
+2026-05-01T06:17:14.7753462Z         },
+2026-05-01T06:17:14.7753628Z         {
+2026-05-01T06:17:14.7753791Z           "all": false,
+2026-05-01T06:17:14.7754008Z           "keepDuration": "1440h0m0s",
+2026-05-01T06:17:14.7754247Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:14.7754485Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:14.7754724Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:14.7754942Z         },
+2026-05-01T06:17:14.7755098Z         {
+2026-05-01T06:17:14.7755266Z           "all": false,
+2026-05-01T06:17:14.7755466Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:14.7755707Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:14.7755941Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:14.7756151Z         },
+2026-05-01T06:17:14.7756313Z         {
+2026-05-01T06:17:14.7756471Z           "all": true,
+2026-05-01T06:17:14.7756678Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:14.7756938Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:14.7757173Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:14.7757382Z         }
+2026-05-01T06:17:14.7757544Z       ]
+2026-05-01T06:17:14.7757703Z     }
+2026-05-01T06:17:14.7757861Z   ],
+2026-05-01T06:17:14.7758088Z   "name": "builder-70b342f0-3255-48b3-9b68-1c86246ed84d",
+2026-05-01T06:17:14.7758393Z   "driver": "docker-container",
+2026-05-01T06:17:14.7758649Z   "lastActivity": "2026-05-01T06:17:10.000Z"
+2026-05-01T06:17:14.7758887Z }
+2026-05-01T06:17:14.7759238Z ##[endgroup]
+2026-05-01T06:17:14.7759556Z ##[group]BuildKit version
+2026-05-01T06:17:14.7759820Z builder-70b342f0-3255-48b3-9b68-1c86246ed84d0: v0.29.0
+2026-05-01T06:17:14.7760882Z ##[endgroup]
+2026-05-01T06:17:14.7908065Z ##[group]Run docker/login-action@v3
+2026-05-01T06:17:14.7908340Z with:
+2026-05-01T06:17:14.7908529Z   registry: ghcr.io
+2026-05-01T06:17:14.7908729Z   username: pkinerd
+2026-05-01T06:17:14.7909155Z   password: ***
+2026-05-01T06:17:14.7909351Z   logout: true
+2026-05-01T06:17:14.7909532Z env:
+2026-05-01T06:17:14.7909701Z   REGISTRY: ghcr.io
+2026-05-01T06:17:14.7909915Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:14.7910458Z ##[endgroup]
+2026-05-01T06:17:15.0949626Z Logging into ghcr.io...
+2026-05-01T06:17:15.4383059Z Login Succeeded!
+2026-05-01T06:17:15.4511207Z ##[group]Run docker/metadata-action@v5
+2026-05-01T06:17:15.4511470Z with:
+2026-05-01T06:17:15.4511661Z   images: ghcr.io/pkinerd/ednsv
+2026-05-01T06:17:15.4512340Z   tags: type=ref,event=branch,prefix=branch-
+type=ref,event=pr,prefix=pr-
+type=sha,format=short,prefix=sha-
+type=raw,value=latest,enable={{is_default_branch}}
+type=raw,value=latest-any
+
+2026-05-01T06:17:15.4513021Z   context: workflow
+2026-05-01T06:17:15.4513369Z   github-token: ***
+2026-05-01T06:17:15.4513550Z env:
+2026-05-01T06:17:15.4513722Z   REGISTRY: ghcr.io
+2026-05-01T06:17:15.4534459Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:15.4534853Z ##[endgroup]
+2026-05-01T06:17:16.4674881Z ##[group]Context info
+2026-05-01T06:17:16.4675233Z eventName: pull_request
+2026-05-01T06:17:16.4675628Z sha: 9c0c2050f64db7dc79d61b6988138dcb15978b49
+2026-05-01T06:17:16.4676019Z ref: refs/pull/16/merge
+2026-05-01T06:17:16.4676303Z workflow: CI
+2026-05-01T06:17:16.4676546Z action: meta
+2026-05-01T06:17:16.4676806Z actor: pkinerd
+2026-05-01T06:17:16.4677172Z runNumber: 166
+2026-05-01T06:17:16.4677419Z runId: 25204476527
+2026-05-01T06:17:16.4678435Z commitDate: Fri May 01 2026 06:03:23 GMT+0000 (Coordinated Universal Time)
+2026-05-01T06:17:16.4679501Z ##[endgroup]
+2026-05-01T06:17:16.4686031Z ##[group]Processing images input
+2026-05-01T06:17:16.4686580Z name=ghcr.io/pkinerd/ednsv,enable=true
+2026-05-01T06:17:16.4687303Z ##[endgroup]
+2026-05-01T06:17:16.4699675Z ##[group]Processing tags input
+2026-05-01T06:17:16.4700373Z type=ref,event=branch,prefix=branch-,enable=true,priority=600
+2026-05-01T06:17:16.4700994Z type=ref,event=pr,prefix=pr-,enable=true,priority=600
+2026-05-01T06:17:16.4701594Z type=raw,value=latest,enable={{is_default_branch}},priority=200
+2026-05-01T06:17:16.4702172Z type=raw,value=latest-any,enable=true,priority=200
+2026-05-01T06:17:16.4702751Z type=sha,format=short,prefix=sha-,enable=true,priority=100
+2026-05-01T06:17:16.4703532Z ##[endgroup]
+2026-05-01T06:17:16.4704069Z ##[group]Processing flavor input
+2026-05-01T06:17:16.4704452Z latest=auto
+2026-05-01T06:17:16.4704711Z prefix=
+2026-05-01T06:17:16.4704960Z prefixLatest=false
+2026-05-01T06:17:16.4705236Z suffix=
+2026-05-01T06:17:16.4705474Z suffixLatest=false
+2026-05-01T06:17:16.4705975Z ##[endgroup]
+2026-05-01T06:17:16.4771275Z ##[group]Docker image version
+2026-05-01T06:17:16.4771652Z pr-16
+2026-05-01T06:17:16.4772089Z ##[endgroup]
+2026-05-01T06:17:16.4776962Z ##[group]Docker tags
+2026-05-01T06:17:16.4777315Z ghcr.io/pkinerd/ednsv:pr-16
+2026-05-01T06:17:16.4777688Z ghcr.io/pkinerd/ednsv:latest-any
+2026-05-01T06:17:16.4778183Z ghcr.io/pkinerd/ednsv:sha-9c0c205
+2026-05-01T06:17:16.4778783Z ##[endgroup]
+2026-05-01T06:17:16.4854565Z ##[group]Docker labels
+2026-05-01T06:17:16.4855046Z org.opencontainers.image.created=2026-05-01T06:17:16.470Z
+2026-05-01T06:17:16.4855611Z org.opencontainers.image.description=
+2026-05-01T06:17:16.4856063Z org.opencontainers.image.licenses=
+2026-05-01T06:17:16.4856659Z org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49
+2026-05-01T06:17:16.4857446Z org.opencontainers.image.source=https://github.com/pkinerd/ednsv
+2026-05-01T06:17:16.4858046Z org.opencontainers.image.title=ednsv
+2026-05-01T06:17:16.4858578Z org.opencontainers.image.url=https://github.com/pkinerd/ednsv
+2026-05-01T06:17:16.4859147Z org.opencontainers.image.version=pr-16
+2026-05-01T06:17:16.4859821Z ##[endgroup]
+2026-05-01T06:17:16.4860418Z ##[group]Annotations
+2026-05-01T06:17:16.4861181Z manifest:org.opencontainers.image.created=2026-05-01T06:17:16.470Z
+2026-05-01T06:17:16.4861798Z manifest:org.opencontainers.image.description=
+2026-05-01T06:17:16.4862301Z manifest:org.opencontainers.image.licenses=
+2026-05-01T06:17:16.4862989Z manifest:org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49
+2026-05-01T06:17:16.4863829Z manifest:org.opencontainers.image.source=https://github.com/pkinerd/ednsv
+2026-05-01T06:17:16.4864487Z manifest:org.opencontainers.image.title=ednsv
+2026-05-01T06:17:16.4865329Z manifest:org.opencontainers.image.url=https://github.com/pkinerd/ednsv
+2026-05-01T06:17:16.4865967Z manifest:org.opencontainers.image.version=pr-16
+2026-05-01T06:17:16.4866593Z ##[endgroup]
+2026-05-01T06:17:16.4867050Z ##[group]JSON output
+2026-05-01T06:17:16.4867328Z {
+2026-05-01T06:17:16.4867580Z   "tags": [
+2026-05-01T06:17:16.4867874Z     "ghcr.io/pkinerd/ednsv:pr-16",
+2026-05-01T06:17:16.4868266Z     "ghcr.io/pkinerd/ednsv:latest-any",
+2026-05-01T06:17:16.4868690Z     "ghcr.io/pkinerd/ednsv:sha-9c0c205"
+2026-05-01T06:17:16.4869052Z   ],
+2026-05-01T06:17:16.4869311Z   "tag-names": [
+2026-05-01T06:17:16.4869586Z     "pr-16",
+2026-05-01T06:17:16.4869863Z     "latest-any",
+2026-05-01T06:17:16.4870283Z     "sha-9c0c205"
+2026-05-01T06:17:16.4870536Z   ],
+2026-05-01T06:17:16.4870774Z   "labels": {
+2026-05-01T06:17:16.4871193Z     "org.opencontainers.image.created": "2026-05-01T06:17:16.470Z",
+2026-05-01T06:17:16.4871773Z     "org.opencontainers.image.description": "",
+2026-05-01T06:17:16.4872254Z     "org.opencontainers.image.licenses": "",
+2026-05-01T06:17:16.4872915Z     "org.opencontainers.image.revision": "9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:16.4873745Z     "org.opencontainers.image.source": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4874358Z     "org.opencontainers.image.title": "ednsv",
+2026-05-01T06:17:16.4874864Z     "org.opencontainers.image.url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4875261Z     "org.opencontainers.image.version": "pr-16"
+2026-05-01T06:17:16.4875518Z   },
+2026-05-01T06:17:16.4875683Z   "annotations": [
+2026-05-01T06:17:16.4875987Z     "manifest:org.opencontainers.image.created=2026-05-01T06:17:16.470Z",
+2026-05-01T06:17:16.4876606Z     "manifest:org.opencontainers.image.description=",
+2026-05-01T06:17:16.4877146Z     "manifest:org.opencontainers.image.licenses=",
+2026-05-01T06:17:16.4877806Z     "manifest:org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:16.4878729Z     "manifest:org.opencontainers.image.source=https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4879175Z     "manifest:org.opencontainers.image.title=ednsv",
+2026-05-01T06:17:16.4879580Z     "manifest:org.opencontainers.image.url=https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4880433Z     "manifest:org.opencontainers.image.version=pr-16"
+2026-05-01T06:17:16.4880881Z   ]
+2026-05-01T06:17:16.4881135Z }
+2026-05-01T06:17:16.4881572Z ##[endgroup]
+2026-05-01T06:17:16.4882134Z ##[group]Bake file definition (tags)
+2026-05-01T06:17:16.4882502Z {
+2026-05-01T06:17:16.4882751Z   "target": {
+2026-05-01T06:17:16.4883066Z     "docker-metadata-action": {
+2026-05-01T06:17:16.4883425Z       "tags": [
+2026-05-01T06:17:16.4883737Z         "ghcr.io/pkinerd/ednsv:pr-16",
+2026-05-01T06:17:16.4884179Z         "ghcr.io/pkinerd/ednsv:latest-any",
+2026-05-01T06:17:16.4884631Z         "ghcr.io/pkinerd/ednsv:sha-9c0c205"
+2026-05-01T06:17:16.4885029Z       ],
+2026-05-01T06:17:16.4885291Z       "args": {
+2026-05-01T06:17:16.4885668Z         "DOCKER_META_IMAGES": "ghcr.io/pkinerd/ednsv",
+2026-05-01T06:17:16.4886167Z         "DOCKER_META_VERSION": "pr-16"
+2026-05-01T06:17:16.4886564Z       }
+2026-05-01T06:17:16.4886813Z     }
+2026-05-01T06:17:16.4887067Z   }
+2026-05-01T06:17:16.4887311Z }
+2026-05-01T06:17:16.4887817Z ##[endgroup]
+2026-05-01T06:17:16.4888392Z ##[group]Bake file definition (labels)
+2026-05-01T06:17:16.4888778Z {
+2026-05-01T06:17:16.4889029Z   "target": {
+2026-05-01T06:17:16.4889657Z     "docker-metadata-action": {
+2026-05-01T06:17:16.4890271Z       "labels": {
+2026-05-01T06:17:16.4890724Z         "org.opencontainers.image.created": "2026-05-01T06:17:16.470Z",
+2026-05-01T06:17:16.4891397Z         "org.opencontainers.image.description": "",
+2026-05-01T06:17:16.4891953Z         "org.opencontainers.image.licenses": "",
+2026-05-01T06:17:16.4892675Z         "org.opencontainers.image.revision": "9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:16.4893684Z         "org.opencontainers.image.source": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4894744Z         "org.opencontainers.image.title": "ednsv",
+2026-05-01T06:17:16.4895501Z         "org.opencontainers.image.url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4896227Z         "org.opencontainers.image.version": "pr-16"
+2026-05-01T06:17:16.4896739Z       }
+2026-05-01T06:17:16.4897034Z     }
+2026-05-01T06:17:16.4897317Z   }
+2026-05-01T06:17:16.4897600Z }
+2026-05-01T06:17:16.4898157Z ##[endgroup]
+2026-05-01T06:17:16.4898784Z ##[group]Bake file definition (annotations)
+2026-05-01T06:17:16.4899227Z {
+2026-05-01T06:17:16.4899495Z   "target": {
+2026-05-01T06:17:16.4899835Z     "docker-metadata-action": {
+2026-05-01T06:17:16.4900568Z       "annotations": [
+2026-05-01T06:17:16.4901186Z         "manifest:org.opencontainers.image.created=2026-05-01T06:17:16.470Z",
+2026-05-01T06:17:16.4901944Z         "manifest:org.opencontainers.image.description=",
+2026-05-01T06:17:16.4902579Z         "manifest:org.opencontainers.image.licenses=",
+2026-05-01T06:17:16.4903406Z         "manifest:org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:16.4904458Z         "manifest:org.opencontainers.image.source=https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4905275Z         "manifest:org.opencontainers.image.title=ednsv",
+2026-05-01T06:17:16.4906040Z         "manifest:org.opencontainers.image.url=https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:16.4906858Z         "manifest:org.opencontainers.image.version=pr-16"
+2026-05-01T06:17:16.4907396Z       ]
+2026-05-01T06:17:16.4907686Z     }
+2026-05-01T06:17:16.4907961Z   }
+2026-05-01T06:17:16.4908243Z }
+2026-05-01T06:17:16.4908801Z ##[endgroup]
+2026-05-01T06:17:16.5073188Z ##[group]Run docker/build-push-action@v6
+2026-05-01T06:17:16.5073469Z with:
+2026-05-01T06:17:16.5073651Z   context: .
+2026-05-01T06:17:16.5073831Z   file: ./Dockerfile
+2026-05-01T06:17:16.5074013Z   push: true
+2026-05-01T06:17:16.5074401Z   tags: ghcr.io/pkinerd/ednsv:pr-16
+ghcr.io/pkinerd/ednsv:latest-any
+ghcr.io/pkinerd/ednsv:sha-9c0c205
+2026-05-01T06:17:16.5076144Z   labels: org.opencontainers.image.created=2026-05-01T06:17:16.470Z
+org.opencontainers.image.description=
+org.opencontainers.image.licenses=
+org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49
+org.opencontainers.image.source=https://github.com/pkinerd/ednsv
+org.opencontainers.image.title=ednsv
+org.opencontainers.image.url=https://github.com/pkinerd/ednsv
+org.opencontainers.image.version=pr-16
+2026-05-01T06:17:16.5077665Z   cache-from: type=gha
+2026-05-01T06:17:16.5077880Z   cache-to: type=gha,mode=max
+2026-05-01T06:17:16.5078097Z   load: false
+2026-05-01T06:17:16.5078272Z   no-cache: false
+2026-05-01T06:17:16.5078486Z   pull: false
+2026-05-01T06:17:16.5078817Z   github-token: ***
+2026-05-01T06:17:16.5079009Z env:
+2026-05-01T06:17:16.5079185Z   REGISTRY: ghcr.io
+2026-05-01T06:17:16.5079383Z   IMAGE_NAME: pkinerd/ednsv
+2026-05-01T06:17:16.5079624Z   DOCKER_METADATA_OUTPUT_VERSION: pr-16
+2026-05-01T06:17:16.5080373Z   DOCKER_METADATA_OUTPUT_TAGS: ghcr.io/pkinerd/ednsv:pr-16
+ghcr.io/pkinerd/ednsv:latest-any
+ghcr.io/pkinerd/ednsv:sha-9c0c205
+2026-05-01T06:17:16.5080971Z   DOCKER_METADATA_OUTPUT_TAG_NAMES: pr-16
+latest-any
+sha-9c0c205
+2026-05-01T06:17:16.5082663Z   DOCKER_METADATA_OUTPUT_LABELS: org.opencontainers.image.created=2026-05-01T06:17:16.470Z
+org.opencontainers.image.description=
+org.opencontainers.image.licenses=
+org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49
+org.opencontainers.image.source=https://github.com/pkinerd/ednsv
+org.opencontainers.image.title=ednsv
+org.opencontainers.image.url=https://github.com/pkinerd/ednsv
+org.opencontainers.image.version=pr-16
+2026-05-01T06:17:16.5086037Z   DOCKER_METADATA_OUTPUT_ANNOTATIONS: manifest:org.opencontainers.image.created=2026-05-01T06:17:16.470Z
+manifest:org.opencontainers.image.description=
+manifest:org.opencontainers.image.licenses=
+manifest:org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49
+manifest:org.opencontainers.image.source=https://github.com/pkinerd/ednsv
+manifest:org.opencontainers.image.title=ednsv
+manifest:org.opencontainers.image.url=https://github.com/pkinerd/ednsv
+manifest:org.opencontainers.image.version=pr-16
+2026-05-01T06:17:16.5091564Z   DOCKER_METADATA_OUTPUT_JSON: {"tags":["ghcr.io/pkinerd/ednsv:pr-16","ghcr.io/pkinerd/ednsv:latest-any","ghcr.io/pkinerd/ednsv:sha-9c0c205"],"tag-names":["pr-16","latest-any","sha-9c0c205"],"labels":{"org.opencontainers.image.created":"2026-05-01T06:17:16.470Z","org.opencontainers.image.description":"","org.opencontainers.image.licenses":"","org.opencontainers.image.revision":"9c0c2050f64db7dc79d61b6988138dcb15978b49","org.opencontainers.image.source":"https://github.com/pkinerd/ednsv","org.opencontainers.image.title":"ednsv","org.opencontainers.image.url":"https://github.com/pkinerd/ednsv","org.opencontainers.image.version":"pr-16"},"annotations":["manifest:org.opencontainers.image.created=2026-05-01T06:17:16.470Z","manifest:org.opencontainers.image.description=","manifest:org.opencontainers.image.licenses=","manifest:org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49","manifest:org.opencontainers.image.source=https://github.com/pkinerd/ednsv","manifest:org.opencontainers.image.title=ednsv","manifest:org.opencontainers.image.url=https://github.com/pkinerd/ednsv","manifest:org.opencontainers.image.version=pr-16"]}
+2026-05-01T06:17:16.5095901Z   DOCKER_METADATA_OUTPUT_BAKE_FILE_TAGS: /home/runner/work/_temp/docker-actions-toolkit-ZSajMB/docker-metadata-action-bake-tags.json
+2026-05-01T06:17:16.5096949Z   DOCKER_METADATA_OUTPUT_BAKE_FILE_LABELS: /home/runner/work/_temp/docker-actions-toolkit-ZSajMB/docker-metadata-action-bake-labels.json
+2026-05-01T06:17:16.5097894Z   DOCKER_METADATA_OUTPUT_BAKE_FILE_ANNOTATIONS: /home/runner/work/_temp/docker-actions-toolkit-ZSajMB/docker-metadata-action-bake-annotations.json
+2026-05-01T06:17:16.5098748Z   DOCKER_METADATA_OUTPUT_BAKE_FILE: /home/runner/work/_temp/docker-actions-toolkit-ZSajMB/docker-metadata-action-bake.json
+2026-05-01T06:17:16.5099250Z ##[endgroup]
+2026-05-01T06:17:16.7479830Z ##[group]GitHub Actions runtime token ACs
+2026-05-01T06:17:16.7490730Z refs/pull/16/merge: read/write
+2026-05-01T06:17:16.7491329Z refs/heads/main: read
+2026-05-01T06:17:16.7492146Z ##[endgroup]
+2026-05-01T06:17:16.7492867Z ##[group]Docker info
+2026-05-01T06:17:16.7570310Z [command]/usr/bin/docker version
+2026-05-01T06:17:16.7784741Z Client: Docker Engine - Community
+2026-05-01T06:17:16.7798311Z  Version:           28.0.4
+2026-05-01T06:17:16.7799193Z  API version:       1.48
+2026-05-01T06:17:16.7799688Z  Go version:        go1.23.7
+2026-05-01T06:17:16.7800406Z  Git commit:        b8034c0
+2026-05-01T06:17:16.7800990Z  Built:             Tue Mar 25 15:07:16 2025
+2026-05-01T06:17:16.7801561Z  OS/Arch:           linux/amd64
+2026-05-01T06:17:16.7802081Z  Context:           default
+2026-05-01T06:17:16.7802455Z 
+2026-05-01T06:17:16.7802766Z Server: Docker Engine - Community
+2026-05-01T06:17:16.7803288Z  Engine:
+2026-05-01T06:17:16.7803710Z   Version:          28.0.4
+2026-05-01T06:17:16.7804230Z   API version:      1.48 (minimum version 1.24)
+2026-05-01T06:17:16.7804824Z   Go version:       go1.23.7
+2026-05-01T06:17:16.7805314Z   Git commit:       6430e49
+2026-05-01T06:17:16.7805840Z   Built:            Tue Mar 25 15:07:16 2025
+2026-05-01T06:17:16.7806400Z   OS/Arch:          linux/amd64
+2026-05-01T06:17:16.7806896Z   Experimental:     false
+2026-05-01T06:17:16.7807379Z  containerd:
+2026-05-01T06:17:16.7808335Z   Version:          v2.2.2
+2026-05-01T06:17:16.7808916Z   GitCommit:        301b2dac98f15c27117da5c8af12118a041a31d9
+2026-05-01T06:17:16.7809528Z  runc:
+2026-05-01T06:17:16.7809936Z   Version:          1.3.4
+2026-05-01T06:17:16.7810653Z   GitCommit:        v1.3.4-0-gd6d73eb8
+2026-05-01T06:17:16.7811176Z  docker-init:
+2026-05-01T06:17:16.7811606Z   Version:          0.19.0
+2026-05-01T06:17:16.7812072Z   GitCommit:        de40ad0
+2026-05-01T06:17:16.7837194Z [command]/usr/bin/docker info
+2026-05-01T06:17:16.8229944Z Client: Docker Engine - Community
+2026-05-01T06:17:16.8230563Z  Version:    28.0.4
+2026-05-01T06:17:16.8230874Z  Context:    default
+2026-05-01T06:17:16.8231133Z  Debug Mode: false
+2026-05-01T06:17:16.8231402Z  Plugins:
+2026-05-01T06:17:16.8231661Z   buildx: Docker Buildx (Docker Inc.)
+2026-05-01T06:17:16.8232026Z     Version:  v0.33.0
+2026-05-01T06:17:16.8232429Z     Path:     /usr/libexec/docker/cli-plugins/docker-buildx
+2026-05-01T06:17:16.8232938Z   compose: Docker Compose (Docker Inc.)
+2026-05-01T06:17:16.8233339Z     Version:  v2.38.2
+2026-05-01T06:17:16.8233737Z     Path:     /usr/libexec/docker/cli-plugins/docker-compose
+2026-05-01T06:17:16.8234068Z 
+2026-05-01T06:17:16.8234147Z Server:
+2026-05-01T06:17:16.8234320Z  Containers: 1
+2026-05-01T06:17:16.8234499Z   Running: 1
+2026-05-01T06:17:16.8234656Z   Paused: 0
+2026-05-01T06:17:16.8234818Z   Stopped: 0
+2026-05-01T06:17:16.8234974Z  Images: 7
+2026-05-01T06:17:16.8235140Z  Server Version: 28.0.4
+2026-05-01T06:17:16.8235342Z  Storage Driver: overlay2
+2026-05-01T06:17:16.8235553Z   Backing Filesystem: extfs
+2026-05-01T06:17:16.8235760Z   Supports d_type: true
+2026-05-01T06:17:16.8235955Z   Using metacopy: false
+2026-05-01T06:17:16.8236155Z   Native Overlay Diff: false
+2026-05-01T06:17:16.8236357Z   userxattr: false
+2026-05-01T06:17:16.8236578Z  Logging Driver: json-file
+2026-05-01T06:17:16.8236782Z  Cgroup Driver: systemd
+2026-05-01T06:17:16.8236970Z  Cgroup Version: 2
+2026-05-01T06:17:16.8237139Z  Plugins:
+2026-05-01T06:17:16.8237301Z   Volume: local
+2026-05-01T06:17:16.8237522Z   Network: bridge host ipvlan macvlan null overlay
+2026-05-01T06:17:16.8237902Z   Log: awslogs fluentd gcplogs gelf journald json-file local splunk syslog
+2026-05-01T06:17:16.8238597Z  Swarm: inactive
+2026-05-01T06:17:16.8238799Z  Runtimes: io.containerd.runc.v2 runc
+2026-05-01T06:17:16.8239040Z  Default Runtime: runc
+2026-05-01T06:17:16.8239237Z  Init Binary: docker-init
+2026-05-01T06:17:16.8239517Z  containerd version: 301b2dac98f15c27117da5c8af12118a041a31d9
+2026-05-01T06:17:16.8239824Z  runc version: v1.3.4-0-gd6d73eb8
+2026-05-01T06:17:16.8240055Z  init version: de40ad0
+2026-05-01T06:17:16.8240549Z  Security Options:
+2026-05-01T06:17:16.8240758Z   apparmor
+2026-05-01T06:17:16.8240920Z   seccomp
+2026-05-01T06:17:16.8241090Z    Profile: builtin
+2026-05-01T06:17:16.8241273Z   cgroupns
+2026-05-01T06:17:16.8241441Z  Kernel Version: 6.17.0-1010-azure
+2026-05-01T06:17:16.8241686Z  Operating System: Ubuntu 24.04.4 LTS
+2026-05-01T06:17:16.8241917Z  OSType: linux
+2026-05-01T06:17:16.8242107Z  Architecture: x86_64
+2026-05-01T06:17:16.8242288Z  CPUs: 4
+2026-05-01T06:17:16.8242458Z  Total Memory: 15.61GiB
+2026-05-01T06:17:16.8242654Z  Name: runnervmeorf1
+2026-05-01T06:17:16.8242870Z  ID: e27c7740-8587-4822-9bec-fa47c65630a3
+2026-05-01T06:17:16.8243117Z  Docker Root Dir: /var/lib/docker
+2026-05-01T06:17:16.8243339Z  Debug Mode: false
+2026-05-01T06:17:16.8243515Z  Username: githubactions
+2026-05-01T06:17:16.8243719Z  Experimental: false
+2026-05-01T06:17:16.8243919Z  Insecure Registries:
+2026-05-01T06:17:16.8244131Z   ::1/128
+2026-05-01T06:17:16.8244292Z   127.0.0.0/8
+2026-05-01T06:17:16.8244468Z  Live Restore Enabled: false
+2026-05-01T06:17:16.8244607Z 
+2026-05-01T06:17:16.8254540Z ##[endgroup]
+2026-05-01T06:17:16.8255053Z ##[group]Proxy configuration
+2026-05-01T06:17:16.8258258Z No proxy configuration found
+2026-05-01T06:17:16.8259109Z ##[endgroup]
+2026-05-01T06:17:16.8796326Z ##[group]Buildx version
+2026-05-01T06:17:16.8817684Z [command]/usr/bin/docker buildx version
+2026-05-01T06:17:16.9288954Z github.com/docker/buildx v0.33.0 f7897eba028583e0071642db3c011e860444f8cf
+2026-05-01T06:17:16.9321060Z ##[endgroup]
+2026-05-01T06:17:16.9321447Z ##[group]Builder info
+2026-05-01T06:17:17.0233597Z {
+2026-05-01T06:17:17.0234120Z   "nodes": [
+2026-05-01T06:17:17.0234604Z     {
+2026-05-01T06:17:17.0235153Z       "name": "builder-70b342f0-3255-48b3-9b68-1c86246ed84d0",
+2026-05-01T06:17:17.0235886Z       "endpoint": "unix:///var/run/docker.sock",
+2026-05-01T06:17:17.0236499Z       "status": "running",
+2026-05-01T06:17:17.0237432Z       "buildkitd-flags": "--allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host",
+2026-05-01T06:17:17.0238466Z       "buildkit": "v0.29.0",
+2026-05-01T06:17:17.0239139Z       "platforms": "linux/amd64,linux/amd64/v2,linux/amd64/v3,linux/386",
+2026-05-01T06:17:17.0239836Z       "features": {
+2026-05-01T06:17:17.0240716Z         "Automatically load images to the Docker Engine image store": true,
+2026-05-01T06:17:17.0241484Z         "Cache export": true,
+2026-05-01T06:17:17.0242035Z         "Direct push": true,
+2026-05-01T06:17:17.0242557Z         "Docker exporter": true,
+2026-05-01T06:17:17.0243109Z         "Multi-platform build": true,
+2026-05-01T06:17:17.0243697Z         "OCI exporter": true
+2026-05-01T06:17:17.0244188Z       },
+2026-05-01T06:17:17.0244609Z       "labels": {
+2026-05-01T06:17:17.0245157Z         "org.mobyproject.buildkit.worker.executor": "oci",
+2026-05-01T06:17:17.0245950Z         "org.mobyproject.buildkit.worker.hostname": "aaced093d26d",
+2026-05-01T06:17:17.0246845Z         "org.mobyproject.buildkit.worker.network": "host",
+2026-05-01T06:17:17.0247684Z         "org.mobyproject.buildkit.worker.oci.process-mode": "sandbox",
+2026-05-01T06:17:17.0248585Z         "org.mobyproject.buildkit.worker.selinux.enabled": "false",
+2026-05-01T06:17:17.0249449Z         "org.mobyproject.buildkit.worker.snapshotter": "overlayfs"
+2026-05-01T06:17:17.0250348Z       },
+2026-05-01T06:17:17.0250838Z       "gcPolicy": [
+2026-05-01T06:17:17.0251267Z         {
+2026-05-01T06:17:17.0251694Z           "all": false,
+2026-05-01T06:17:17.0252158Z           "filter": [
+2026-05-01T06:17:17.0252653Z             "type==source.local",
+2026-05-01T06:17:17.0253545Z             "type==exec.cachemount",
+2026-05-01T06:17:17.0254139Z             "type==source.git.checkout"
+2026-05-01T06:17:17.0254665Z           ],
+2026-05-01T06:17:17.0255098Z           "keepDuration": "48h0m0s",
+2026-05-01T06:17:17.0255616Z           "maxUsedSpace": "488.3MiB"
+2026-05-01T06:17:17.0256128Z         },
+2026-05-01T06:17:17.0256522Z         {
+2026-05-01T06:17:17.0256928Z           "all": false,
+2026-05-01T06:17:17.0257396Z           "keepDuration": "1440h0m0s",
+2026-05-01T06:17:17.0257939Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:17.0258486Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:17.0259002Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:17.0260873Z         },
+2026-05-01T06:17:17.0261286Z         {
+2026-05-01T06:17:17.0261708Z           "all": false,
+2026-05-01T06:17:17.0262190Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:17.0262748Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:17.0265089Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:17.0265684Z         },
+2026-05-01T06:17:17.0266104Z         {
+2026-05-01T06:17:17.0266505Z           "all": true,
+2026-05-01T06:17:17.0267003Z           "reservedSpace": "9.313GiB",
+2026-05-01T06:17:17.0267905Z           "maxUsedSpace": "93.13GiB",
+2026-05-01T06:17:17.0270945Z           "minFreeSpace": "27.01GiB"
+2026-05-01T06:17:17.0271492Z         }
+2026-05-01T06:17:17.0271901Z       ]
+2026-05-01T06:17:17.0272298Z     }
+2026-05-01T06:17:17.0272679Z   ],
+2026-05-01T06:17:17.0273178Z   "name": "builder-70b342f0-3255-48b3-9b68-1c86246ed84d",
+2026-05-01T06:17:17.0273818Z   "driver": "docker-container",
+2026-05-01T06:17:17.0274362Z   "lastActivity": "2026-05-01T06:17:10.000Z"
+2026-05-01T06:17:17.0274895Z }
+2026-05-01T06:17:17.0275600Z ##[endgroup]
+2026-05-01T06:17:17.1716718Z [command]/usr/bin/docker buildx build --cache-from type=gha --cache-to type=gha,mode=max --file ./Dockerfile --iidfile /home/runner/work/_temp/docker-actions-toolkit-PafJc7/build-iidfile-3e4ad92ad1.txt --label org.opencontainers.image.created=2026-05-01T06:17:16.470Z --label org.opencontainers.image.description= --label org.opencontainers.image.licenses= --label org.opencontainers.image.revision=9c0c2050f64db7dc79d61b6988138dcb15978b49 --label org.opencontainers.image.source=https://github.com/pkinerd/ednsv --label org.opencontainers.image.title=ednsv --label org.opencontainers.image.url=https://github.com/pkinerd/ednsv --label org.opencontainers.image.version=pr-16 --attest type=provenance,mode=max,builder-id=https://github.com/pkinerd/ednsv/actions/runs/25204476527/attempts/1 --tag ghcr.io/pkinerd/ednsv:pr-16 --tag ghcr.io/pkinerd/ednsv:latest-any --tag ghcr.io/pkinerd/ednsv:sha-9c0c205 --metadata-file /home/runner/work/_temp/docker-actions-toolkit-PafJc7/build-metadata-ee038abdbc.json --push .
+2026-05-01T06:17:17.4188774Z #0 building with "builder-70b342f0-3255-48b3-9b68-1c86246ed84d" instance using docker-container driver
+2026-05-01T06:17:17.4189492Z 
+2026-05-01T06:17:17.4189683Z #1 [internal] load build definition from Dockerfile
+2026-05-01T06:17:17.4202049Z #1 transferring dockerfile: 827B done
+2026-05-01T06:17:17.4202325Z #1 DONE 0.0s
+2026-05-01T06:17:17.4202447Z 
+2026-05-01T06:17:17.4202624Z #2 [auth] docker/dockerfile:pull token for registry-1.docker.io
+2026-05-01T06:17:17.5704848Z #2 DONE 0.0s
+2026-05-01T06:17:17.5705015Z 
+2026-05-01T06:17:17.5705282Z #3 resolve image config for docker-image://docker.io/docker/dockerfile:1.7
+2026-05-01T06:17:17.9206487Z #3 DONE 0.6s
+2026-05-01T06:17:18.0794344Z 
+2026-05-01T06:17:18.0795201Z #4 docker-image://docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+2026-05-01T06:17:18.0796043Z #4 resolve docker.io/docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e done
+2026-05-01T06:17:18.0813019Z #4 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 1.05MB / 11.98MB 0.2s
+2026-05-01T06:17:18.1816805Z #4 sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 11.98MB / 11.98MB 0.2s done
+2026-05-01T06:17:18.1818474Z #4 extracting sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416
+2026-05-01T06:17:18.2849600Z #4 extracting sha256:96918c57e42509b97f10c074d80672ecdbd3bb7dcd38c1bd95960cf291207416 0.1s done
+2026-05-01T06:17:18.2850662Z #4 DONE 0.4s
+2026-05-01T06:17:18.4403883Z 
+2026-05-01T06:17:18.4404486Z #5 [internal] load metadata for mcr.microsoft.com/dotnet/aspnet:8.0
+2026-05-01T06:17:18.4404879Z #5 DONE 0.1s
+2026-05-01T06:17:18.4405088Z 
+2026-05-01T06:17:18.4405277Z #6 [internal] load metadata for mcr.microsoft.com/dotnet/sdk:8.0
+2026-05-01T06:17:18.6284570Z #6 DONE 0.1s
+2026-05-01T06:17:18.6284788Z 
+2026-05-01T06:17:18.6284946Z #7 [internal] load .dockerignore
+2026-05-01T06:17:18.6285327Z #7 transferring context: 249B done
+2026-05-01T06:17:18.6285595Z #7 DONE 0.0s
+2026-05-01T06:17:18.6285730Z 
+2026-05-01T06:17:18.6285813Z #8 [internal] load build context
+2026-05-01T06:17:18.6286033Z #8 DONE 0.0s
+2026-05-01T06:17:18.6286132Z 
+2026-05-01T06:17:18.6286527Z #9 [build 1/8] FROM mcr.microsoft.com/dotnet/sdk:8.0@sha256:4b1cdaa57eed2cecabcf29bdb9bce11e8ca1c287d39dfd2c8b534663ea94d493
+2026-05-01T06:17:18.6287315Z #9 resolve mcr.microsoft.com/dotnet/sdk:8.0@sha256:4b1cdaa57eed2cecabcf29bdb9bce11e8ca1c287d39dfd2c8b534663ea94d493 done
+2026-05-01T06:17:18.6287831Z #9 DONE 0.0s
+2026-05-01T06:17:18.6287931Z 
+2026-05-01T06:17:18.6288291Z #10 [runtime 1/3] FROM mcr.microsoft.com/dotnet/aspnet:8.0@sha256:f88c77644f4c480a62d3b46dc74db8d5472a24e282df8b1e56195c689d35a6db
+2026-05-01T06:17:18.6289072Z #10 resolve mcr.microsoft.com/dotnet/aspnet:8.0@sha256:f88c77644f4c480a62d3b46dc74db8d5472a24e282df8b1e56195c689d35a6db done
+2026-05-01T06:17:18.6289568Z #10 DONE 0.0s
+2026-05-01T06:17:18.6289678Z 
+2026-05-01T06:17:18.6289831Z #11 importing cache manifest from gha:14070488632920813083
+2026-05-01T06:17:18.8001731Z #11 DONE 0.3s
+2026-05-01T06:17:18.9303815Z 
+2026-05-01T06:17:18.9304476Z #8 [internal] load build context
+2026-05-01T06:17:18.9304965Z #8 transferring context: 649.02kB 0.0s done
+2026-05-01T06:17:18.9305378Z #8 DONE 0.0s
+2026-05-01T06:17:18.9305539Z 
+2026-05-01T06:17:18.9305823Z #12 [build 3/8] COPY src/Ednsv.Core/Ednsv.Core.csproj src/Ednsv.Core/
+2026-05-01T06:17:18.9306331Z #12 CACHED
+2026-05-01T06:17:18.9306486Z 
+2026-05-01T06:17:18.9306739Z #13 [build 4/8] COPY src/Ednsv.Web/Ednsv.Web.csproj src/Ednsv.Web/
+2026-05-01T06:17:18.9307210Z #13 CACHED
+2026-05-01T06:17:18.9307361Z 
+2026-05-01T06:17:18.9307457Z #14 [build 2/8] WORKDIR /src
+2026-05-01T06:17:18.9308150Z #14 CACHED
+2026-05-01T06:17:18.9308251Z 
+2026-05-01T06:17:18.9308410Z #15 [build 5/8] RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj
+2026-05-01T06:17:18.9308918Z #15 CACHED
+2026-05-01T06:17:19.0626843Z 
+2026-05-01T06:17:19.0628954Z #15 [build 5/8] RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj
+2026-05-01T06:17:19.0629817Z #15 sha256:1fcb1bfebbaebcbe84fe88dc468e746fd68f0f8ad32d7f6b15e3bc173c2ef13d 92B / 92B 0.1s done
+2026-05-01T06:17:19.2140575Z #15 sha256:885247ebc15dd8c9e1c5f855a57bb13cdcae49a472e868fac7118e22a40d2552 393B / 393B 0.1s done
+2026-05-01T06:17:19.2141547Z #15 sha256:494f09141680d49155cc94c0b4e9bf2fe932d5d9baccca98c3647b510a7196e7 411B / 411B 0.1s done
+2026-05-01T06:17:19.2142294Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 0B / 42.71MB 0.2s
+2026-05-01T06:17:19.2143045Z #15 sha256:b75ce7f87632dd82d3af9169d42f600747546b6c267aa3911d00d58db220474b 2.67kB / 2.67kB 0.1s done
+2026-05-01T06:17:19.2143732Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 0B / 177.94MB 0.2s
+2026-05-01T06:17:19.3632344Z #15 sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 0B / 16.99MB 0.2s
+2026-05-01T06:17:19.3633141Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 0B / 31.09MB 0.2s
+2026-05-01T06:17:19.6631322Z #15 sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 1.05MB / 16.99MB 0.5s
+2026-05-01T06:17:19.6632663Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 3.15MB / 31.09MB 0.5s
+2026-05-01T06:17:19.8175413Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 5.24MB / 42.71MB 0.8s
+2026-05-01T06:17:19.8176232Z #15 sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 3.15MB / 16.99MB 0.6s
+2026-05-01T06:17:19.8176964Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 8.39MB / 31.09MB 0.6s
+2026-05-01T06:17:19.9637992Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 10.49MB / 42.71MB 0.9s
+2026-05-01T06:17:19.9638851Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 12.58MB / 177.94MB 0.9s
+2026-05-01T06:17:19.9639485Z #15 sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 8.39MB / 16.99MB 0.8s
+2026-05-01T06:17:19.9640311Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 18.87MB / 31.09MB 0.8s
+2026-05-01T06:17:20.0900994Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 18.87MB / 42.71MB 1.1s
+2026-05-01T06:17:20.0902815Z #15 sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 16.99MB / 16.99MB 1.0s done
+2026-05-01T06:17:20.0904263Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 24.12MB / 31.09MB 0.9s
+2026-05-01T06:17:20.2375777Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 26.21MB / 42.71MB 1.2s
+2026-05-01T06:17:20.2377337Z #15 sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 31.09MB / 31.09MB 1.0s done
+2026-05-01T06:17:20.2378570Z #15 sha256:8c668c44afb8301295862903f1e659df2a04bab6dfc413b3f0be5507dc9217f5 164B / 164B 0.1s done
+2026-05-01T06:17:20.3612604Z #15 sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 42.71MB / 42.71MB 1.4s done
+2026-05-01T06:17:20.3613748Z #15 sha256:f47bbaebda2ea34e23368b75d69b4ddda2ae2351f5a38d878e9bf2dad847543d 3.15MB / 11.09MB 0.2s
+2026-05-01T06:17:20.5384547Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 25.17MB / 177.94MB 1.4s
+2026-05-01T06:17:20.5385458Z #15 sha256:f47bbaebda2ea34e23368b75d69b4ddda2ae2351f5a38d878e9bf2dad847543d 11.09MB / 11.09MB 0.3s done
+2026-05-01T06:17:20.5386205Z #15 sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 0B / 32.25MB 0.3s
+2026-05-01T06:17:20.5386829Z #15 sha256:99b64f250d3d876c7921412eeecefc1641821ce569927787df4e9e151fd0d250 3.33kB / 3.33kB 0.0s done
+2026-05-01T06:17:20.6893151Z #15 sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1 0B / 18.74MB 0.2s
+2026-05-01T06:17:20.6894306Z #15 sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 0B / 28.24MB 0.2s
+2026-05-01T06:17:20.8381252Z #15 sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 6.29MB / 32.25MB 0.6s
+2026-05-01T06:17:20.8382161Z #15 sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1 1.05MB / 18.74MB 0.3s
+2026-05-01T06:17:20.9885095Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 36.70MB / 177.94MB 1.8s
+2026-05-01T06:17:20.9886043Z #15 sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 13.63MB / 32.25MB 0.8s
+2026-05-01T06:17:20.9887124Z #15 sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1 5.24MB / 18.74MB 0.5s
+2026-05-01T06:17:21.1379425Z #15 sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 25.17MB / 32.25MB 0.9s
+2026-05-01T06:17:21.1380705Z #15 sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1 18.74MB / 18.74MB 0.7s done
+2026-05-01T06:17:21.1381785Z #15 sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 2.10MB / 28.24MB 0.6s
+2026-05-01T06:17:21.3136700Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 49.28MB / 177.94MB 2.3s
+2026-05-01T06:17:21.3137700Z #15 sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 32.25MB / 32.25MB 1.0s done
+2026-05-01T06:17:21.3138796Z #15 sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 6.29MB / 28.24MB 0.8s
+2026-05-01T06:17:21.4636326Z #15 sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 10.49MB / 28.24MB 0.9s
+2026-05-01T06:17:21.6013607Z #15 sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 28.24MB / 28.24MB 1.2s done
+2026-05-01T06:17:21.7629113Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 61.87MB / 177.94MB 2.7s
+2026-05-01T06:17:21.7631236Z #15 extracting sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4
+2026-05-01T06:17:22.2131655Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 74.45MB / 177.94MB 3.2s
+2026-05-01T06:17:22.3302930Z #15 extracting sha256:ff86ea2e5edce334d19a34fbc65d1a511aa1fc823dba1110422f991aa56b44d4 0.7s done
+2026-05-01T06:17:22.5130579Z #15 extracting sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1
+2026-05-01T06:17:22.6632054Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 87.03MB / 177.94MB 3.6s
+2026-05-01T06:17:22.6633217Z #15 extracting sha256:d120f0decd89c21324dae477e8fa876a9bdf9b1e181e8e81d34464e86c4049f1 0.3s done
+2026-05-01T06:17:22.6634243Z #15 extracting sha256:99b64f250d3d876c7921412eeecefc1641821ce569927787df4e9e151fd0d250 done
+2026-05-01T06:17:22.6635127Z #15 extracting sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e
+2026-05-01T06:17:23.1131867Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 100.66MB / 177.94MB 4.1s
+2026-05-01T06:17:23.1134523Z #15 extracting sha256:c7e185e5a17988647e52e5183d148a41e455c2bccc2607755bb768c2c784050e 0.4s done
+2026-05-01T06:17:23.1136467Z #15 extracting sha256:8c668c44afb8301295862903f1e659df2a04bab6dfc413b3f0be5507dc9217f5 done
+2026-05-01T06:17:23.1137407Z #15 extracting sha256:f47bbaebda2ea34e23368b75d69b4ddda2ae2351f5a38d878e9bf2dad847543d
+2026-05-01T06:17:23.2631406Z #15 extracting sha256:f47bbaebda2ea34e23368b75d69b4ddda2ae2351f5a38d878e9bf2dad847543d 0.1s done
+2026-05-01T06:17:23.2633312Z #15 extracting sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6
+2026-05-01T06:17:23.5632049Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 112.20MB / 177.94MB 4.5s
+2026-05-01T06:17:23.8631046Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 121.63MB / 177.94MB 4.8s
+2026-05-01T06:17:23.8631895Z #15 extracting sha256:306480c19048ac4ac5f99d0afddb7fd989c455a49abad33be76670dec7599eb6 0.7s done
+2026-05-01T06:17:24.3134646Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 133.17MB / 177.94MB 5.3s
+2026-05-01T06:17:24.7639355Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 146.80MB / 177.94MB 5.7s
+2026-05-01T06:17:25.2137629Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 157.29MB / 177.94MB 6.2s
+2026-05-01T06:17:25.5135157Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 166.72MB / 177.94MB 6.5s
+2026-05-01T06:17:25.8137433Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 176.16MB / 177.94MB 6.8s
+2026-05-01T06:17:26.1570393Z #15 sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 177.94MB / 177.94MB 6.9s done
+2026-05-01T06:17:26.1571484Z #15 extracting sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b
+2026-05-01T06:17:28.6291576Z #15 extracting sha256:40aba635198e120e41d5969de5e30259d9f076e59ea50d258337d4de3763e54b 2.6s done
+2026-05-01T06:17:28.6292560Z #15 DONE 9.8s
+2026-05-01T06:17:28.7864154Z 
+2026-05-01T06:17:28.7864685Z #15 [build 5/8] RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj
+2026-05-01T06:17:28.7865304Z #15 extracting sha256:b75ce7f87632dd82d3af9169d42f600747546b6c267aa3911d00d58db220474b done
+2026-05-01T06:17:28.7865883Z #15 extracting sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b
+2026-05-01T06:17:28.9069062Z #15 extracting sha256:8013f881b925af18d1418c59c4644ec1d6859d38a53048028efa5f196e2a816b 0.3s done
+2026-05-01T06:17:28.9069941Z #15 DONE 10.1s
+2026-05-01T06:17:29.0689756Z 
+2026-05-01T06:17:29.0692035Z #15 [build 5/8] RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj
+2026-05-01T06:17:29.0692824Z #15 extracting sha256:1fcb1bfebbaebcbe84fe88dc468e746fd68f0f8ad32d7f6b15e3bc173c2ef13d done
+2026-05-01T06:17:29.0693683Z #15 extracting sha256:494f09141680d49155cc94c0b4e9bf2fe932d5d9baccca98c3647b510a7196e7 done
+2026-05-01T06:17:29.0694400Z #15 extracting sha256:885247ebc15dd8c9e1c5f855a57bb13cdcae49a472e868fac7118e22a40d2552 done
+2026-05-01T06:17:29.0695202Z #15 extracting sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28
+2026-05-01T06:17:29.3129950Z #15 extracting sha256:df3de4fbd0c73d67fa2965c5e24f8883287c5c2add4d9b37433da7b2aeb7fc28 0.4s done
+2026-05-01T06:17:29.3132173Z #15 DONE 10.5s
+2026-05-01T06:17:29.4638962Z 
+2026-05-01T06:17:29.4639613Z #16 [build 6/8] COPY src/Ednsv.Core/ src/Ednsv.Core/
+2026-05-01T06:17:31.4046375Z #16 DONE 2.1s
+2026-05-01T06:17:31.5667732Z 
+2026-05-01T06:17:31.5668464Z #17 [build 7/8] COPY src/Ednsv.Web/ src/Ednsv.Web/
+2026-05-01T06:17:31.5668956Z #17 DONE 0.0s
+2026-05-01T06:17:31.5669087Z 
+2026-05-01T06:17:31.5669622Z #18 [build 8/8] RUN dotnet publish src/Ednsv.Web/Ednsv.Web.csproj         --configuration Release         --no-restore         --output /app/publish         /p:UseAppHost=false
+2026-05-01T06:17:35.6907171Z #18 4.275   Ednsv.Core -> /src/src/Ednsv.Core/bin/Release/net8.0/Ednsv.Core.dll
+2026-05-01T06:17:36.8644607Z #18 5.449   Ednsv.Web -> /src/src/Ednsv.Web/bin/Release/net8.0/Ednsv.Web.dll
+2026-05-01T06:17:36.9943058Z #18 5.496   Ednsv.Web -> /app/publish/
+2026-05-01T06:17:36.9950649Z #18 DONE 5.6s
+2026-05-01T06:17:37.1177826Z 
+2026-05-01T06:17:37.1178264Z #19 [runtime 2/3] WORKDIR /app
+2026-05-01T06:17:37.1179056Z #19 sha256:9cb315798b719b66cb638a37cbc002d206ae5a0ee53ca940ab5beb8051eb3ade 93B / 93B 0.1s done
+2026-05-01T06:17:37.1180413Z #19 DONE 0.1s
+2026-05-01T06:17:37.2860279Z 
+2026-05-01T06:17:37.2860784Z #19 [runtime 2/3] WORKDIR /app
+2026-05-01T06:17:37.2861564Z #19 extracting sha256:9cb315798b719b66cb638a37cbc002d206ae5a0ee53ca940ab5beb8051eb3ade done
+2026-05-01T06:17:37.2862240Z #19 DONE 0.1s
+2026-05-01T06:17:37.2862400Z 
+2026-05-01T06:17:37.2862605Z #20 [runtime 3/3] COPY --from=build /app/publish ./
+2026-05-01T06:17:37.2863019Z #20 DONE 0.0s
+2026-05-01T06:17:37.2863175Z 
+2026-05-01T06:17:37.2863287Z #21 exporting to image
+2026-05-01T06:17:37.2863581Z #21 exporting layers
+2026-05-01T06:17:37.3103973Z #21 exporting layers 0.2s done
+2026-05-01T06:17:37.4168161Z #21 exporting manifest sha256:74015acd9399b4f17066bf0e3b77ff8a53b88414f839ceb6803a3e3d2073e8ed done
+2026-05-01T06:17:37.4169346Z #21 exporting config sha256:409ab164b4bba684719a83bbd1a6a43aab8b9a683b65e45ad8ec23ed3a9fa33e done
+2026-05-01T06:17:37.4170836Z #21 exporting attestation manifest sha256:2a992c1d2658e8f36d966fdd39941ed80c22dbe0b159846d9d9eef663358f7f2 done
+2026-05-01T06:17:37.4172067Z #21 exporting manifest list sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0 done
+2026-05-01T06:17:37.4172847Z #21 pushing layers
+2026-05-01T06:17:37.5666806Z #21 ...
+2026-05-01T06:17:37.5666979Z 
+2026-05-01T06:17:37.5667151Z #22 [auth] pkinerd/ednsv:pull,push token for ghcr.io
+2026-05-01T06:17:37.5667456Z #22 DONE 0.0s
+2026-05-01T06:17:37.7165601Z 
+2026-05-01T06:17:37.7166156Z #23 exporting to GitHub Actions Cache
+2026-05-01T06:17:37.7941633Z #23 preparing build cache for export
+2026-05-01T06:17:37.7942165Z #23 preparing build cache for export 0.5s done
+2026-05-01T06:17:37.7942611Z #23 sending cache export
+2026-05-01T06:17:37.9838520Z #23 writing layer sha256:047a6d779f81a7f2596914dd4facb67736e391389532512fd4981dfe1d0cd15e
+2026-05-01T06:17:38.5094819Z #23 writing layer sha256:047a6d779f81a7f2596914dd4facb67736e391389532512fd4981dfe1d0cd15e 0.7s done
+2026-05-01T06:17:38.6939410Z #23 writing layer sha256:059db2b02307754edc5d99294700bdf5662f42f58a16c9b117090208d32fb413
+2026-05-01T06:17:38.9172518Z #23 writing layer sha256:059db2b02307754edc5d99294700bdf5662f42f58a16c9b117090208d32fb413 0.2s done
+2026-05-01T06:17:39.1507193Z #23 writing layer sha256:9cd547bb63992df1cce286c140a38a7e9814e9abc7d48325d512182eac94634a
+2026-05-01T06:17:39.9164427Z #23 writing layer sha256:9cd547bb63992df1cce286c140a38a7e9814e9abc7d48325d512182eac94634a 0.6s done
+2026-05-01T06:17:39.9193362Z #23 writing layer sha256:dd643b573b446245a9eb122090be388d670b2126559c26e6c5e918386ce7103b
+2026-05-01T06:17:40.6522178Z #23 writing layer sha256:dd643b573b446245a9eb122090be388d670b2126559c26e6c5e918386ce7103b 0.7s done
+2026-05-01T06:17:40.7671050Z #23 ...
+2026-05-01T06:17:40.7671271Z 
+2026-05-01T06:17:40.7671409Z #21 exporting to image
+2026-05-01T06:17:40.7671749Z #21 pushing layers 0.1s done
+2026-05-01T06:17:40.7672630Z #21 pushing manifest for ghcr.io/pkinerd/ednsv:pr-16@sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0 0.9s done
+2026-05-01T06:17:40.7674082Z #21 pushing manifest for ghcr.io/pkinerd/ednsv:latest-any@sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0 0.5s done
+2026-05-01T06:17:40.7675215Z #21 pushing manifest for ghcr.io/pkinerd/ednsv:sha-9c0c205@sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0 0.4s done
+2026-05-01T06:17:40.7675754Z #21 DONE 3.6s
+2026-05-01T06:17:40.9178356Z 
+2026-05-01T06:17:40.9178852Z #23 exporting to GitHub Actions Cache
+2026-05-01T06:17:42.0976811Z #23 sending cache export 4.3s done
+2026-05-01T06:17:42.0977670Z #23 DONE 4.8s
+2026-05-01T06:17:42.1204670Z 
+2026-05-01T06:17:42.1205261Z #24 resolving provenance for metadata file
+2026-05-01T06:17:42.1205745Z #24 DONE 0.0s
+2026-05-01T06:17:42.1287350Z ##[group]ImageID
+2026-05-01T06:17:42.1287785Z sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0
+2026-05-01T06:17:42.1288913Z ##[endgroup]
+2026-05-01T06:17:42.1289359Z ##[group]Digest
+2026-05-01T06:17:42.1289807Z sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0
+2026-05-01T06:17:42.1291174Z ##[endgroup]
+2026-05-01T06:17:42.1291551Z ##[group]Metadata
+2026-05-01T06:17:42.1294321Z {
+2026-05-01T06:17:42.1294570Z   "buildx.build.provenance": {
+2026-05-01T06:17:42.1294821Z     "builder": {
+2026-05-01T06:17:42.1295149Z       "id": "https://github.com/pkinerd/ednsv/actions/runs/25204476527/attempts/1"
+2026-05-01T06:17:42.1295532Z     },
+2026-05-01T06:17:42.1295783Z     "buildType": "https://mobyproject.org/buildkit@v1",
+2026-05-01T06:17:42.1296072Z     "materials": [
+2026-05-01T06:17:42.1296244Z       {
+2026-05-01T06:17:42.1296441Z         "uri": "pkg:docker/docker/dockerfile@1.7",
+2026-05-01T06:17:42.1296695Z         "digest": {
+2026-05-01T06:17:42.1297007Z           "sha256": "a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+2026-05-01T06:17:42.1297370Z         }
+2026-05-01T06:17:42.1297529Z       },
+2026-05-01T06:17:42.1297685Z       {
+2026-05-01T06:17:42.1297971Z         "uri": "pkg:docker/mcr.microsoft.com/dotnet/aspnet@8.0?platform=linux%2Famd64",
+2026-05-01T06:17:42.1298337Z         "digest": {
+2026-05-01T06:17:42.1298629Z           "sha256": "f88c77644f4c480a62d3b46dc74db8d5472a24e282df8b1e56195c689d35a6db"
+2026-05-01T06:17:42.1298978Z         }
+2026-05-01T06:17:42.1299121Z       },
+2026-05-01T06:17:42.1299441Z       {
+2026-05-01T06:17:42.1299888Z         "uri": "pkg:docker/mcr.microsoft.com/dotnet/sdk@8.0?platform=linux%2Famd64",
+2026-05-01T06:17:42.1300713Z         "digest": {
+2026-05-01T06:17:42.1301313Z           "sha256": "4b1cdaa57eed2cecabcf29bdb9bce11e8ca1c287d39dfd2c8b534663ea94d493"
+2026-05-01T06:17:42.1301786Z         }
+2026-05-01T06:17:42.1302026Z       }
+2026-05-01T06:17:42.1302340Z     ],
+2026-05-01T06:17:42.1302568Z     "invocation": {
+2026-05-01T06:17:42.1302934Z       "configSource": {
+2026-05-01T06:17:42.1303326Z         "entryPoint": "Dockerfile"
+2026-05-01T06:17:42.1303737Z       },
+2026-05-01T06:17:42.1303982Z       "parameters": {
+2026-05-01T06:17:42.1304370Z         "frontend": "gateway.v0",
+2026-05-01T06:17:42.1304785Z         "args": {
+2026-05-01T06:17:42.1305134Z           "cmdline": "docker/dockerfile:1.7",
+2026-05-01T06:17:42.1305975Z           "label:org.opencontainers.image.created": "2026-05-01T06:17:16.470Z",
+2026-05-01T06:17:42.1306537Z           "label:org.opencontainers.image.description": "",
+2026-05-01T06:17:42.1307084Z           "label:org.opencontainers.image.licenses": "",
+2026-05-01T06:17:42.1307799Z           "label:org.opencontainers.image.revision": "9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:42.1308537Z           "label:org.opencontainers.image.source": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1309115Z           "label:org.opencontainers.image.title": "ednsv",
+2026-05-01T06:17:42.1309791Z           "label:org.opencontainers.image.url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1310813Z           "label:org.opencontainers.image.version": "pr-16",
+2026-05-01T06:17:42.1311181Z           "source": "docker/dockerfile:1.7"
+2026-05-01T06:17:42.1311503Z         },
+2026-05-01T06:17:42.1311741Z         "locals": [
+2026-05-01T06:17:42.1311990Z           {
+2026-05-01T06:17:42.1312232Z             "name": "context"
+2026-05-01T06:17:42.1312527Z           },
+2026-05-01T06:17:42.1312729Z           {
+2026-05-01T06:17:42.1312909Z             "name": "dockerfile"
+2026-05-01T06:17:42.1313170Z           }
+2026-05-01T06:17:42.1313435Z         ]
+2026-05-01T06:17:42.1313702Z       },
+2026-05-01T06:17:42.1313933Z       "environment": {
+2026-05-01T06:17:42.1314269Z         "github_actor": "pkinerd",
+2026-05-01T06:17:42.1314643Z         "github_actor_id": "169779439",
+2026-05-01T06:17:42.1315057Z         "github_event_name": "pull_request",
+2026-05-01T06:17:42.1315464Z         "github_event_payload": {
+2026-05-01T06:17:42.1315881Z           "action": "synchronize",
+2026-05-01T06:17:42.1316339Z           "after": "beae99682f2ec5c7613d87a397bd49cdd0705b8e",
+2026-05-01T06:17:42.1316900Z           "before": "2d446475df03bf7bc79fbf69c95bfbdcab643fa7",
+2026-05-01T06:17:42.1317629Z           "number": 16,
+2026-05-01T06:17:42.1318114Z           "pull_request": {
+2026-05-01T06:17:42.1318380Z             "_links": {
+2026-05-01T06:17:42.1318687Z               "comments": {
+2026-05-01T06:17:42.1319215Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/issues/16/comments"
+2026-05-01T06:17:42.1319759Z               },
+2026-05-01T06:17:42.1319952Z               "commits": {
+2026-05-01T06:17:42.1320710Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/pulls/16/commits"
+2026-05-01T06:17:42.1321300Z               },
+2026-05-01T06:17:42.1321559Z               "html": {
+2026-05-01T06:17:42.1321816Z                 "href": "https://github.com/pkinerd/ednsv/pull/16"
+2026-05-01T06:17:42.1322128Z               },
+2026-05-01T06:17:42.1322303Z               "issue": {
+2026-05-01T06:17:42.1322604Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/issues/16"
+2026-05-01T06:17:42.1322942Z               },
+2026-05-01T06:17:42.1323138Z               "review_comment": {
+2026-05-01T06:17:42.1323537Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/pulls/comments{/number}"
+2026-05-01T06:17:42.1323911Z               },
+2026-05-01T06:17:42.1324089Z               "review_comments": {
+2026-05-01T06:17:42.1324455Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/pulls/16/comments"
+2026-05-01T06:17:42.1324803Z               },
+2026-05-01T06:17:42.1324978Z               "self": {
+2026-05-01T06:17:42.1325274Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/pulls/16"
+2026-05-01T06:17:42.1325608Z               },
+2026-05-01T06:17:42.1325798Z               "statuses": {
+2026-05-01T06:17:42.1326260Z                 "href": "https://api.github.com/repos/pkinerd/ednsv/statuses/beae99682f2ec5c7613d87a397bd49cdd0705b8e"
+2026-05-01T06:17:42.1326727Z               }
+2026-05-01T06:17:42.1326907Z             },
+2026-05-01T06:17:42.1327097Z             "active_lock_reason": null,
+2026-05-01T06:17:42.1327357Z             "additions": 625,
+2026-05-01T06:17:42.1327602Z             "assignee": null,
+2026-05-01T06:17:42.1327826Z             "assignees": [],
+2026-05-01T06:17:42.1328070Z             "author_association": "OWNER",
+2026-05-01T06:17:42.1328491Z             "auto_merge": null,
+2026-05-01T06:17:42.1328731Z             "base": {
+2026-05-01T06:17:42.1328944Z               "label": "pkinerd:main",
+2026-05-01T06:17:42.1329184Z               "ref": "main",
+2026-05-01T06:17:42.1329417Z               "repo": {
+2026-05-01T06:17:42.1329642Z                 "allow_auto_merge": false,
+2026-05-01T06:17:42.1329916Z                 "allow_forking": true,
+2026-05-01T06:17:42.1330345Z                 "allow_merge_commit": true,
+2026-05-01T06:17:42.1330699Z                 "allow_rebase_merge": true,
+2026-05-01T06:17:42.1330931Z                 "allow_squash_merge": true,
+2026-05-01T06:17:42.1331276Z                 "allow_update_branch": false,
+2026-05-01T06:17:42.1331949Z                 "archive_url": "https://api.github.com/repos/pkinerd/ednsv/{archive_format}{/ref}",
+2026-05-01T06:17:42.1332660Z                 "archived": false,
+2026-05-01T06:17:42.1333267Z                 "assignees_url": "https://api.github.com/repos/pkinerd/ednsv/assignees{/user}",
+2026-05-01T06:17:42.1334132Z                 "blobs_url": "https://api.github.com/repos/pkinerd/ednsv/git/blobs{/sha}",
+2026-05-01T06:17:42.1334990Z                 "branches_url": "https://api.github.com/repos/pkinerd/ednsv/branches{/branch}",
+2026-05-01T06:17:42.1335759Z                 "clone_url": "https://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1336683Z                 "collaborators_url": "https://api.github.com/repos/pkinerd/ednsv/collaborators{/collaborator}",
+2026-05-01T06:17:42.1337524Z                 "comments_url": "https://api.github.com/repos/pkinerd/ednsv/comments{/number}",
+2026-05-01T06:17:42.1338116Z                 "commits_url": "https://api.github.com/repos/pkinerd/ednsv/commits{/sha}",
+2026-05-01T06:17:42.1338704Z                 "compare_url": "https://api.github.com/repos/pkinerd/ednsv/compare/{base}...{head}",
+2026-05-01T06:17:42.1339466Z                 "contents_url": "https://api.github.com/repos/pkinerd/ednsv/contents/{+path}",
+2026-05-01T06:17:42.1339978Z                 "contributors_url": "https://api.github.com/repos/pkinerd/ednsv/contributors",
+2026-05-01T06:17:42.1340772Z                 "created_at": "2026-03-30T21:24:40Z",
+2026-05-01T06:17:42.1341092Z                 "default_branch": "main",
+2026-05-01T06:17:42.1341410Z                 "delete_branch_on_merge": false,
+2026-05-01T06:17:42.1341787Z                 "deployments_url": "https://api.github.com/repos/pkinerd/ednsv/deployments",
+2026-05-01T06:17:42.1342188Z                 "description": null,
+2026-05-01T06:17:42.1342441Z                 "disabled": false,
+2026-05-01T06:17:42.1342797Z                 "downloads_url": "https://api.github.com/repos/pkinerd/ednsv/downloads",
+2026-05-01T06:17:42.1343330Z                 "events_url": "https://api.github.com/repos/pkinerd/ednsv/events",
+2026-05-01T06:17:42.1343809Z                 "fork": false,
+2026-05-01T06:17:42.1344203Z                 "forks": 0,
+2026-05-01T06:17:42.1344513Z                 "forks_count": 0,
+2026-05-01T06:17:42.1344829Z                 "forks_url": "https://api.github.com/repos/pkinerd/ednsv/forks",
+2026-05-01T06:17:42.1345166Z                 "full_name": "pkinerd/ednsv",
+2026-05-01T06:17:42.1345599Z                 "git_commits_url": "https://api.github.com/repos/pkinerd/ednsv/git/commits{/sha}",
+2026-05-01T06:17:42.1346117Z                 "git_refs_url": "https://api.github.com/repos/pkinerd/ednsv/git/refs{/sha}",
+2026-05-01T06:17:42.1346581Z                 "git_tags_url": "https://api.github.com/repos/pkinerd/ednsv/git/tags{/sha}",
+2026-05-01T06:17:42.1346979Z                 "git_url": "git://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1347266Z                 "has_discussions": false,
+2026-05-01T06:17:42.1347511Z                 "has_downloads": true,
+2026-05-01T06:17:42.1347740Z                 "has_issues": true,
+2026-05-01T06:17:42.1347976Z                 "has_pages": false,
+2026-05-01T06:17:42.1348192Z                 "has_projects": true,
+2026-05-01T06:17:42.1348436Z                 "has_pull_requests": true,
+2026-05-01T06:17:42.1348836Z                 "has_wiki": true,
+2026-05-01T06:17:42.1349060Z                 "homepage": null,
+2026-05-01T06:17:42.1349359Z                 "hooks_url": "https://api.github.com/repos/pkinerd/ednsv/hooks",
+2026-05-01T06:17:42.1349725Z                 "html_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1350006Z                 "id": 1196602452,
+2026-05-01T06:17:42.1350481Z                 "is_template": false,
+2026-05-01T06:17:42.1350893Z                 "issue_comment_url": "https://api.github.com/repos/pkinerd/ednsv/issues/comments{/number}",
+2026-05-01T06:17:42.1351464Z                 "issue_events_url": "https://api.github.com/repos/pkinerd/ednsv/issues/events{/number}",
+2026-05-01T06:17:42.1351980Z                 "issues_url": "https://api.github.com/repos/pkinerd/ednsv/issues{/number}",
+2026-05-01T06:17:42.1352451Z                 "keys_url": "https://api.github.com/repos/pkinerd/ednsv/keys{/key_id}",
+2026-05-01T06:17:42.1353083Z                 "labels_url": "https://api.github.com/repos/pkinerd/ednsv/labels{/name}",
+2026-05-01T06:17:42.1353744Z                 "language": "C#",
+2026-05-01T06:17:42.1354102Z                 "languages_url": "https://api.github.com/repos/pkinerd/ednsv/languages",
+2026-05-01T06:17:42.1354463Z                 "license": null,
+2026-05-01T06:17:42.1354701Z                 "merge_commit_message": "PR_TITLE",
+2026-05-01T06:17:42.1354991Z                 "merge_commit_title": "MERGE_MESSAGE",
+2026-05-01T06:17:42.1355342Z                 "merges_url": "https://api.github.com/repos/pkinerd/ednsv/merges",
+2026-05-01T06:17:42.1355821Z                 "milestones_url": "https://api.github.com/repos/pkinerd/ednsv/milestones{/number}",
+2026-05-01T06:17:42.1356221Z                 "mirror_url": null,
+2026-05-01T06:17:42.1356443Z                 "name": "ednsv",
+2026-05-01T06:17:42.1356838Z                 "node_id": "R_kgDOR1K0VA",
+2026-05-01T06:17:42.1357323Z                 "notifications_url": "https://api.github.com/repos/pkinerd/ednsv/notifications{?since,all,participating}",
+2026-05-01T06:17:42.1357802Z                 "open_issues": 1,
+2026-05-01T06:17:42.1358023Z                 "open_issues_count": 1,
+2026-05-01T06:17:42.1358252Z                 "owner": {
+2026-05-01T06:17:42.1358577Z                   "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1359019Z                   "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1359456Z                   "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1359928Z                   "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1360618Z                   "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1360965Z                   "gravatar_id": "",
+2026-05-01T06:17:42.1361230Z                   "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1361510Z                   "id": 169779439,
+2026-05-01T06:17:42.1361728Z                   "login": "pkinerd",
+2026-05-01T06:17:42.1361967Z                   "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1362300Z                   "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1362775Z                   "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1363218Z                   "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1363530Z                   "site_admin": false,
+2026-05-01T06:17:42.1363890Z                   "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1364377Z                   "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1364763Z                   "type": "User",
+2026-05-01T06:17:42.1365035Z                   "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1365468Z                   "user_view_type": "public"
+2026-05-01T06:17:42.1365696Z                 },
+2026-05-01T06:17:42.1365910Z                 "private": false,
+2026-05-01T06:17:42.1366159Z                 "pull_request_creation_policy": "all",
+2026-05-01T06:17:42.1366534Z                 "pulls_url": "https://api.github.com/repos/pkinerd/ednsv/pulls{/number}",
+2026-05-01T06:17:42.1366915Z                 "pushed_at": "2026-05-01T06:03:21Z",
+2026-05-01T06:17:42.1367282Z                 "releases_url": "https://api.github.com/repos/pkinerd/ednsv/releases{/id}",
+2026-05-01T06:17:42.1367652Z                 "size": 23547,
+2026-05-01T06:17:42.1367903Z                 "squash_merge_commit_message": "COMMIT_MESSAGES",
+2026-05-01T06:17:42.1368234Z                 "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
+2026-05-01T06:17:42.1368660Z                 "ssh_url": "git@github.com:pkinerd/ednsv.git",
+2026-05-01T06:17:42.1369129Z                 "stargazers_count": 0,
+2026-05-01T06:17:42.1369712Z                 "stargazers_url": "https://api.github.com/repos/pkinerd/ednsv/stargazers",
+2026-05-01T06:17:42.1370512Z                 "statuses_url": "https://api.github.com/repos/pkinerd/ednsv/statuses/{sha}",
+2026-05-01T06:17:42.1371223Z                 "subscribers_url": "https://api.github.com/repos/pkinerd/ednsv/subscribers",
+2026-05-01T06:17:42.1371954Z                 "subscription_url": "https://api.github.com/repos/pkinerd/ednsv/subscription",
+2026-05-01T06:17:42.1372376Z                 "svn_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1372733Z                 "tags_url": "https://api.github.com/repos/pkinerd/ednsv/tags",
+2026-05-01T06:17:42.1373138Z                 "teams_url": "https://api.github.com/repos/pkinerd/ednsv/teams",
+2026-05-01T06:17:42.1373468Z                 "topics": [],
+2026-05-01T06:17:42.1373938Z                 "trees_url": "https://api.github.com/repos/pkinerd/ednsv/git/trees{/sha}",
+2026-05-01T06:17:42.1374317Z                 "updated_at": "2026-04-30T13:47:52Z",
+2026-05-01T06:17:42.1374636Z                 "url": "https://api.github.com/repos/pkinerd/ednsv",
+2026-05-01T06:17:42.1374955Z                 "use_squash_pr_title_as_default": false,
+2026-05-01T06:17:42.1375233Z                 "visibility": "public",
+2026-05-01T06:17:42.1375465Z                 "watchers": 0,
+2026-05-01T06:17:42.1375681Z                 "watchers_count": 0,
+2026-05-01T06:17:42.1375929Z                 "web_commit_signoff_required": false
+2026-05-01T06:17:42.1376178Z               },
+2026-05-01T06:17:42.1376410Z               "sha": "c3b8810b0a631149fccfb03993b64a8b9ea36d8a",
+2026-05-01T06:17:42.1376678Z               "user": {
+2026-05-01T06:17:42.1376986Z                 "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1377426Z                 "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1377866Z                 "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1378332Z                 "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1378822Z                 "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1379158Z                 "gravatar_id": "",
+2026-05-01T06:17:42.1379416Z                 "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1379682Z                 "id": 169779439,
+2026-05-01T06:17:42.1379937Z                 "login": "pkinerd",
+2026-05-01T06:17:42.1380404Z                 "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1380769Z                 "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1381253Z                 "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1381687Z                 "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1382013Z                 "site_admin": false,
+2026-05-01T06:17:42.1382510Z                 "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1383000Z                 "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1383364Z                 "type": "User",
+2026-05-01T06:17:42.1383616Z                 "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1383903Z                 "user_view_type": "public"
+2026-05-01T06:17:42.1384125Z               }
+2026-05-01T06:17:42.1384295Z             },
+2026-05-01T06:17:42.1395693Z             "body": "## Summary\nAdds a new `EnableDirectDns` configuration option that allows administrators to disable direct UDP/TCP DNS queries to authoritative nameservers and public resolvers (8.8.8.8, 1.1.1.1, 9.9.9.9). When disabled, checks that depend on direct DNS access are skipped instead of timing out, making the validator suitable for restricted network environments where only a configured recursive resolver is available.\n\n## Key Changes\n\n- **Configuration & Documentation**\n  - Added `EnableDirectDns` boolean setting (default: `true`) to `AppConfig` with comprehensive documentation in new `docs/configuration.md`\n  - Updated `README.md` to reference configuration documentation\n  - Added environment variable support via standard ASP.NET Core configuration pipeline\n\n- **Core Validation Logic**\n  - Added `EnableDirectDns` property to `ValidationOptions` class\n  - Updated checks that require direct DNS to skip gracefully when disabled:\n    - `NsLameDelegationCheck` — direct queries to authoritative nameservers\n    - `SoaSerialConsistencyCheck` — direct SOA queries\n    - `OpenResolverCheck` — direct queries to public resolvers\n    - `NsGlueRecordCheck` — direct queries to parent nameservers\n    - `DelegationConsistencyCheck` — direct queries to parent nameservers\n  - Each check returns a \"Skipped\" result with explanatory message when the feature is disabled\n\n- **Web UI & API**\n  - Added checkbox in main validation form (`index.html`) to allow per-request control\n  - Added checkbox in admin config panel (`config.html`) for server-wide defaults\n  - Updated JavaScript to track user overrides and respect server configuration\n  - Updated `/api/defaults` endpoint to expose the setting\n  - Updated `/api/validate` endpoints to accept and apply the option\n\n- **Application Startup**\n  - Updated `Program.cs` to read `EnableDirectDns` from configuration and propagate through default options\n\n- **CI/CD**\n  - Updated GitHub Actions workflow to skip CI on documentation-only changes\n  - Enhanced Docker image tagging strategy with clearer tag prefixes (`branch-`, `pr-`, `sha-`)\n  - Improved push eligibility logic to support same-repo PRs while preventing fork PR pushes\n\n- **Docker**\n  - Updated `.dockerignore` to exclude documentation files\n\n## Implementation Details\n\nThe feature follows the existing AND-logic pattern for server-wide kill-switches: when disabled in configuration, clients cannot re-enable it. User-level preferences are only applied if not overridden by server configuration, ensuring administrators can enforce network policies.\n\nChecks that depend on direct DNS access include propagation verification, lame delegation detection, SOA serial consistency, glue record validation, parent-side delegation checks, open-recursive-resolver detection, and AXFR zone transfers.\n\nhttps://claude.ai/code/session_017ZcBW2eo4UWGs8ST9XYgwc",
+2026-05-01T06:17:42.1405484Z             "changed_files": 19,
+2026-05-01T06:17:42.1405713Z             "closed_at": null,
+2026-05-01T06:17:42.1405926Z             "comments": 0,
+2026-05-01T06:17:42.1406284Z             "comments_url": "https://api.github.com/repos/pkinerd/ednsv/issues/16/comments",
+2026-05-01T06:17:42.1406660Z             "commits": 5,
+2026-05-01T06:17:42.1406993Z             "commits_url": "https://api.github.com/repos/pkinerd/ednsv/pulls/16/commits",
+2026-05-01T06:17:42.1407382Z             "created_at": "2026-05-01T03:53:01Z",
+2026-05-01T06:17:42.1407634Z             "deletions": 77,
+2026-05-01T06:17:42.1408069Z             "diff_url": "https://github.com/pkinerd/ednsv/pull/16.diff",
+2026-05-01T06:17:42.1408405Z             "draft": false,
+2026-05-01T06:17:42.1408655Z             "head": {
+2026-05-01T06:17:42.1408913Z               "label": "pkinerd:claude/document-env-config-iJwE4",
+2026-05-01T06:17:42.1409251Z               "ref": "claude/document-env-config-iJwE4",
+2026-05-01T06:17:42.1409509Z               "repo": {
+2026-05-01T06:17:42.1409716Z                 "allow_auto_merge": false,
+2026-05-01T06:17:42.1409957Z                 "allow_forking": true,
+2026-05-01T06:17:42.1410409Z                 "allow_merge_commit": true,
+2026-05-01T06:17:42.1410651Z                 "allow_rebase_merge": true,
+2026-05-01T06:17:42.1410895Z                 "allow_squash_merge": true,
+2026-05-01T06:17:42.1411136Z                 "allow_update_branch": false,
+2026-05-01T06:17:42.1411553Z                 "archive_url": "https://api.github.com/repos/pkinerd/ednsv/{archive_format}{/ref}",
+2026-05-01T06:17:42.1411953Z                 "archived": false,
+2026-05-01T06:17:42.1412317Z                 "assignees_url": "https://api.github.com/repos/pkinerd/ednsv/assignees{/user}",
+2026-05-01T06:17:42.1412812Z                 "blobs_url": "https://api.github.com/repos/pkinerd/ednsv/git/blobs{/sha}",
+2026-05-01T06:17:42.1413289Z                 "branches_url": "https://api.github.com/repos/pkinerd/ednsv/branches{/branch}",
+2026-05-01T06:17:42.1413714Z                 "clone_url": "https://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1414205Z                 "collaborators_url": "https://api.github.com/repos/pkinerd/ednsv/collaborators{/collaborator}",
+2026-05-01T06:17:42.1414751Z                 "comments_url": "https://api.github.com/repos/pkinerd/ednsv/comments{/number}",
+2026-05-01T06:17:42.1415222Z                 "commits_url": "https://api.github.com/repos/pkinerd/ednsv/commits{/sha}",
+2026-05-01T06:17:42.1415851Z                 "compare_url": "https://api.github.com/repos/pkinerd/ednsv/compare/{base}...{head}",
+2026-05-01T06:17:42.1416372Z                 "contents_url": "https://api.github.com/repos/pkinerd/ednsv/contents/{+path}",
+2026-05-01T06:17:42.1416861Z                 "contributors_url": "https://api.github.com/repos/pkinerd/ednsv/contributors",
+2026-05-01T06:17:42.1417243Z                 "created_at": "2026-03-30T21:24:40Z",
+2026-05-01T06:17:42.1417508Z                 "default_branch": "main",
+2026-05-01T06:17:42.1417758Z                 "delete_branch_on_merge": false,
+2026-05-01T06:17:42.1418134Z                 "deployments_url": "https://api.github.com/repos/pkinerd/ednsv/deployments",
+2026-05-01T06:17:42.1418501Z                 "description": null,
+2026-05-01T06:17:42.1418731Z                 "disabled": false,
+2026-05-01T06:17:42.1419055Z                 "downloads_url": "https://api.github.com/repos/pkinerd/ednsv/downloads",
+2026-05-01T06:17:42.1419503Z                 "events_url": "https://api.github.com/repos/pkinerd/ednsv/events",
+2026-05-01T06:17:42.1419837Z                 "fork": false,
+2026-05-01T06:17:42.1420043Z                 "forks": 0,
+2026-05-01T06:17:42.1420478Z                 "forks_count": 0,
+2026-05-01T06:17:42.1420783Z                 "forks_url": "https://api.github.com/repos/pkinerd/ednsv/forks",
+2026-05-01T06:17:42.1421130Z                 "full_name": "pkinerd/ednsv",
+2026-05-01T06:17:42.1421514Z                 "git_commits_url": "https://api.github.com/repos/pkinerd/ednsv/git/commits{/sha}",
+2026-05-01T06:17:42.1422011Z                 "git_refs_url": "https://api.github.com/repos/pkinerd/ednsv/git/refs{/sha}",
+2026-05-01T06:17:42.1422476Z                 "git_tags_url": "https://api.github.com/repos/pkinerd/ednsv/git/tags{/sha}",
+2026-05-01T06:17:42.1422865Z                 "git_url": "git://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1423160Z                 "has_discussions": false,
+2026-05-01T06:17:42.1423431Z                 "has_downloads": true,
+2026-05-01T06:17:42.1423670Z                 "has_issues": true,
+2026-05-01T06:17:42.1423893Z                 "has_pages": false,
+2026-05-01T06:17:42.1424250Z                 "has_projects": true,
+2026-05-01T06:17:42.1424488Z                 "has_pull_requests": true,
+2026-05-01T06:17:42.1424732Z                 "has_wiki": true,
+2026-05-01T06:17:42.1424944Z                 "homepage": null,
+2026-05-01T06:17:42.1425247Z                 "hooks_url": "https://api.github.com/repos/pkinerd/ednsv/hooks",
+2026-05-01T06:17:42.1425628Z                 "html_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1425903Z                 "id": 1196602452,
+2026-05-01T06:17:42.1426118Z                 "is_template": false,
+2026-05-01T06:17:42.1426514Z                 "issue_comment_url": "https://api.github.com/repos/pkinerd/ednsv/issues/comments{/number}",
+2026-05-01T06:17:42.1427086Z                 "issue_events_url": "https://api.github.com/repos/pkinerd/ednsv/issues/events{/number}",
+2026-05-01T06:17:42.1427597Z                 "issues_url": "https://api.github.com/repos/pkinerd/ednsv/issues{/number}",
+2026-05-01T06:17:42.1428067Z                 "keys_url": "https://api.github.com/repos/pkinerd/ednsv/keys{/key_id}",
+2026-05-01T06:17:42.1428519Z                 "labels_url": "https://api.github.com/repos/pkinerd/ednsv/labels{/name}",
+2026-05-01T06:17:42.1428863Z                 "language": "C#",
+2026-05-01T06:17:42.1429187Z                 "languages_url": "https://api.github.com/repos/pkinerd/ednsv/languages",
+2026-05-01T06:17:42.1429533Z                 "license": null,
+2026-05-01T06:17:42.1429776Z                 "merge_commit_message": "PR_TITLE",
+2026-05-01T06:17:42.1430245Z                 "merge_commit_title": "MERGE_MESSAGE",
+2026-05-01T06:17:42.1430618Z                 "merges_url": "https://api.github.com/repos/pkinerd/ednsv/merges",
+2026-05-01T06:17:42.1431100Z                 "milestones_url": "https://api.github.com/repos/pkinerd/ednsv/milestones{/number}",
+2026-05-01T06:17:42.1431639Z                 "mirror_url": null,
+2026-05-01T06:17:42.1431866Z                 "name": "ednsv",
+2026-05-01T06:17:42.1432083Z                 "node_id": "R_kgDOR1K0VA",
+2026-05-01T06:17:42.1432567Z                 "notifications_url": "https://api.github.com/repos/pkinerd/ednsv/notifications{?since,all,participating}",
+2026-05-01T06:17:42.1433032Z                 "open_issues": 1,
+2026-05-01T06:17:42.1433258Z                 "open_issues_count": 1,
+2026-05-01T06:17:42.1433494Z                 "owner": {
+2026-05-01T06:17:42.1433808Z                   "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1434254Z                   "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1434678Z                   "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1435147Z                   "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1435611Z                   "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1435948Z                   "gravatar_id": "",
+2026-05-01T06:17:42.1436222Z                   "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1436491Z                   "id": 169779439,
+2026-05-01T06:17:42.1436717Z                   "login": "pkinerd",
+2026-05-01T06:17:42.1436953Z                   "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1437295Z                   "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1437762Z                   "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1438204Z                   "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1438521Z                   "site_admin": false,
+2026-05-01T06:17:42.1438870Z                   "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1439365Z                   "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1439720Z                   "type": "User",
+2026-05-01T06:17:42.1440359Z                   "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1440662Z                   "user_view_type": "public"
+2026-05-01T06:17:42.1440894Z                 },
+2026-05-01T06:17:42.1441078Z                 "private": false,
+2026-05-01T06:17:42.1441324Z                 "pull_request_creation_policy": "all",
+2026-05-01T06:17:42.1441697Z                 "pulls_url": "https://api.github.com/repos/pkinerd/ednsv/pulls{/number}",
+2026-05-01T06:17:42.1442069Z                 "pushed_at": "2026-05-01T06:03:21Z",
+2026-05-01T06:17:42.1442438Z                 "releases_url": "https://api.github.com/repos/pkinerd/ednsv/releases{/id}",
+2026-05-01T06:17:42.1442795Z                 "size": 23547,
+2026-05-01T06:17:42.1443062Z                 "squash_merge_commit_message": "COMMIT_MESSAGES",
+2026-05-01T06:17:42.1443399Z                 "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
+2026-05-01T06:17:42.1443729Z                 "ssh_url": "git@github.com:pkinerd/ednsv.git",
+2026-05-01T06:17:42.1444019Z                 "stargazers_count": 0,
+2026-05-01T06:17:42.1444366Z                 "stargazers_url": "https://api.github.com/repos/pkinerd/ednsv/stargazers",
+2026-05-01T06:17:42.1444842Z                 "statuses_url": "https://api.github.com/repos/pkinerd/ednsv/statuses/{sha}",
+2026-05-01T06:17:42.1445312Z                 "subscribers_url": "https://api.github.com/repos/pkinerd/ednsv/subscribers",
+2026-05-01T06:17:42.1445799Z                 "subscription_url": "https://api.github.com/repos/pkinerd/ednsv/subscription",
+2026-05-01T06:17:42.1446204Z                 "svn_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1446554Z                 "tags_url": "https://api.github.com/repos/pkinerd/ednsv/tags",
+2026-05-01T06:17:42.1446964Z                 "teams_url": "https://api.github.com/repos/pkinerd/ednsv/teams",
+2026-05-01T06:17:42.1447431Z                 "topics": [],
+2026-05-01T06:17:42.1447760Z                 "trees_url": "https://api.github.com/repos/pkinerd/ednsv/git/trees{/sha}",
+2026-05-01T06:17:42.1448140Z                 "updated_at": "2026-04-30T13:47:52Z",
+2026-05-01T06:17:42.1448454Z                 "url": "https://api.github.com/repos/pkinerd/ednsv",
+2026-05-01T06:17:42.1448776Z                 "use_squash_pr_title_as_default": false,
+2026-05-01T06:17:42.1449048Z                 "visibility": "public",
+2026-05-01T06:17:42.1449287Z                 "watchers": 0,
+2026-05-01T06:17:42.1449490Z                 "watchers_count": 0,
+2026-05-01T06:17:42.1449742Z                 "web_commit_signoff_required": false
+2026-05-01T06:17:42.1449985Z               },
+2026-05-01T06:17:42.1450487Z               "sha": "beae99682f2ec5c7613d87a397bd49cdd0705b8e",
+2026-05-01T06:17:42.1450759Z               "user": {
+2026-05-01T06:17:42.1451071Z                 "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1451518Z                 "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1451955Z                 "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1452423Z                 "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1452875Z                 "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1453209Z                 "gravatar_id": "",
+2026-05-01T06:17:42.1453461Z                 "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1453725Z                 "id": 169779439,
+2026-05-01T06:17:42.1453932Z                 "login": "pkinerd",
+2026-05-01T06:17:42.1454173Z                 "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1454505Z                 "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1454961Z                 "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1455400Z                 "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1455705Z                 "site_admin": false,
+2026-05-01T06:17:42.1456179Z                 "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1456662Z                 "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1457022Z                 "type": "User",
+2026-05-01T06:17:42.1457280Z                 "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1457563Z                 "user_view_type": "public"
+2026-05-01T06:17:42.1457795Z               }
+2026-05-01T06:17:42.1457961Z             },
+2026-05-01T06:17:42.1458202Z             "html_url": "https://github.com/pkinerd/ednsv/pull/16",
+2026-05-01T06:17:42.1458489Z             "id": 3612707148,
+2026-05-01T06:17:42.1458791Z             "issue_url": "https://api.github.com/repos/pkinerd/ednsv/issues/16",
+2026-05-01T06:17:42.1459130Z             "labels": [],
+2026-05-01T06:17:42.1459326Z             "locked": false,
+2026-05-01T06:17:42.1459550Z             "maintainer_can_modify": false,
+2026-05-01T06:17:42.1459869Z             "merge_commit_sha": "2b4b0f4f406f607ca34ae9feacb720ba3da1f476",
+2026-05-01T06:17:42.1460402Z             "mergeable": null,
+2026-05-01T06:17:42.1460620Z             "mergeable_state": "unknown",
+2026-05-01T06:17:42.1460857Z             "merged": false,
+2026-05-01T06:17:42.1461050Z             "merged_at": null,
+2026-05-01T06:17:42.1461254Z             "merged_by": null,
+2026-05-01T06:17:42.1461450Z             "milestone": null,
+2026-05-01T06:17:42.1461681Z             "node_id": "PR_kwDOR1K0VM7XVYlM",
+2026-05-01T06:17:42.1461925Z             "number": 16,
+2026-05-01T06:17:42.1462191Z             "patch_url": "https://github.com/pkinerd/ednsv/pull/16.patch",
+2026-05-01T06:17:42.1462510Z             "rebaseable": null,
+2026-05-01T06:17:42.1462727Z             "requested_reviewers": [],
+2026-05-01T06:17:42.1463160Z             "requested_teams": [],
+2026-05-01T06:17:42.1463554Z             "review_comment_url": "https://api.github.com/repos/pkinerd/ednsv/pulls/comments{/number}",
+2026-05-01T06:17:42.1463976Z             "review_comments": 0,
+2026-05-01T06:17:42.1464344Z             "review_comments_url": "https://api.github.com/repos/pkinerd/ednsv/pulls/16/comments",
+2026-05-01T06:17:42.1464735Z             "state": "open",
+2026-05-01T06:17:42.1465186Z             "statuses_url": "https://api.github.com/repos/pkinerd/ednsv/statuses/beae99682f2ec5c7613d87a397bd49cdd0705b8e",
+2026-05-01T06:17:42.1465807Z             "title": "Add EnableDirectDns configuration option to control direct DNS queries",
+2026-05-01T06:17:42.1466210Z             "updated_at": "2026-05-01T06:03:22Z",
+2026-05-01T06:17:42.1466533Z             "url": "https://api.github.com/repos/pkinerd/ednsv/pulls/16",
+2026-05-01T06:17:42.1466851Z             "user": {
+2026-05-01T06:17:42.1467155Z               "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1467607Z               "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1468040Z               "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1468496Z               "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1468960Z               "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1469294Z               "gravatar_id": "",
+2026-05-01T06:17:42.1469557Z               "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1469824Z               "id": 169779439,
+2026-05-01T06:17:42.1470036Z               "login": "pkinerd",
+2026-05-01T06:17:42.1470424Z               "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1470754Z               "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1471218Z               "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1471651Z               "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1472086Z               "site_admin": false,
+2026-05-01T06:17:42.1472427Z               "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1472910Z               "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1473274Z               "type": "User",
+2026-05-01T06:17:42.1473527Z               "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1473814Z               "user_view_type": "public"
+2026-05-01T06:17:42.1474032Z             }
+2026-05-01T06:17:42.1474197Z           },
+2026-05-01T06:17:42.1474365Z           "repository": {
+2026-05-01T06:17:42.1474574Z             "allow_forking": true,
+2026-05-01T06:17:42.1474929Z             "archive_url": "https://api.github.com/repos/pkinerd/ednsv/{archive_format}{/ref}",
+2026-05-01T06:17:42.1475314Z             "archived": false,
+2026-05-01T06:17:42.1475647Z             "assignees_url": "https://api.github.com/repos/pkinerd/ednsv/assignees{/user}",
+2026-05-01T06:17:42.1476111Z             "blobs_url": "https://api.github.com/repos/pkinerd/ednsv/git/blobs{/sha}",
+2026-05-01T06:17:42.1476581Z             "branches_url": "https://api.github.com/repos/pkinerd/ednsv/branches{/branch}",
+2026-05-01T06:17:42.1476982Z             "clone_url": "https://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1477461Z             "collaborators_url": "https://api.github.com/repos/pkinerd/ednsv/collaborators{/collaborator}",
+2026-05-01T06:17:42.1478004Z             "comments_url": "https://api.github.com/repos/pkinerd/ednsv/comments{/number}",
+2026-05-01T06:17:42.1478455Z             "commits_url": "https://api.github.com/repos/pkinerd/ednsv/commits{/sha}",
+2026-05-01T06:17:42.1478935Z             "compare_url": "https://api.github.com/repos/pkinerd/ednsv/compare/{base}...{head}",
+2026-05-01T06:17:42.1479562Z             "contents_url": "https://api.github.com/repos/pkinerd/ednsv/contents/{+path}",
+2026-05-01T06:17:42.1480200Z             "contributors_url": "https://api.github.com/repos/pkinerd/ednsv/contributors",
+2026-05-01T06:17:42.1480586Z             "created_at": "2026-03-30T21:24:40Z",
+2026-05-01T06:17:42.1480845Z             "default_branch": "main",
+2026-05-01T06:17:42.1481200Z             "deployments_url": "https://api.github.com/repos/pkinerd/ednsv/deployments",
+2026-05-01T06:17:42.1481567Z             "description": null,
+2026-05-01T06:17:42.1481795Z             "disabled": false,
+2026-05-01T06:17:42.1482111Z             "downloads_url": "https://api.github.com/repos/pkinerd/ednsv/downloads",
+2026-05-01T06:17:42.1482544Z             "events_url": "https://api.github.com/repos/pkinerd/ednsv/events",
+2026-05-01T06:17:42.1482865Z             "fork": false,
+2026-05-01T06:17:42.1483065Z             "forks": 0,
+2026-05-01T06:17:42.1483257Z             "forks_count": 0,
+2026-05-01T06:17:42.1483560Z             "forks_url": "https://api.github.com/repos/pkinerd/ednsv/forks",
+2026-05-01T06:17:42.1483893Z             "full_name": "pkinerd/ednsv",
+2026-05-01T06:17:42.1484271Z             "git_commits_url": "https://api.github.com/repos/pkinerd/ednsv/git/commits{/sha}",
+2026-05-01T06:17:42.1484759Z             "git_refs_url": "https://api.github.com/repos/pkinerd/ednsv/git/refs{/sha}",
+2026-05-01T06:17:42.1485200Z             "git_tags_url": "https://api.github.com/repos/pkinerd/ednsv/git/tags{/sha}",
+2026-05-01T06:17:42.1485585Z             "git_url": "git://github.com/pkinerd/ednsv.git",
+2026-05-01T06:17:42.1485865Z             "has_discussions": false,
+2026-05-01T06:17:42.1486099Z             "has_downloads": true,
+2026-05-01T06:17:42.1486329Z             "has_issues": true,
+2026-05-01T06:17:42.1486538Z             "has_pages": false,
+2026-05-01T06:17:42.1486753Z             "has_projects": true,
+2026-05-01T06:17:42.1486977Z             "has_pull_requests": true,
+2026-05-01T06:17:42.1487214Z             "has_wiki": true,
+2026-05-01T06:17:42.1487422Z             "homepage": null,
+2026-05-01T06:17:42.1487716Z             "hooks_url": "https://api.github.com/repos/pkinerd/ednsv/hooks",
+2026-05-01T06:17:42.1488202Z             "html_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1488490Z             "id": 1196602452,
+2026-05-01T06:17:42.1488699Z             "is_template": false,
+2026-05-01T06:17:42.1489080Z             "issue_comment_url": "https://api.github.com/repos/pkinerd/ednsv/issues/comments{/number}",
+2026-05-01T06:17:42.1489643Z             "issue_events_url": "https://api.github.com/repos/pkinerd/ednsv/issues/events{/number}",
+2026-05-01T06:17:42.1490314Z             "issues_url": "https://api.github.com/repos/pkinerd/ednsv/issues{/number}",
+2026-05-01T06:17:42.1490845Z             "keys_url": "https://api.github.com/repos/pkinerd/ednsv/keys{/key_id}",
+2026-05-01T06:17:42.1491287Z             "labels_url": "https://api.github.com/repos/pkinerd/ednsv/labels{/name}",
+2026-05-01T06:17:42.1491638Z             "language": "C#",
+2026-05-01T06:17:42.1491948Z             "languages_url": "https://api.github.com/repos/pkinerd/ednsv/languages",
+2026-05-01T06:17:42.1492285Z             "license": null,
+2026-05-01T06:17:42.1492598Z             "merges_url": "https://api.github.com/repos/pkinerd/ednsv/merges",
+2026-05-01T06:17:42.1493063Z             "milestones_url": "https://api.github.com/repos/pkinerd/ednsv/milestones{/number}",
+2026-05-01T06:17:42.1493448Z             "mirror_url": null,
+2026-05-01T06:17:42.1493652Z             "name": "ednsv",
+2026-05-01T06:17:42.1493863Z             "node_id": "R_kgDOR1K0VA",
+2026-05-01T06:17:42.1494327Z             "notifications_url": "https://api.github.com/repos/pkinerd/ednsv/notifications{?since,all,participating}",
+2026-05-01T06:17:42.1494786Z             "open_issues": 1,
+2026-05-01T06:17:42.1494999Z             "open_issues_count": 1,
+2026-05-01T06:17:42.1495216Z             "owner": {
+2026-05-01T06:17:42.1495514Z               "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1496099Z               "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1496543Z               "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1497006Z               "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1497463Z               "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1497798Z               "gravatar_id": "",
+2026-05-01T06:17:42.1498048Z               "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1498313Z               "id": 169779439,
+2026-05-01T06:17:42.1498514Z               "login": "pkinerd",
+2026-05-01T06:17:42.1498742Z               "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1499065Z               "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1499530Z               "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1499968Z               "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1500421Z               "site_admin": false,
+2026-05-01T06:17:42.1500777Z               "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1501257Z               "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1501623Z               "type": "User",
+2026-05-01T06:17:42.1501877Z               "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1502173Z               "user_view_type": "public"
+2026-05-01T06:17:42.1502411Z             },
+2026-05-01T06:17:42.1502584Z             "private": false,
+2026-05-01T06:17:42.1502818Z             "pull_request_creation_policy": "all",
+2026-05-01T06:17:42.1503177Z             "pulls_url": "https://api.github.com/repos/pkinerd/ednsv/pulls{/number}",
+2026-05-01T06:17:42.1503544Z             "pushed_at": "2026-05-01T06:03:21Z",
+2026-05-01T06:17:42.1503905Z             "releases_url": "https://api.github.com/repos/pkinerd/ednsv/releases{/id}",
+2026-05-01T06:17:42.1504261Z             "size": 23547,
+2026-05-01T06:17:42.1504628Z             "ssh_url": "git@github.com:pkinerd/ednsv.git",
+2026-05-01T06:17:42.1504918Z             "stargazers_count": 0,
+2026-05-01T06:17:42.1505261Z             "stargazers_url": "https://api.github.com/repos/pkinerd/ednsv/stargazers",
+2026-05-01T06:17:42.1505717Z             "statuses_url": "https://api.github.com/repos/pkinerd/ednsv/statuses/{sha}",
+2026-05-01T06:17:42.1506186Z             "subscribers_url": "https://api.github.com/repos/pkinerd/ednsv/subscribers",
+2026-05-01T06:17:42.1506654Z             "subscription_url": "https://api.github.com/repos/pkinerd/ednsv/subscription",
+2026-05-01T06:17:42.1507062Z             "svn_url": "https://github.com/pkinerd/ednsv",
+2026-05-01T06:17:42.1507409Z             "tags_url": "https://api.github.com/repos/pkinerd/ednsv/tags",
+2026-05-01T06:17:42.1507809Z             "teams_url": "https://api.github.com/repos/pkinerd/ednsv/teams",
+2026-05-01T06:17:42.1508135Z             "topics": [],
+2026-05-01T06:17:42.1508437Z             "trees_url": "https://api.github.com/repos/pkinerd/ednsv/git/trees{/sha}",
+2026-05-01T06:17:42.1508801Z             "updated_at": "2026-04-30T13:47:52Z",
+2026-05-01T06:17:42.1509098Z             "url": "https://api.github.com/repos/pkinerd/ednsv",
+2026-05-01T06:17:42.1509481Z             "visibility": "public",
+2026-05-01T06:17:42.1509796Z             "watchers": 0,
+2026-05-01T06:17:42.1510338Z             "watchers_count": 0,
+2026-05-01T06:17:42.1510653Z             "web_commit_signoff_required": false
+2026-05-01T06:17:42.1510892Z           },
+2026-05-01T06:17:42.1511066Z           "sender": {
+2026-05-01T06:17:42.1511363Z             "avatar_url": "https://avatars.githubusercontent.com/u/169779439?v=4",
+2026-05-01T06:17:42.1511803Z             "events_url": "https://api.github.com/users/pkinerd/events{/privacy}",
+2026-05-01T06:17:42.1512388Z             "followers_url": "https://api.github.com/users/pkinerd/followers",
+2026-05-01T06:17:42.1512851Z             "following_url": "https://api.github.com/users/pkinerd/following{/other_user}",
+2026-05-01T06:17:42.1513308Z             "gists_url": "https://api.github.com/users/pkinerd/gists{/gist_id}",
+2026-05-01T06:17:42.1513635Z             "gravatar_id": "",
+2026-05-01T06:17:42.1513888Z             "html_url": "https://github.com/pkinerd",
+2026-05-01T06:17:42.1514142Z             "id": 169779439,
+2026-05-01T06:17:42.1514353Z             "login": "pkinerd",
+2026-05-01T06:17:42.1514569Z             "node_id": "U_kgDOCh6g7w",
+2026-05-01T06:17:42.1514900Z             "organizations_url": "https://api.github.com/users/pkinerd/orgs",
+2026-05-01T06:17:42.1515345Z             "received_events_url": "https://api.github.com/users/pkinerd/received_events",
+2026-05-01T06:17:42.1515778Z             "repos_url": "https://api.github.com/users/pkinerd/repos",
+2026-05-01T06:17:42.1516089Z             "site_admin": false,
+2026-05-01T06:17:42.1516428Z             "starred_url": "https://api.github.com/users/pkinerd/starred{/owner}{/repo}",
+2026-05-01T06:17:42.1516908Z             "subscriptions_url": "https://api.github.com/users/pkinerd/subscriptions",
+2026-05-01T06:17:42.1517259Z             "type": "User",
+2026-05-01T06:17:42.1517508Z             "url": "https://api.github.com/users/pkinerd",
+2026-05-01T06:17:42.1517777Z             "user_view_type": "public"
+2026-05-01T06:17:42.1517998Z           }
+2026-05-01T06:17:42.1518162Z         },
+2026-05-01T06:17:42.1518325Z         "github_job": "docker",
+2026-05-01T06:17:42.1518563Z         "github_ref": "refs/pull/16/merge",
+2026-05-01T06:17:42.1518816Z         "github_ref_name": "16/merge",
+2026-05-01T06:17:42.1519067Z         "github_ref_protected": "false",
+2026-05-01T06:17:42.1519308Z         "github_ref_type": "branch",
+2026-05-01T06:17:42.1519567Z         "github_repository": "pkinerd/ednsv",
+2026-05-01T06:17:42.1519823Z         "github_repository_id": "1196602452",
+2026-05-01T06:17:42.1520196Z         "github_repository_owner": "pkinerd",
+2026-05-01T06:17:42.1520463Z         "github_repository_owner_id": "169779439",
+2026-05-01T06:17:42.1520862Z         "github_run_attempt": "1",
+2026-05-01T06:17:42.1521101Z         "github_run_id": "25204476527",
+2026-05-01T06:17:42.1521334Z         "github_run_number": "166",
+2026-05-01T06:17:42.1521571Z         "github_runner_arch": "X64",
+2026-05-01T06:17:42.1521837Z         "github_runner_environment": "github-hosted",
+2026-05-01T06:17:42.1522121Z         "github_runner_image_os": "ubuntu24",
+2026-05-01T06:17:42.1522390Z         "github_runner_image_version": "20260413.86.1",
+2026-05-01T06:17:42.1522697Z         "github_runner_name": "GitHub Actions 1000001970",
+2026-05-01T06:17:42.1522970Z         "github_runner_os": "Linux",
+2026-05-01T06:17:42.1523313Z         "github_runner_tracking_id": "github_6eb003dd-40ad-4ef6-9066-169953f5b673",
+2026-05-01T06:17:42.1523701Z         "github_server_url": "https://github.com",
+2026-05-01T06:17:42.1523980Z         "github_triggering_actor": "pkinerd",
+2026-05-01T06:17:42.1524229Z         "github_workflow": "CI",
+2026-05-01T06:17:42.1524588Z         "github_workflow_ref": "pkinerd/ednsv/.github/workflows/ci.yml@refs/pull/16/merge",
+2026-05-01T06:17:42.1525051Z         "github_workflow_sha": "9c0c2050f64db7dc79d61b6988138dcb15978b49",
+2026-05-01T06:17:42.1525376Z         "platform": "linux/amd64"
+2026-05-01T06:17:42.1525597Z       }
+2026-05-01T06:17:42.1525754Z     }
+2026-05-01T06:17:42.1525916Z   },
+2026-05-01T06:17:42.1526437Z   "buildx.build.ref": "builder-70b342f0-3255-48b3-9b68-1c86246ed84d/builder-70b342f0-3255-48b3-9b68-1c86246ed84d0/5qznkjb8zfz9gwz2trtkhoplb",
+2026-05-01T06:17:42.1527017Z   "containerimage.descriptor": {
+2026-05-01T06:17:42.1527317Z     "mediaType": "application/vnd.oci.image.index.v1+json",
+2026-05-01T06:17:42.1527750Z     "digest": "sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0",
+2026-05-01T06:17:42.1528125Z     "size": 856
+2026-05-01T06:17:42.1528452Z   },
+2026-05-01T06:17:42.1528808Z   "containerimage.digest": "sha256:7996ae4df719c7e7f7ae02927ca0763a2f3e694d592dbd9a43767484461227b0",
+2026-05-01T06:17:42.1529477Z   "image.name": "ghcr.io/pkinerd/ednsv:pr-16,ghcr.io/pkinerd/ednsv:latest-any,ghcr.io/pkinerd/ednsv:sha-9c0c205"
+2026-05-01T06:17:42.1529918Z }
+2026-05-01T06:17:42.1530393Z ##[endgroup]
+2026-05-01T06:17:42.1530725Z ##[group]Reference
+2026-05-01T06:17:42.1531174Z builder-70b342f0-3255-48b3-9b68-1c86246ed84d/builder-70b342f0-3255-48b3-9b68-1c86246ed84d0/5qznkjb8zfz9gwz2trtkhoplb
+2026-05-01T06:17:42.1531768Z ##[endgroup]
+2026-05-01T06:17:42.1532063Z ##[group]Check build summary support
+2026-05-01T06:17:42.1532424Z Build summary supported!
+2026-05-01T06:17:42.1532733Z ##[endgroup]
+2026-05-01T06:17:42.1614342Z Post job cleanup.
+2026-05-01T06:17:42.3916659Z ##[group]Generating build summary
+2026-05-01T06:17:42.3921482Z exporting build record to /home/runner/work/_temp/docker-actions-toolkit-h2Ha75/export
+2026-05-01T06:17:42.5674589Z [command]/usr/bin/docker buildx history export --builder builder-70b342f0-3255-48b3-9b68-1c86246ed84d --output /home/runner/work/_temp/docker-actions-toolkit-h2Ha75/export/pkinerd~ednsv~5QZNKJ.dockerbuild 5qznkjb8zfz9gwz2trtkhoplb --finalize
+2026-05-01T06:17:42.8555542Z Build record written to /home/runner/work/_temp/docker-actions-toolkit-h2Ha75/export/pkinerd~ednsv~5QZNKJ.dockerbuild (57.52 KB)
+2026-05-01T06:17:42.8582997Z Uploading pkinerd~ednsv~5QZNKJ.dockerbuild to blob storage
+2026-05-01T06:17:43.0251039Z Beginning upload of artifact content to blob storage
+2026-05-01T06:17:43.0350612Z Uploaded bytes 58897
+2026-05-01T06:17:43.2184065Z Finished uploading artifact content to blob storage!
+2026-05-01T06:17:43.2189903Z SHA256 hash of uploaded artifact is 4489f7eb9acaa73cebee69dadbbe04cb273131da34a44c7d2a76ed03427a37ea
+2026-05-01T06:17:43.2192288Z Finalizing artifact upload
+2026-05-01T06:17:43.4267166Z Artifact successfully finalized (6745990783)
+2026-05-01T06:17:43.4268602Z Artifact download URL: https://github.com/pkinerd/ednsv/actions/runs/25204476527/artifacts/6745990783
+2026-05-01T06:17:43.4294957Z Writing summary
+2026-05-01T06:17:43.4307749Z ##[endgroup]
+2026-05-01T06:17:43.4308562Z ##[group]Removing temp folder /home/runner/work/_temp/docker-actions-toolkit-PafJc7
+2026-05-01T06:17:43.4318040Z ##[endgroup]
+2026-05-01T06:17:43.4318571Z ##[group]Post cache
+2026-05-01T06:17:43.4319766Z State not set
+2026-05-01T06:17:43.4320603Z ##[endgroup]
+2026-05-01T06:17:43.4460566Z Post job cleanup.
+2026-05-01T06:17:43.7470532Z ##[group]Logout from ghcr.io
+2026-05-01T06:17:43.7518280Z [command]/usr/bin/docker logout ghcr.io
+2026-05-01T06:17:43.7646402Z Removing login credentials for ghcr.io
+2026-05-01T06:17:43.7675772Z ##[endgroup]
+2026-05-01T06:17:43.7676175Z ##[group]Post cache
+2026-05-01T06:17:43.7677928Z State not set
+2026-05-01T06:17:43.7678547Z ##[endgroup]
+2026-05-01T06:17:43.7810913Z Post job cleanup.
+2026-05-01T06:17:44.0269401Z ##[group]Removing builder
+2026-05-01T06:17:44.1180919Z [command]/usr/bin/docker buildx rm builder-70b342f0-3255-48b3-9b68-1c86246ed84d
+2026-05-01T06:17:44.7617676Z builder-70b342f0-3255-48b3-9b68-1c86246ed84d removed
+2026-05-01T06:17:44.7677729Z ##[endgroup]
+2026-05-01T06:17:44.7678307Z ##[group]Cleaning up certificates
+2026-05-01T06:17:44.7678774Z ##[endgroup]
+2026-05-01T06:17:44.7679214Z ##[group]Post cache
+2026-05-01T06:17:44.7679411Z State not set
+2026-05-01T06:17:44.7679716Z ##[endgroup]
+2026-05-01T06:17:44.7843778Z Post job cleanup.
+2026-05-01T06:17:44.8827618Z [command]/usr/bin/git version
+2026-05-01T06:17:44.8871551Z git version 2.53.0
+2026-05-01T06:17:44.8913532Z Temporarily overriding HOME='/home/runner/work/_temp/8173fe7d-6055-4c21-98d6-ce64a3e79b5d' before making global git config changes
+2026-05-01T06:17:44.8914425Z Adding repository directory to the temporary git global config as a safe directory
+2026-05-01T06:17:44.8918715Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ednsv/ednsv
+2026-05-01T06:17:44.8955079Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-05-01T06:17:44.8989033Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-05-01T06:17:44.9226002Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-05-01T06:17:44.9247871Z http.https://github.com/.extraheader
+2026-05-01T06:17:44.9260744Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-05-01T06:17:44.9293453Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-05-01T06:17:44.9523845Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-05-01T06:17:44.9555300Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-05-01T06:17:44.9908388Z Cleaning up orphan processes
+2026-05-01T06:17:45.0254683Z ##[warning]Node.js 20 actions are deprecated. The following actions are running on Node.js 20 and may not work as expected: actions/checkout@v4, docker/build-push-action@v6, docker/login-action@v3, docker/metadata-action@v5, docker/setup-buildx-action@v3. Actions will be forced to run with Node.js 24 by default starting June 2nd, 2026. Node.js 20 will be removed from the runner on September 16th, 2026. Please check if updated versions of these actions are available that support Node.js 24. To opt into Node.js 24 now, set the FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true environment variable on the runner or in your workflow file. Once Node.js 24 becomes the default, you can temporarily opt out by setting ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
