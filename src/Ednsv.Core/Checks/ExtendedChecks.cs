@@ -284,19 +284,19 @@ public class DnsPropagationCheck : ICheck
     }
 
     /// <summary>
-    /// DoH JSON query (RFC 8484 §6 / Cloudflare/Google JSON variant). Returns
-    /// the data fields of Answer records matching the requested type. Goes
-    /// through HttpProbeService so any HTTPS_PROXY env var is honoured.
-    /// Cloudflare requires either Accept: application/dns-json or
-    /// ?ct=application/dns-json — we use the query parameter to keep us on
-    /// HttpProbeService.GetAsync without custom headers.
+    /// DoH JSON query (Cloudflare/Google JSON variant — distinct from RFC 8484
+    /// wire format). Returns the data fields of Answer records matching the
+    /// requested type. Goes through HttpProbeService so any HTTPS_PROXY env
+    /// var is honoured. Both resolvers reliably return JSON when given
+    /// Accept: application/dns-json — Google also accepts it without the
+    /// header, but Cloudflare's /dns-query defaults to the binary
+    /// application/dns-message and the Accept header is required.
     /// </summary>
     private static async Task<(List<string> records, bool ok)> DohQueryAsync(string baseUrl, string domain, string type, CheckContext ctx)
     {
         var sep = baseUrl.Contains('?') ? '&' : '?';
-        var ct = baseUrl.Contains("cloudflare", StringComparison.OrdinalIgnoreCase) ? "&ct=application/dns-json" : "";
-        var url = $"{baseUrl}{sep}name={Uri.EscapeDataString(domain)}&type={type}{ct}";
-        var (success, content, _) = await ctx.Http.GetAsync(url, maxRetries: 1);
+        var url = $"{baseUrl}{sep}name={Uri.EscapeDataString(domain)}&type={type}";
+        var (success, content, _) = await ctx.Http.GetWithAcceptAsync(url, "application/dns-json", maxRetries: 1);
         if (!success || string.IsNullOrEmpty(content)) return (new List<string>(), false);
         var typeNum = type switch { "A" => 1, "AAAA" => 28, "MX" => 15, "TXT" => 16, "CNAME" => 5, _ => 0 };
         try
