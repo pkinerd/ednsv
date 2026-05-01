@@ -315,27 +315,55 @@ const combo = document.getElementById('domainCombo');
 const arrowBtn = document.getElementById('domainArrow');
 const suggestionsEl = document.getElementById('domainSuggestions');
 
-function buildSuggestionGroups() {
+function buildSuggestionGroups(query) {
+  const q = (query || '').trim().toLowerCase();
   const history = loadDomainHistory();
-  const dkimKeys = Object.keys(perDomainDkim || {});
+  const dkimMap = perDomainDkim || {};
+  const dkimKeys = Object.keys(dkimMap);
   const known = (knownDomains || []).slice();
+
+  // Recent group: history with each item's DKIM selectors (if any)
+  const recentItems = history.map(d => ({
+    d,
+    selectors: Array.isArray(dkimMap[d]) ? dkimMap[d] : [],
+    removable: true
+  }));
+
+  // Known + DKIM merged: union of knownDomains and dkimKeys, minus anything already in Recent
   const seen = new Set(history);
-  const knownExtras = known.filter(d => !seen.has(d));
-  knownExtras.forEach(d => seen.add(d));
-  const dkimExtras = dkimKeys.filter(d => !seen.has(d));
+  const mergedDomains = [];
+  for (const d of known) if (!seen.has(d)) { mergedDomains.push(d); seen.add(d); }
+  for (const d of dkimKeys) if (!seen.has(d)) { mergedDomains.push(d); seen.add(d); }
+  const knownItems = mergedDomains.map(d => ({
+    d,
+    selectors: Array.isArray(dkimMap[d]) ? dkimMap[d] : []
+  }));
+
+  // Substring match on the domain or any of its DKIM selectors
+  const matches = it => {
+    if (!q) return true;
+    if (it.d.toLowerCase().includes(q)) return true;
+    return it.selectors.some(s => s.toLowerCase().includes(q));
+  };
+
   return [
-    { label: 'Recent',          items: history.map(d => ({ d, src: 'recent', removable: true })) },
-    { label: 'Known domains',   items: knownExtras.map(d => ({ d, src: 'known' })) },
-    { label: 'Per-domain DKIM', items: dkimExtras.map(d => ({ d, src: 'dkim' })) },
+    { label: 'Recent',          items: recentItems.filter(matches) },
+    { label: 'Known / DKIM',    items: knownItems.filter(matches) }
   ].filter(g => g.items.length > 0);
 }
 
 function renderSuggestions() {
-  const groups = buildSuggestionGroups();
+  const query = input.value;
+  const groups = buildSuggestionGroups(query);
   if (groups.length === 0) {
-    suggestionsEl.innerHTML = '<div class="empty">No remembered or known domains yet — type one and Validate.</div>';
+    suggestionsEl.innerHTML = query.trim()
+      ? `<div class="empty">No matches for &ldquo;${esc(query.trim())}&rdquo;.</div>`
+      : '<div class="empty">No remembered or known domains yet — type one and Validate.</div>';
     return;
   }
+  // Source label per item: the joined DKIM selectors when present, otherwise
+  // a short tag identifying which list the entry came from.
+  const labelFor = it => it.selectors.length > 0 ? it.selectors.join(', ') : '';
   let html = '';
   for (const g of groups) {
     html += `<div class="group-label">${esc(g.label)}</div>`;
@@ -343,7 +371,8 @@ function renderSuggestions() {
       const removeBtn = it.removable
         ? `<span class="remove" data-remove="${esc(it.d)}" title="Remove from history">&times;</span>`
         : '';
-      html += `<div class="item" data-domain="${esc(it.d)}" role="option">${esc(it.d)}<span class="src">${esc(it.src)}</span>${removeBtn}</div>`;
+      const src = labelFor(it);
+      html += `<div class="item" data-domain="${esc(it.d)}" role="option">${esc(it.d)}<span class="src">${esc(src)}</span>${removeBtn}</div>`;
     }
   }
   suggestionsEl.innerHTML = html;
@@ -374,6 +403,12 @@ function toggleCombo() { combo.classList.contains('open') ? closeCombo() : openC
 
 arrowBtn.addEventListener('click', toggleCombo);
 input.addEventListener('focus', openCombo);
+input.addEventListener('input', () => {
+  // Re-filter on every keystroke; auto-open if the user is typing into a
+  // closed combo (e.g. after Escape, the next keystroke pops it back).
+  if (!combo.classList.contains('open')) combo.classList.add('open');
+  renderSuggestions();
+});
 input.addEventListener('keydown', e => {
   if (e.key === 'Escape') { closeCombo(); }
   else if ((e.key === 'ArrowDown' && e.altKey) || e.key === 'F4') { e.preventDefault(); openCombo(); }
