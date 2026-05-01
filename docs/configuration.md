@@ -205,12 +205,14 @@ path above applies normally.
 
 Admin-only endpoint `GET /api/debug/proxy?url=https://example.com/foo`
 returns the proxy URL .NET would actually use for that target, whether
-`NO_PROXY` would bypass it, and the proxy-related env vars currently
-visible to the running process. Useful when an HTTP probe shows
-`(HTTP 0)` (BIMI logo, MTA-STS policy, security.txt, crt.sh) — the
-endpoint will tell you whether the issue is "vars not seen by the
-process", "NO_PROXY suffix-matching the host", or "DefaultProxy
-resolved nothing":
+`NO_PROXY` would bypass it, the proxy-related env vars currently visible
+to the running process, **and the result of actually fetching the URL**
+(status code, response headers, timing, and any exception). Useful when
+an HTTP probe shows `(HTTP 0)` (BIMI logo, MTA-STS policy, security.txt,
+crt.sh) — the endpoint will tell you whether the issue is "vars not seen
+by the process", "NO_PROXY suffix-matching the host", "DefaultProxy
+resolved nothing", or the request itself is failing (proxy unreachable,
+TLS interception, DNS failure, etc.):
 
 ```json
 {
@@ -220,13 +222,32 @@ resolved nothing":
   "envSeenByProcess": {
     "HTTPS_PROXY": "http://proxy.corp.local:3128",
     "NO_PROXY": "localhost,.internal.example.com"
+  },
+  "fetch": {
+    "statusCode": 200,
+    "statusReason": "OK",
+    "httpVersion": "1.1",
+    "contentLength": 4321,
+    "bodyBytesRead": 4096,
+    "elapsedMs": 187,
+    "error": null,
+    "headers": {
+      "Content-Type": "image/svg+xml",
+      "Via": "1.1 proxy.corp.local",
+      "X-Cache": "MISS"
+    }
   }
 }
 ```
 
 If `proxyResolved` equals `target`, the proxy isn't being applied — most
 commonly `NO_PROXY` is matching, or the env vars aren't visible to this
-process.
+process. If `fetch.statusCode=0` and `fetch.error` is non-null, the
+request never produced an HTTP response — check `fetch.error` for the
+underlying reason (`HttpRequestException → SocketException` typically
+means the proxy itself isn't reachable from the process). The `Via` and
+`X-Cache` headers (when present) confirm the proxy was actually
+traversed.
 
 ## Authentication
 

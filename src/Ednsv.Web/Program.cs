@@ -604,11 +604,14 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
 
 // GET /api/debug/proxy?url=https://example.com/foo
 // Reports what HttpClient.DefaultProxy resolves for the given URL plus the
-// proxy-related env vars actually visible to the running process. Useful
-// when "(HTTP 0)" failures suggest the proxy env vars aren't being picked
-// up — e.g. NO_PROXY is suffix-matching the host, the vars were set after
-// the process started, or the docker container didn't inherit them.
-app.MapGet("/api/debug/proxy", (HttpContext ctx, AuthService auth, string? url) =>
+// proxy-related env vars actually visible to the running process, AND
+// performs a real GET so the caller can see the actual status code,
+// response headers, timing, and any exception. Useful when "(HTTP 0)"
+// failures suggest the proxy env vars aren't being picked up — e.g.
+// NO_PROXY is suffix-matching the host, the vars were set after the
+// process started, the proxy itself is unreachable, or TLS interception
+// is breaking the handshake.
+app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string? url) =>
 {
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
     if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
@@ -616,7 +619,7 @@ app.MapGet("/api/debug/proxy", (HttpContext ctx, AuthService auth, string? url) 
 
     Uri? proxyUri = null;
     bool bypassed = false;
-    string? error = null;
+    string? proxyError = null;
     try
     {
         proxyUri = HttpClient.DefaultProxy.GetProxy(u);
@@ -624,7 +627,7 @@ app.MapGet("/api/debug/proxy", (HttpContext ctx, AuthService auth, string? url) 
     }
     catch (Exception ex)
     {
-        error = $"{ex.GetType().Name}: {ex.Message}";
+        proxyError = $"{ex.GetType().Name}: {ex.Message}";
     }
 
     string? Pick(params string[] names) =>
@@ -640,19 +643,85 @@ app.MapGet("/api/debug/proxy", (HttpContext ctx, AuthService auth, string? url) 
         ["NO_PROXY"]    = Pick("NO_PROXY", "no_proxy")
     };
 
+    // Actually retrieve the URL through a default HttpClient so the same
+    // proxy resolution that HttpProbeService sees is exercised here.
+    int statusCode = 0;
+    string? statusReason = null;
+    string? httpVersion = null;
+    long? contentLength = null;
+    long? bodyBytesRead = null;
+    var responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    string? fetchError = null;
+    long elapsedMs = 0;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        using var handler = new HttpClientHandler();
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("ednsv-debug/1.0");
+        using var resp = await http.GetAsync(u, HttpCompletionOption.ResponseHeadersRead, ctx.RequestAborted);
+        statusCode = (int)resp.StatusCode;
+        statusReason = resp.ReasonPhrase;
+        httpVersion = resp.Version.ToString();
+        contentLength = resp.Content.Headers.ContentLength;
+
+        foreach (var h in resp.Headers)
+            responseHeaders[h.Key] = string.Join(", ", h.Value);
+        foreach (var h in resp.Content.Headers)
+            responseHeaders[h.Key] = string.Join(", ", h.Value);
+
+        // Drain a small slice of the body so timing/error reflects the
+        // full request — capped to avoid pulling large payloads.
+        const int MaxBodyBytes = 4096;
+        await using var stream = await resp.Content.ReadAsStreamAsync(ctx.RequestAborted);
+        var buf = new byte[MaxBodyBytes];
+        long total = 0;
+        int n;
+        while ((n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ctx.RequestAborted)) > 0)
+        {
+            total += n;
+            if (total >= MaxBodyBytes) break;
+        }
+        bodyBytesRead = total;
+    }
+    catch (Exception ex)
+    {
+        var inner = ex.InnerException is null ? "" : $" → {ex.InnerException.GetType().Name}: {ex.InnerException.Message}";
+        fetchError = $"{ex.GetType().Name}: {ex.Message}{inner}";
+    }
+    finally
+    {
+        sw.Stop();
+        elapsedMs = sw.ElapsedMilliseconds;
+    }
+
     return Results.Ok(new
     {
         target = u.ToString(),
         proxyResolved = proxyUri?.ToString(),
         bypassed,
-        error,
+        proxyError,
         envSeenByProcess,
+        fetch = new
+        {
+            statusCode,
+            statusReason,
+            httpVersion,
+            contentLength,
+            bodyBytesRead,
+            elapsedMs,
+            error = fetchError,
+            headers = responseHeaders
+        },
         notes = new[]
         {
             "proxyResolved == target URL itself means HttpClient is going direct (no proxy applied).",
             "bypassed=true means NO_PROXY matched — entries starting with '.' suffix-match.",
             "Env vars listed here are what THIS process sees right now; if they differ from your shell, the process didn't inherit them.",
-            "DefaultProxy is initialised once on first use; vars set AFTER the process started are not picked up."
+            "DefaultProxy is initialised once on first use; vars set AFTER the process started are not picked up.",
+            "fetch.statusCode=0 with a non-null fetch.error means the request never produced an HTTP response — typically proxy/DNS/TLS failure. Check fetch.error for the reason.",
+            "fetch.headers reflects what the server (or proxy) actually returned; a Via or X-Cache header often confirms the proxy was traversed."
         }
     });
 })
