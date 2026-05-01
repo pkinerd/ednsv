@@ -9,18 +9,15 @@ public class HttpProbeService
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
 
-    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    /// <summary>
+    /// Optional trace callback. Backed by <see cref="TraceContext.Sink"/>
+    /// (AsyncLocal) so concurrent validations don't share a sink.
+    /// </summary>
     public Action<string>? Trace
     {
-        get => _trace;
-        set
-        {
-            _trace = value;
-            _getCache.Trace = value;
-            _getWithHeadersCache.Trace = value;
-        }
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
     }
-    private Action<string>? _trace;
 
     // Wrapper classes so value tuples can be stored in ProbeCache<T> (requires class constraint)
     private sealed class GetResult

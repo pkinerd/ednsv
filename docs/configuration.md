@@ -37,6 +37,55 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 `ASPNETCORE_HTTP_PORTS` (built-in ASP.NET Core variable) controls the HTTP
 listen port. The Docker image sets it to `8080`.
 
+## Log format
+
+The console emits **structured JSON in Production** and the human-friendly
+single-line **Simple format in Development**. Override either default:
+
+```sh
+# Force JSON anywhere (recommended for log aggregators)
+export Logging__Console__FormatterName=Json
+
+# Force Simple anywhere (e.g. running Production locally for debugging)
+export Logging__Console__FormatterName=Simple
+```
+
+Both formatters are configured with `IncludeScopes=true`, so every log line
+inherits the structured scope set by the middleware:
+
+| Field | Source | Notes |
+|---|---|---|
+| `RequestId` | ASP.NET Core `TraceIdentifier` | one per HTTP request |
+| `Method`, `Path` | request line | unmasked |
+| `Username` | resolved auth user (or `(anonymous)` / `(auth-disabled)`) | unmasked — this is an identifier, not PII |
+| `IsAdmin` | resolved auth user | only present when authenticated |
+| `JobId` | the 12-char validation job id | unmasked, present for the async POST `/api/validate` job |
+| `Endpoint` | `validateDomainSync` or `validateDomainAsync` | which validation entry point |
+| `Domain` | the validation target | **masked** when `MaskTrace=true` (default), raw otherwise |
+| `Phase` | `PREFETCH` / `FOUNDATION` / `CONCURRENT` | populated by `DomainValidator` while inside that phase |
+| `Check` | the running check name | populated for messages emitted during a single check |
+
+In JSON mode every field appears as a top-level key on each log entry, so
+filtering with `jq` is trivial:
+
+```sh
+# All trace lines from one validation job
+docker logs ednsv | jq 'select(.Scopes[].JobId == "abc123def456")'
+
+# Just the prefetch traces from any validation
+docker logs ednsv | jq 'select(.Scopes[].Phase == "PREFETCH" and .LogLevel == "Debug")'
+
+# Errors from a specific user
+docker logs ednsv | jq 'select(.Scopes[].Username == "alice" and .LogLevel == "Error")'
+```
+
+In Simple mode the same fields appear in the prefixed scope block:
+
+```
+2026-05-01 12:34:56.789 dbug: Program[0] => RequestId:0HABC Username:alice JobId:abc123 Domain:h:nwAVisfCYL Phase:PREFETCH
+      [      0ms] [PHASE] PREFETCH START for h:nwAVisfCYL
+```
+
 ## Trace logging without leaky ASP.NET Core logs
 
 `Trace=true` causes the validator to emit per-check trace messages via

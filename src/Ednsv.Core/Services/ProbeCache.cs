@@ -32,8 +32,16 @@ public class ProbeCache<TValue> where TValue : class
     // starts the real work) is ever accessed — guaranteeing exactly one factory call.
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
-    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
-    public Action<string>? Trace { get; set; }
+    /// <summary>
+    /// Optional trace callback for cache-level diagnostics (hits, dedup joins).
+    /// Backed by <see cref="TraceContext.Sink"/> — setting this delegates to the
+    /// per-request AsyncLocal sink so concurrent validations don't share state.
+    /// </summary>
+    public Action<string>? Trace
+    {
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
+    }
 
     public ProbeCache(TimeSpan? ttl = null)
     {
@@ -197,8 +205,15 @@ public class ProbeCacheValue<TValue> where TValue : struct
     private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
-    /// <summary>Optional trace callback for cache-level diagnostics (hits, dedup joins).</summary>
-    public Action<string>? Trace { get; set; }
+    /// <summary>
+    /// Optional trace callback for cache-level diagnostics — see
+    /// <see cref="ProbeCache{T}.Trace"/> for AsyncLocal backing.
+    /// </summary>
+    public Action<string>? Trace
+    {
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
+    }
 
     private sealed class Box { public TValue Value; }
 

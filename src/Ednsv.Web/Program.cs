@@ -11,12 +11,35 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Console log timestamps with fractional seconds ───────────────────────
-builder.Logging.AddSimpleConsole(options =>
+// ── Console log formatter ───────────────────────────────────────────────
+// JSON in Production (or whenever Logging:Console:FormatterName=Json), Simple
+// in Development. Override either default with Logging:Console:FormatterName.
+// The JSON formatter emits structured fields including any active scope
+// values — e.g. JobId, Username, Domain, Phase, Check from the validation
+// pipeline — so logs from concurrent requests can be filtered with jq.
+var explicitFormatter = builder.Configuration.GetValue<string>("Logging:Console:FormatterName");
+var useJsonLogs = string.Equals(explicitFormatter, "Json", StringComparison.OrdinalIgnoreCase)
+    || (string.IsNullOrEmpty(explicitFormatter) && !builder.Environment.IsDevelopment());
+
+if (useJsonLogs)
 {
-    options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
-    options.SingleLine = true;
-});
+    builder.Logging.AddJsonConsole(options =>
+    {
+        options.IncludeScopes = true;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+        options.UseUtcTimestamp = true;
+        options.JsonWriterOptions = new System.Text.Json.JsonWriterOptions { Indented = false };
+    });
+}
+else
+{
+    builder.Logging.AddSimpleConsole(options =>
+    {
+        options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+        options.SingleLine = true;
+        options.IncludeScopes = true;
+    });
+}
 
 // ── Configuration ────────────────────────────────────────────────────────
 var dataDir = builder.Configuration.GetValue<string>("DataDir") ?? ".ednsv-data";
@@ -177,6 +200,23 @@ if (authService.Disabled)
 else
     app.Logger.LogInformation("Authentication enabled. Root user: '{User}'. Auth data: {Path}", AuthService.RootUsername, authDir);
 
+// ── Per-request log scope ───────────────────────────────────────────────
+// Every log line emitted while handling this request carries RequestId,
+// Path, and Method. The auth middleware below adds Username on top once
+// resolved. Validation endpoints layer JobId / Domain / Phase / Check
+// inside that. With JSON logs, every line is grep-able by any of these.
+var requestScopeLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Request");
+app.Use(async (ctx, next) =>
+{
+    using var scope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
+    {
+        ["RequestId"] = ctx.TraceIdentifier,
+        ["Method"] = ctx.Request.Method,
+        ["Path"] = ctx.Request.Path.Value
+    });
+    await next();
+});
+
 // ── Auth middleware ──────────────────────────────────────────────────────
 // Runs before static files so the entire site requires credentials when enabled.
 // Auth resolution order: ednsv-auth cookie → Authorization: Bearer → Authorization: Basic.
@@ -185,6 +225,7 @@ app.Use(async (ctx, next) =>
 {
     if (authService.Disabled)
     {
+        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(auth-disabled)" });
         await next();
         return;
     }
@@ -194,6 +235,7 @@ app.Use(async (ctx, next) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
     {
+        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(anonymous)" });
         await next();
         return;
     }
@@ -244,6 +286,12 @@ app.Use(async (ctx, next) =>
 
     ctx.Items["AuthUser"] = user;
 
+    using var userScope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
+    {
+        ["Username"] = user.Username,
+        ["IsAdmin"] = user.IsAdmin
+    });
+
     // Admin-only static pages: gate /config.html before static files serve it.
     var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
     if (pathLower == "/config.html" && !user.IsAdmin)
@@ -272,13 +320,15 @@ app.UseStaticFiles();
 
 // POST /api/validate  { "domain": "example.com" }
 // Starts an async validation and returns a job ID.
-app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
+app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, ValidationTracker tracker,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
     CacheManager cache, ILogger<Program> logger) =>
 {
     var domain = req.Domain?.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
+
+    var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
 
     CheckSeverity? recheckSeverity = null;
     if (!string.IsNullOrEmpty(req.RecheckSeverity) &&
@@ -301,7 +351,7 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
     options.EnableDirectDns  = options.EnableDirectDns  && defaults.EnableDirectDns;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 })
 .WithName("StartValidation")
@@ -380,9 +430,29 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
 
+    var requestId = httpCtx.TraceIdentifier;
+    var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
+    var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+
+    using var requestScope = app.Logger.BeginScope(new Dictionary<string, object?>
+    {
+        ["RequestId"] = requestId,
+        ["Username"] = username,
+        ["Endpoint"] = "validateDomainSync",
+        ["Domain"] = displayDomain
+    });
+
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (traceMasker != null) validator.TraceMask = traceMasker;
-    if (enableTrace) validator.Trace = msg => app.Logger.LogDebug("{Trace}", msg);
+    if (enableTrace) validator.Trace = msg =>
+    {
+        using var traceScope = app.Logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["Phase"] = TraceContext.Phase,
+            ["Check"] = TraceContext.Check
+        });
+        app.Logger.LogDebug("{Trace}", msg);
+    };
 
     if (!string.IsNullOrEmpty(recheck) &&
         Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
@@ -761,19 +831,44 @@ class ValidationTracker : IDisposable
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
         CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null,
-        bool trace = false, TraceMasker? traceMasker = null)
+        bool trace = false, TraceMasker? traceMasker = null,
+        string? username = null)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
         _jobs[jobId] = job;
 
+        // Domain in logs/scopes is masked when masking is enabled. JobId and
+        // Username are deliberately NOT masked (they're identifiers, not PII
+        // like the validated target).
+        var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+
         _ = Task.Run(async () =>
         {
+            // Top-level scope for the whole validation: every log line emitted
+            // by this task (including those from the singleton DNS/SMTP/HTTP
+            // services via AsyncLocal) carries these structured fields.
+            using var jobScope = logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["JobId"] = jobId,
+                ["Username"] = username,
+                ["Endpoint"] = "validateDomainAsync",
+                ["Domain"] = displayDomain
+            });
+
             try
             {
                 var validator = new DomainValidator(dns, smtp, http);
                 if (traceMasker != null) validator.TraceMask = traceMasker;
-                if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
+                if (trace) validator.Trace = msg =>
+                {
+                    using var traceScope = logger.BeginScope(new Dictionary<string, object?>
+                    {
+                        ["Phase"] = TraceContext.Phase,
+                        ["Check"] = TraceContext.Check
+                    });
+                    logger.LogDebug("{Trace}", msg);
+                };
 
                 // Determine recheck deps (bypass MemoryCache without clearing shared entries)
                 if (recheckSeverity != null)
@@ -782,8 +877,7 @@ class ValidationTracker : IDisposable
                     if (deps != RecheckHelper.CacheDep.None)
                     {
                         validator.RecheckDeps = deps;
-                        var logDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
-                        logger.LogInformation("Recheck: bypassing cache for {Domain} ({Deps})", logDomain, deps);
+                        logger.LogInformation("Recheck: bypassing cache ({Deps})", deps);
                     }
                 }
 
@@ -815,8 +909,7 @@ class ValidationTracker : IDisposable
             }
             catch (Exception ex)
             {
-                var errDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
-                logger.LogError(ex, "Validation failed for {Domain}", errDomain);
+                logger.LogError(ex, "Validation failed");
                 job.Error = ex.Message;
                 job.Status = JobStatus.Failed;
             }

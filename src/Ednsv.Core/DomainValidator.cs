@@ -273,6 +273,11 @@ public class DomainValidator
         // ── Set per-validation recheck context (flows through async calls) ──
         RecheckHelper.CurrentRecheckDeps.Value = RecheckDeps;
 
+        // ── Prefetch phase: fire DNS queries and SMTP probes in parallel ──
+        // Set Phase first so the fire-and-forget HTTP prefetches below capture
+        // it via AsyncLocal at Task.Run time and their traces carry Phase=PREFETCH.
+        TraceContext.Phase = "PREFETCH";
+
         // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
         // These prime the HTTP cache for checks that will need them later.
         // They run alongside prefetch + foundation + concurrent checks.
@@ -281,7 +286,6 @@ public class DomainValidator
         _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt", maxRetries: 1));
         _ = Task.Run(() => _http.GetAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
 
-        // ── Prefetch phase: fire DNS queries and SMTP probes in parallel ──
         TraceLog($"[PHASE] PREFETCH START for {domain}");
         var prefetchSw = Stopwatch.StartNew();
         await PrefetchAsync(domain, context);
@@ -290,6 +294,7 @@ public class DomainValidator
         OnCheckTiming?.Invoke("Prefetch", prefetchSw.Elapsed);
 
         // ── Foundation checks: sequential, populate shared state ──────────
+        TraceContext.Phase = "FOUNDATION";
         TraceLog($"[PHASE] FOUNDATION START ({_foundationChecks.Count} checks)");
         var foundationSw = Stopwatch.StartNew();
         var timedOutChecks = new List<ICheck>();
@@ -301,6 +306,7 @@ public class DomainValidator
         TraceLog($"[PHASE] FOUNDATION DONE: {foundationSw.ElapsedMilliseconds}ms (mx:{context.MxHosts.Count} ns:{context.NsHosts.Count} spf:{(context.SpfRecord != null ? "yes" : "no")} dmarc:{(context.DmarcRecord != null ? "yes" : "no")})");
 
         // ── Concurrent checks: parallel, read-only on shared state ────────
+        TraceContext.Phase = "CONCURRENT";
         TraceLog($"[PHASE] CONCURRENT START ({_concurrentChecks.Count} checks, max 12 parallel)");
         var concurrentResults = new ConcurrentBag<(ICheck Check, List<CheckResult>? Results, CheckResult? Error, TimeSpan Elapsed, bool TimedOut)>();
 
@@ -308,26 +314,34 @@ public class DomainValidator
             new ParallelOptions { MaxDegreeOfParallelism = 12 },
             async (check, _) =>
             {
+                // AsyncLocal: writing here only flows to descendant tasks of THIS branch,
+                // so siblings in the same Parallel.ForEachAsync see their own check name.
+                TraceContext.Check = check.Name;
                 var checkSw = Stopwatch.StartNew();
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
                 try
                 {
                     OnCheckStarted?.Invoke(check.Name);
+                    TraceLog($"[CHECK] START {check.Name}");
                     var results = await check.RunAsync(domain, context, cts.Token);
                     checkSw.Stop();
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    var sevs = results.Count == 0 ? "" : string.Join(",", results.Select(r => r.Severity.ToString()));
+                    TraceLog($"[CHECK] DONE {check.Name}: {checkSw.ElapsedMilliseconds}ms [{sevs}]");
                     concurrentResults.Add((check, results, null, checkSw.Elapsed, false));
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
                     checkSw.Stop();
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    TraceLog($"[CHECK] TIMEOUT {check.Name}: {checkSw.ElapsedMilliseconds}ms");
                     concurrentResults.Add((check, null, null, checkSw.Elapsed, true));
                 }
                 catch (Exception ex)
                 {
                     checkSw.Stop();
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+                    TraceLog($"[CHECK] FAILED {check.Name}: {checkSw.ElapsedMilliseconds}ms ({ex.GetType().Name}: {ex.Message})");
                     var errorResult = new CheckResult
                     {
                         CheckName = check.Name,
@@ -445,6 +459,9 @@ public class DomainValidator
         // Clear per-validation contexts
         RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.None;
         DnsResolverService.CurrentQueryErrors.Value = null;
+        TraceContext.Phase = null;
+        TraceContext.Check = null;
+        TraceContext.Sink = null;
 
         return report;
     }
@@ -460,6 +477,11 @@ public class DomainValidator
     private async Task RunCheckAsync(ICheck check, string domain, CheckContext context,
         ValidationReport report, List<ICheck> timedOutChecks)
     {
+        // Foundation runs sequentially in the validator's flow context — set
+        // Check before each call and clear it after so traces between checks
+        // aren't mis-attributed.
+        var previousCheck = TraceContext.Check;
+        TraceContext.Check = check.Name;
         try
         {
             OnCheckStarted?.Invoke(check.Name);
@@ -501,6 +523,10 @@ public class DomainValidator
             };
             report.Results.Add(errorResult);
             OnCheckCompleted?.Invoke(check.Name, errorResult);
+        }
+        finally
+        {
+            TraceContext.Check = previousCheck;
         }
     }
 
