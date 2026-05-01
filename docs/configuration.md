@@ -147,6 +147,59 @@ Keep `MaskTrace=true` (the default) in any environment where trace output
 might be retained — it hashes domains and recipients so logs do not record
 real addresses.
 
+## HTTP/HTTPS proxy
+
+`HttpProbeService` uses a default `HttpClientHandler`, so the standard .NET
+proxy resolution applies — set the env vars before the process starts and
+all HTTP/HTTPS lookups (MTA-STS, security.txt, BIMI, Certificate
+Transparency / `crt.sh`) route through the proxy automatically. **No code
+changes needed.**
+
+### Linux / macOS / Docker
+
+```sh
+# HTTPS — covers crt.sh, .well-known/security.txt, BIMI, MTA-STS
+export HTTPS_PROXY=http://proxy.corp.local:3128
+# Plain HTTP — use lowercase. The .NET runtime intentionally ignores the
+# uppercase HTTP_PROXY on Unix to mitigate an old Apache/CGI hijack
+# (see https://httpoxy.org).
+export http_proxy=http://proxy.corp.local:3128
+# Bypass list (comma-separated; a leading dot = suffix match)
+export NO_PROXY=localhost,127.0.0.1,.internal.example.com
+# Optional fallback when neither HTTP_/HTTPS_ matches
+export ALL_PROXY=http://proxy.corp.local:3128
+```
+
+If the proxy needs auth: `https://user:pass@proxy.corp.local:3128`. URL-
+encode any special characters in the credentials.
+
+In Docker:
+
+```sh
+docker run \
+  -e HTTPS_PROXY=http://proxy.corp.local:3128 \
+  -e NO_PROXY=localhost,127.0.0.1,.internal.example.com \
+  ghcr.io/pkinerd/ednsv:latest
+```
+
+### Windows host
+
+`HttpClient` ignores these env vars on Windows and uses the WinHTTP / IE
+proxy settings. Inside Linux containers running on Windows the env-var
+path above applies normally.
+
+### Scope and gotchas
+
+- The proxy applies **only** to `HttpClient`. It does **not** route DNS
+  queries (configured resolver or direct-to-IP), SMTP TCP probes, or
+  authoritative-nameserver probes. For DNS egress in restricted networks
+  see `EnableDirectDns` above.
+- `NO_PROXY` matching: entries starting with `.` match by suffix; others
+  match by exact host. CIDRs aren't supported.
+- Env vars are read **once** when `HttpClient.DefaultProxy` is initialised.
+  Set them in the unit/compose file or before `dotnet` is invoked — don't
+  expect a running container to pick up changes.
+
 ## Authentication
 
 `EDNSV_AUTH_TOKEN_HASH` takes precedence over `AuthTokenHash` in
