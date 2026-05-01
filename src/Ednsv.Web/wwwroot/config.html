@@ -104,6 +104,12 @@
     </div>
 
     <div class="panel">
+      <h2>Known domains</h2>
+      <p class="subtitle">Operator-curated list shown in the validator page's domain dropdown alongside each user's own history and any domains with per-domain DKIM config. Comma-, space-, or newline-separated. Domains are normalised (lowercased, trailing dot stripped).</p>
+      <textarea id="cfgKnownDomains" placeholder="example.com, gmail.com, your-customer.org"></textarea>
+    </div>
+
+    <div class="panel">
       <h2>Per-domain DKIM selectors</h2>
       <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
       <table id="domTable">
@@ -165,6 +171,7 @@ function fillForm(cfg) {
   $('#cfgDnsbl').checked = !!cfg.enableDnsbl;
   $('#cfgDirectDns').checked = cfg.enableDirectDns !== false;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
+  $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');
   renderDomTable(cfg.dkimSelectors || {});
   $('#rawJson').value = JSON.stringify(cfg, null, 2);
 }
@@ -213,7 +220,8 @@ function collectFormConfig() {
     enableDnsbl:      $('#cfgDnsbl').checked,
     enableDirectDns:  $('#cfgDirectDns').checked,
     defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
-    dkimSelectors: dkim
+    dkimSelectors: dkim,
+    knownDomains: parseList($('#cfgKnownDomains').value)
   };
 }
 

@@ -546,7 +546,8 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
         dkimSelectors    = cfg.DefaultDkimSelectors.Count > 0
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),
-        perDomainDkimSelectors = cfg.DkimSelectors
+        perDomainDkimSelectors = cfg.DkimSelectors,
+        knownDomains     = cfg.KnownDomains
     });
 })
 .WithName("GetDefaults")

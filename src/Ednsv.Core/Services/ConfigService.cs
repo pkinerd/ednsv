@@ -45,6 +45,15 @@ public sealed class AppConfig
     [JsonPropertyName("dkimSelectors")]
     public Dictionary<string, List<string>> DkimSelectors { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Operator-curated list of well-known domains for the validator page's
+    /// dropdown / autocomplete. Surfaced via /api/defaults; the UI merges
+    /// this with the keys of <see cref="DkimSelectors"/> and the user's
+    /// own client-side history.
+    /// </summary>
+    [JsonPropertyName("knownDomains")]
+    public List<string> KnownDomains { get; set; } = new();
 }
 
 public sealed class ConfigService
@@ -85,6 +94,7 @@ public sealed class ConfigService
                     {
                         // Normalize keys: lowercase, trim trailing dot
                         parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                        parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
                         lock (_lock) _current = parsed;
                         return Snapshot();
                     }
@@ -97,6 +107,7 @@ public sealed class ConfigService
         }
 
         seed.DkimSelectors = NormalizeKeys(seed.DkimSelectors ?? new Dictionary<string, List<string>>());
+        seed.KnownDomains = NormalizeDomainList(seed.KnownDomains ?? new List<string>());
         lock (_lock) _current = seed;
         SaveLocked();
         return Snapshot();
@@ -116,7 +127,8 @@ public sealed class ConfigService
                 DkimSelectors = new Dictionary<string, List<string>>(
                     _current.DkimSelectors.Select(kv =>
                         new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
-                    StringComparer.OrdinalIgnoreCase)
+                    StringComparer.OrdinalIgnoreCase),
+                KnownDomains = new List<string>(_current.KnownDomains)
             };
         }
     }
@@ -127,6 +139,7 @@ public sealed class ConfigService
         if (incoming == null) throw new ArgumentNullException(nameof(incoming));
         incoming.DefaultDkimSelectors ??= new List<string>();
         incoming.DkimSelectors = NormalizeKeys(incoming.DkimSelectors ?? new Dictionary<string, List<string>>());
+        incoming.KnownDomains = NormalizeDomainList(incoming.KnownDomains ?? new List<string>());
         lock (_lock)
         {
             _current = incoming;
@@ -173,4 +186,11 @@ public sealed class ConfigService
         }
         return result;
     }
+
+    private static List<string> NormalizeDomainList(List<string> src) =>
+        (src ?? new List<string>())
+            .Select(d => (d ?? "").Trim().TrimEnd('.').ToLowerInvariant())
+            .Where(d => d.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 }

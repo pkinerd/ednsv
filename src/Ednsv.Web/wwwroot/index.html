@@ -18,8 +18,21 @@
   .nav .who { color: var(--muted); margin-left: auto; }
   .nav .signout { color: var(--muted); }
   .search-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
-  .search-form input { flex: 1; padding: 0.6rem 0.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
-  .search-form input:focus { border-color: var(--accent); }
+  .domain-combo { flex: 1; position: relative; display: flex; }
+  .domain-combo input { flex: 1; padding: 0.6rem 0.8rem; padding-right: 2.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
+  .domain-combo input:focus { border-color: var(--accent); }
+  .domain-combo .arrow-btn { position: absolute; right: 0; top: 0; bottom: 0; width: 2rem; background: transparent; border: none; color: var(--muted); font-size: 0.75rem; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
+  .domain-combo .arrow-btn:hover { color: var(--accent); }
+  .domain-combo .suggestions { position: absolute; top: calc(100% + 2px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; max-height: 18rem; overflow-y: auto; z-index: 10; box-shadow: 0 6px 18px rgba(0,0,0,0.4); display: none; }
+  .domain-combo.open .suggestions { display: block; }
+  .domain-combo .suggestions .group-label { padding: 0.35rem 0.7rem; font-size: 0.7rem; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--border); background: rgba(0,0,0,0.15); }
+  .domain-combo .suggestions .group-label:first-child { border-top: none; }
+  .domain-combo .suggestions .empty { padding: 0.5rem 0.7rem; font-size: 0.8rem; color: var(--muted); }
+  .domain-combo .suggestions .item { padding: 0.4rem 0.7rem; font-size: 0.85rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; }
+  .domain-combo .suggestions .item:hover, .domain-combo .suggestions .item.active { background: rgba(56,189,248,0.15); color: var(--text); }
+  .domain-combo .suggestions .item .src { margin-left: auto; font-size: 0.7rem; color: var(--muted); }
+  .domain-combo .suggestions .item .remove { color: var(--muted); font-size: 0.75rem; padding: 0 0.25rem; cursor: pointer; }
+  .domain-combo .suggestions .item .remove:hover { color: var(--error); }
   .search-form select { padding: 0.6rem 0.5rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
   .search-form select:focus { border-color: var(--accent); }
   .search-form button { padding: 0.6rem 1.2rem; background: var(--accent); color: var(--bg); border: none; border-radius: 6px; font-family: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
@@ -93,8 +106,11 @@
   </div>
 
   <form class="search-form" id="form">
-    <input type="text" id="domain" list="domainHistory" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
-    <datalist id="domainHistory"></datalist>
+    <div class="domain-combo" id="domainCombo">
+      <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+      <button type="button" class="arrow-btn" id="domainArrow" title="Show all known domains" aria-label="Show all known domains">&#9662;</button>
+      <div class="suggestions" id="domainSuggestions" role="listbox"></div>
+    </div>
     <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
       <option value="">No recheck</option>
       <option value="Warning">Recheck warnings+</option>
@@ -229,6 +245,8 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (!userOverrideKeys.has('directDns') && typeof d.enableDirectDns  === 'boolean') optDirectDns.checked = d.enableDirectDns;
   if (d.perDomainDkimSelectors && typeof d.perDomainDkimSelectors === 'object')
     perDomainDkim = d.perDomainDkimSelectors;
+  if (Array.isArray(d.knownDomains))
+    knownDomains = d.knownDomains;
   if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
     optDkim.value = d.dkimSelectors.join(', ');
   updateDomainHint();
@@ -260,11 +278,16 @@ fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
   }
 }).catch(() => {});
 
-// ── Domain history: keep a most-recently-used list of domains the user has
-// validated, persisted to localStorage. Strictly client-side; never sent to
-// the server. Backs the <datalist> for native autocomplete.
+// ── Domain combo: client-side history + server-supplied known/per-domain
+// DKIM keys. The dropdown ALWAYS shows the full union (recent history first,
+// then known domains, then per-domain DKIM keys), regardless of what's
+// already typed in the input — clicking the ▾ button or pressing
+// ArrowDown/Alt+Down opens it. Pure client-side; the suggestion union is
+// computed at render time from localStorage + cached /api/defaults values.
 const DOMAIN_HISTORY_KEY = 'ednsv.domainHistory';
 const DOMAIN_HISTORY_MAX = 50;
+let knownDomains = [];   // populated from /api/defaults
+
 function loadDomainHistory() {
   try {
     const raw = localStorage.getItem(DOMAIN_HISTORY_KEY);
@@ -282,15 +305,82 @@ function rememberDomain(d) {
   const list = loadDomainHistory().filter(x => x !== norm);
   list.unshift(norm);
   saveDomainHistory(list);
-  renderDomainHistory();
 }
-function renderDomainHistory() {
-  const dl = document.getElementById('domainHistory');
-  if (!dl) return;
-  const list = loadDomainHistory();
-  dl.innerHTML = list.map(d => `<option value="${esc(d)}">`).join('');
+function forgetDomain(d) {
+  const list = loadDomainHistory().filter(x => x !== d);
+  saveDomainHistory(list);
 }
-renderDomainHistory();
+
+const combo = document.getElementById('domainCombo');
+const arrowBtn = document.getElementById('domainArrow');
+const suggestionsEl = document.getElementById('domainSuggestions');
+
+function buildSuggestionGroups() {
+  const history = loadDomainHistory();
+  const dkimKeys = Object.keys(perDomainDkim || {});
+  const known = (knownDomains || []).slice();
+  const seen = new Set(history);
+  const knownExtras = known.filter(d => !seen.has(d));
+  knownExtras.forEach(d => seen.add(d));
+  const dkimExtras = dkimKeys.filter(d => !seen.has(d));
+  return [
+    { label: 'Recent',          items: history.map(d => ({ d, src: 'recent', removable: true })) },
+    { label: 'Known domains',   items: knownExtras.map(d => ({ d, src: 'known' })) },
+    { label: 'Per-domain DKIM', items: dkimExtras.map(d => ({ d, src: 'dkim' })) },
+  ].filter(g => g.items.length > 0);
+}
+
+function renderSuggestions() {
+  const groups = buildSuggestionGroups();
+  if (groups.length === 0) {
+    suggestionsEl.innerHTML = '<div class="empty">No remembered or known domains yet — type one and Validate.</div>';
+    return;
+  }
+  let html = '';
+  for (const g of groups) {
+    html += `<div class="group-label">${esc(g.label)}</div>`;
+    for (const it of g.items) {
+      const removeBtn = it.removable
+        ? `<span class="remove" data-remove="${esc(it.d)}" title="Remove from history">&times;</span>`
+        : '';
+      html += `<div class="item" data-domain="${esc(it.d)}" role="option">${esc(it.d)}<span class="src">${esc(it.src)}</span>${removeBtn}</div>`;
+    }
+  }
+  suggestionsEl.innerHTML = html;
+  suggestionsEl.querySelectorAll('.item').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      // mousedown so we win against the input's blur handler
+      if (e.target.classList.contains('remove')) return;
+      e.preventDefault();
+      input.value = el.dataset.domain;
+      closeCombo();
+      input.focus();
+      updateDomainHint();
+    });
+  });
+  suggestionsEl.querySelectorAll('[data-remove]').forEach(el => {
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      forgetDomain(el.dataset.remove);
+      renderSuggestions();
+    });
+  });
+}
+
+function openCombo() { renderSuggestions(); combo.classList.add('open'); }
+function closeCombo() { combo.classList.remove('open'); }
+function toggleCombo() { combo.classList.contains('open') ? closeCombo() : openCombo(); }
+
+arrowBtn.addEventListener('click', toggleCombo);
+input.addEventListener('focus', openCombo);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeCombo(); }
+  else if ((e.key === 'ArrowDown' && e.altKey) || e.key === 'F4') { e.preventDefault(); openCombo(); }
+});
+document.addEventListener('mousedown', e => {
+  if (!combo.contains(e.target)) closeCombo();
+});
 
 document.getElementById('signOut').addEventListener('click', async e => {
   e.preventDefault();
