@@ -9,18 +9,15 @@ public class HttpProbeService
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
 
-    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    /// <summary>
+    /// Optional trace callback. Backed by <see cref="TraceContext.Sink"/>
+    /// (AsyncLocal) so concurrent validations don't share a sink.
+    /// </summary>
     public Action<string>? Trace
     {
-        get => _trace;
-        set
-        {
-            _trace = value;
-            _getCache.Trace = value;
-            _getWithHeadersCache.Trace = value;
-        }
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
     }
-    private Action<string>? _trace;
 
     // Wrapper classes so value tuples can be stored in ProbeCache<T> (requires class constraint)
     private sealed class GetResult
@@ -68,6 +65,52 @@ public class HttpProbeService
                 try
                 {
                     var response = await _client.GetAsync(url);
+                    var content = await response.Content.ReadAsStringAsync();
+                    if (Trace != null && sw != null)
+                        Trace($"[HTTP] GET DONE {url}: {sw.ElapsedMilliseconds}ms status={response.StatusCode}");
+                    return new GetResult { Success = response.IsSuccessStatusCode, Content = content, StatusCode = (int)response.StatusCode };
+                }
+                catch (Exception ex)
+                {
+                    lastResult = (false, ex.Message, 0);
+                    Trace?.Invoke($"[HTTP] GET RETRY {url} attempt {attempt + 1}/{retries} ({ex.Message})");
+                }
+                finally
+                {
+                    _concurrencyLimiter.Release();
+                }
+            }
+            if (Trace != null && sw != null)
+                Trace($"[HTTP] GET FAILED {url}: {sw.ElapsedMilliseconds}ms after {retries} attempts");
+            return new GetResult { Success = lastResult.success, Content = lastResult.content ?? "", StatusCode = lastResult.statusCode };
+        }, RecheckHelper.CacheDep.Http,
+        shouldPersist: result => result.Success || result.StatusCode > 0);
+        return result.ToTuple();
+    }
+
+    /// <summary>
+    /// GET with a custom Accept header. Used for DoH JSON endpoints where the
+    /// resolver requires <c>Accept: application/dns-json</c> to return JSON
+    /// instead of the default <c>application/dns-message</c> binary format.
+    /// Cache key includes the Accept value so different Accepts don't collide.
+    /// </summary>
+    public async Task<(bool success, string content, int statusCode)> GetWithAcceptAsync(string url, string accept, int? maxRetries = null)
+    {
+        var retries = maxRetries ?? MaxRetries;
+        var cacheKey = $"{url}\nAccept:{accept}";
+        var result = await _getCache.GetOrCreateAsync(cacheKey, async () =>
+        {
+            Trace?.Invoke($"[HTTP] GET START {url} (accept={accept})");
+            var sw = Trace != null ? Stopwatch.StartNew() : null;
+            (bool success, string content, int statusCode) lastResult = default;
+            for (int attempt = 0; attempt < retries; attempt++)
+            {
+                await _concurrencyLimiter.WaitAsync();
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Get, url);
+                    req.Headers.Accept.ParseAdd(accept);
+                    var response = await _client.SendAsync(req);
                     var content = await response.Content.ReadAsStringAsync();
                     if (Trace != null && sw != null)
                         Trace($"[HTTP] GET DONE {url}: {sw.ElapsedMilliseconds}ms status={response.StatusCode}");

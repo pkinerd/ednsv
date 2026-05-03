@@ -11,12 +11,35 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Console log timestamps with fractional seconds ───────────────────────
-builder.Logging.AddSimpleConsole(options =>
+// ── Console log formatter ───────────────────────────────────────────────
+// JSON in Production (or whenever Logging:Console:FormatterName=Json), Simple
+// in Development. Override either default with Logging:Console:FormatterName.
+// The JSON formatter emits structured fields including any active scope
+// values — e.g. JobId, Username, Domain, Phase, Check from the validation
+// pipeline — so logs from concurrent requests can be filtered with jq.
+var explicitFormatter = builder.Configuration.GetValue<string>("Logging:Console:FormatterName");
+var useJsonLogs = string.Equals(explicitFormatter, "Json", StringComparison.OrdinalIgnoreCase)
+    || (string.IsNullOrEmpty(explicitFormatter) && !builder.Environment.IsDevelopment());
+
+if (useJsonLogs)
 {
-    options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
-    options.SingleLine = true;
-});
+    builder.Logging.AddJsonConsole(options =>
+    {
+        options.IncludeScopes = true;
+        options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
+        options.UseUtcTimestamp = true;
+        options.JsonWriterOptions = new System.Text.Json.JsonWriterOptions { Indented = false };
+    });
+}
+else
+{
+    builder.Logging.AddSimpleConsole(options =>
+    {
+        options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+        options.SingleLine = true;
+        options.IncludeScopes = true;
+    });
+}
 
 // ── Configuration ────────────────────────────────────────────────────────
 var dataDir = builder.Configuration.GetValue<string>("DataDir") ?? ".ednsv-data";
@@ -34,6 +57,8 @@ var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
 var defaultEnableSmtpProbes = builder.Configuration.GetValue<bool>("EnableSmtpProbes", true);
 var defaultEnableHttpProbes = builder.Configuration.GetValue<bool>("EnableHttpProbes", true);
 var defaultEnableDnsbl      = builder.Configuration.GetValue<bool>("EnableDnsbl",      true);
+var defaultEnableDirectDns  = builder.Configuration.GetValue<bool>("EnableDirectDns",  true);
+var defaultEnableDoh        = builder.Configuration.GetValue<bool>("EnableDoh",        false);
 
 // Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
 var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
@@ -82,6 +107,8 @@ var seedConfig = new AppConfig
     EnableSmtpProbes = defaultEnableSmtpProbes,
     EnableHttpProbes = defaultEnableHttpProbes,
     EnableDnsbl      = defaultEnableDnsbl,
+    EnableDirectDns  = defaultEnableDirectDns,
+    EnableDoh        = defaultEnableDoh,
     DefaultDkimSelectors = !string.IsNullOrEmpty(dkimSelectorsStr)
         ? dkimSelectorsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
@@ -100,6 +127,8 @@ ValidationOptions BuildDefaultOptions()
         EnableSmtpProbes        = cfg.EnableSmtpProbes,
         EnableHttpProbes        = cfg.EnableHttpProbes,
         EnableDnsbl             = cfg.EnableDnsbl,
+        EnableDirectDns         = cfg.EnableDirectDns,
+        EnableDoh               = cfg.EnableDoh,
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
             .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
@@ -174,6 +203,23 @@ if (authService.Disabled)
 else
     app.Logger.LogInformation("Authentication enabled. Root user: '{User}'. Auth data: {Path}", AuthService.RootUsername, authDir);
 
+// ── Per-request log scope ───────────────────────────────────────────────
+// Every log line emitted while handling this request carries RequestId,
+// Path, and Method. The auth middleware below adds Username on top once
+// resolved. Validation endpoints layer JobId / Domain / Phase / Check
+// inside that. With JSON logs, every line is grep-able by any of these.
+var requestScopeLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Request");
+app.Use(async (ctx, next) =>
+{
+    using var scope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
+    {
+        ["RequestId"] = ctx.TraceIdentifier,
+        ["Method"] = ctx.Request.Method,
+        ["Path"] = ctx.Request.Path.Value
+    });
+    await next();
+});
+
 // ── Auth middleware ──────────────────────────────────────────────────────
 // Runs before static files so the entire site requires credentials when enabled.
 // Auth resolution order: ednsv-auth cookie → Authorization: Bearer → Authorization: Basic.
@@ -182,6 +228,7 @@ app.Use(async (ctx, next) =>
 {
     if (authService.Disabled)
     {
+        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(auth-disabled)" });
         await next();
         return;
     }
@@ -191,6 +238,7 @@ app.Use(async (ctx, next) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
     {
+        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(anonymous)" });
         await next();
         return;
     }
@@ -241,6 +289,12 @@ app.Use(async (ctx, next) =>
 
     ctx.Items["AuthUser"] = user;
 
+    using var userScope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
+    {
+        ["Username"] = user.Username,
+        ["IsAdmin"] = user.IsAdmin
+    });
+
     // Admin-only static pages: gate /config.html before static files serve it.
     var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
     if (pathLower == "/config.html" && !user.IsAdmin)
@@ -269,7 +323,7 @@ app.UseStaticFiles();
 
 // POST /api/validate  { "domain": "example.com" }
 // Starts an async validation and returns a job ID.
-app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
+app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, ValidationTracker tracker,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
     CacheManager cache, ILogger<Program> logger) =>
 {
@@ -277,27 +331,28 @@ app.MapPost("/api/validate", (ValidateRequest req, ValidationTracker tracker,
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
 
+    var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
+
     CheckSeverity? recheckSeverity = null;
     if (!string.IsNullOrEmpty(req.RecheckSeverity) &&
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
-    // Merge request options with the live config snapshot. Network-category
-    // toggles use AND-logic: an admin-disabled category via config.json cannot
-    // be re-enabled by a client. Per-domain DKIM selectors and the global
-    // default DKIM list are pulled from config (clients can still override
-    // via AdditionalDkimSelectors / ForceDkimSelectors).
+    // Config supplies defaults only — the request body wins. When the client
+    // omits Options entirely we fall back to the config snapshot wholesale;
+    // when the client sends Options we trust them as authoritative for the
+    // network-category toggles. Per-domain DKIM selectors and the global
+    // default DKIM list are still pulled from config when the request hasn't
+    // supplied any (clients can override via AdditionalDkimSelectors /
+    // ForceDkimSelectors).
     var defaults = BuildDefaultOptions();
-    var options = req.Options ?? new ValidationOptions();
+    var options = req.Options ?? defaults;
     if (!options.AdditionalDkimSelectors.Any() && defaults.AdditionalDkimSelectors.Any())
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
     if (options.PerDomainDkimSelectors.Count == 0)
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
-    options.EnableSmtpProbes = options.EnableSmtpProbes && defaults.EnableSmtpProbes;
-    options.EnableHttpProbes = options.EnableHttpProbes && defaults.EnableHttpProbes;
-    options.EnableDnsbl      = options.EnableDnsbl      && defaults.EnableDnsbl;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker);
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 })
 .WithName("StartValidation")
@@ -360,7 +415,9 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?noSmtp=true                        skip SMTP probes (--no-smtp)
 //   ?noHttp=true                        skip HTTP/HTTPS probes (--no-http)
 //   ?noDnsbl=true                       skip DNSBL queries (--no-dnsbl)
-//   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl
+//   ?noDirectDns=true                   skip checks that talk directly to nameservers / public resolvers
+//   ?noDoh=true                         force the propagation check to use raw UDP/53 even when DoH is enabled
+//   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl + noDirectDns
 //   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
 //   ?axfr=true                          enable AXFR test
 //   ?catchAll=true                      enable catch-all detection
@@ -375,9 +432,29 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
 
+    var requestId = httpCtx.TraceIdentifier;
+    var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
+    var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+
+    using var requestScope = app.Logger.BeginScope(new Dictionary<string, object?>
+    {
+        ["RequestId"] = requestId,
+        ["Username"] = username,
+        ["Endpoint"] = "validateDomainSync",
+        ["Domain"] = displayDomain
+    });
+
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (traceMasker != null) validator.TraceMask = traceMasker;
-    if (enableTrace) validator.Trace = msg => app.Logger.LogDebug("{Trace}", msg);
+    if (enableTrace) validator.Trace = msg =>
+    {
+        using var traceScope = app.Logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["Phase"] = TraceContext.Phase,
+            ["Check"] = TraceContext.Check
+        });
+        app.Logger.LogDebug("{Trace}", msg);
+    };
 
     if (!string.IsNullOrEmpty(recheck) &&
         Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
@@ -395,6 +472,8 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableSmtpProbes = defaults.EnableSmtpProbes && !restricted && !ParseBool("noSmtp"),
         EnableHttpProbes = defaults.EnableHttpProbes && !restricted && !ParseBool("noHttp"),
         EnableDnsbl      = defaults.EnableDnsbl      && !restricted && !ParseBool("noDnsbl"),
+        EnableDirectDns  = defaults.EnableDirectDns  && !restricted && !ParseBool("noDirectDns"),
+        EnableDoh        = defaults.EnableDoh        && !ParseBool("noDoh"),
         EnableAxfr         = ParseBool("axfr"),
         EnableCatchAll     = ParseBool("catchAll"),
         EnableOpenRelay    = ParseBool("openRelay"),
@@ -466,10 +545,12 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
         enableSmtpProbes = cfg.EnableSmtpProbes,
         enableHttpProbes = cfg.EnableHttpProbes,
         enableDnsbl      = cfg.EnableDnsbl,
+        enableDirectDns  = cfg.EnableDirectDns,
         dkimSelectors    = cfg.DefaultDkimSelectors.Count > 0
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),
-        perDomainDkimSelectors = cfg.DkimSelectors
+        perDomainDkimSelectors = cfg.DkimSelectors,
+        knownDomains     = cfg.KnownDomains
     });
 })
 .WithName("GetDefaults")
@@ -518,6 +599,134 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
 })
 .WithName("UpdateConfig")
 .WithTags("Config");
+
+// ── Debug / diagnostics (admin-only) ─────────────────────────────────────
+
+// GET /api/debug/proxy?url=https://example.com/foo
+// Reports what HttpClient.DefaultProxy resolves for the given URL plus the
+// proxy-related env vars actually visible to the running process, AND
+// performs a real GET so the caller can see the actual status code,
+// response headers, timing, and any exception. Useful when "(HTTP 0)"
+// failures suggest the proxy env vars aren't being picked up — e.g.
+// NO_PROXY is suffix-matching the host, the vars were set after the
+// process started, the proxy itself is unreachable, or TLS interception
+// is breaking the handshake.
+app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string? url) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
+        return Results.BadRequest(new { error = "url must be an absolute URI, e.g. ?url=https://example.com/foo" });
+
+    Uri? proxyUri = null;
+    bool bypassed = false;
+    string? proxyError = null;
+    try
+    {
+        proxyUri = HttpClient.DefaultProxy.GetProxy(u);
+        bypassed = HttpClient.DefaultProxy.IsBypassed(u);
+    }
+    catch (Exception ex)
+    {
+        proxyError = $"{ex.GetType().Name}: {ex.Message}";
+    }
+
+    string? Pick(params string[] names) =>
+        names.Select(Environment.GetEnvironmentVariable).FirstOrDefault(v => !string.IsNullOrEmpty(v));
+
+    // Use a dictionary so the JSON serializer's camelCase policy doesn't
+    // rewrite the env-var keys (HTTPS_PROXY → httpS_PROXY etc.).
+    var envSeenByProcess = new Dictionary<string, string?>
+    {
+        ["HTTPS_PROXY"] = Pick("HTTPS_PROXY", "https_proxy"),
+        ["HTTP_PROXY"]  = Pick("HTTP_PROXY", "http_proxy"),
+        ["ALL_PROXY"]   = Pick("ALL_PROXY", "all_proxy"),
+        ["NO_PROXY"]    = Pick("NO_PROXY", "no_proxy")
+    };
+
+    // Actually retrieve the URL through a default HttpClient so the same
+    // proxy resolution that HttpProbeService sees is exercised here.
+    int statusCode = 0;
+    string? statusReason = null;
+    string? httpVersion = null;
+    long? contentLength = null;
+    long? bodyBytesRead = null;
+    var responseHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    string? fetchError = null;
+    long elapsedMs = 0;
+
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    try
+    {
+        using var handler = new HttpClientHandler();
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("ednsv-debug/1.0");
+        using var resp = await http.GetAsync(u, HttpCompletionOption.ResponseHeadersRead, ctx.RequestAborted);
+        statusCode = (int)resp.StatusCode;
+        statusReason = resp.ReasonPhrase;
+        httpVersion = resp.Version.ToString();
+        contentLength = resp.Content.Headers.ContentLength;
+
+        foreach (var h in resp.Headers)
+            responseHeaders[h.Key] = string.Join(", ", h.Value);
+        foreach (var h in resp.Content.Headers)
+            responseHeaders[h.Key] = string.Join(", ", h.Value);
+
+        // Drain a small slice of the body so timing/error reflects the
+        // full request — capped to avoid pulling large payloads.
+        const int MaxBodyBytes = 4096;
+        await using var stream = await resp.Content.ReadAsStreamAsync(ctx.RequestAborted);
+        var buf = new byte[MaxBodyBytes];
+        long total = 0;
+        int n;
+        while ((n = await stream.ReadAsync(buf.AsMemory(0, buf.Length), ctx.RequestAborted)) > 0)
+        {
+            total += n;
+            if (total >= MaxBodyBytes) break;
+        }
+        bodyBytesRead = total;
+    }
+    catch (Exception ex)
+    {
+        var inner = ex.InnerException is null ? "" : $" → {ex.InnerException.GetType().Name}: {ex.InnerException.Message}";
+        fetchError = $"{ex.GetType().Name}: {ex.Message}{inner}";
+    }
+    finally
+    {
+        sw.Stop();
+        elapsedMs = sw.ElapsedMilliseconds;
+    }
+
+    return Results.Ok(new
+    {
+        target = u.ToString(),
+        proxyResolved = proxyUri?.ToString(),
+        bypassed,
+        proxyError,
+        envSeenByProcess,
+        fetch = new
+        {
+            statusCode,
+            statusReason,
+            httpVersion,
+            contentLength,
+            bodyBytesRead,
+            elapsedMs,
+            error = fetchError,
+            headers = responseHeaders
+        },
+        notes = new[]
+        {
+            "proxyResolved == target URL itself means HttpClient is going direct (no proxy applied).",
+            "bypassed=true means NO_PROXY matched — entries starting with '.' suffix-match.",
+            "Env vars listed here are what THIS process sees right now; if they differ from your shell, the process didn't inherit them.",
+            "DefaultProxy is initialised once on first use; vars set AFTER the process started are not picked up.",
+            "fetch.statusCode=0 with a non-null fetch.error means the request never produced an HTTP response — typically proxy/DNS/TLS failure. Check fetch.error for the reason.",
+            "fetch.headers reflects what the server (or proxy) actually returned; a Via or X-Cache header often confirms the proxy was traversed."
+        }
+    });
+})
+.WithName("DebugProxy")
+.WithTags("Debug");
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 
@@ -754,19 +963,44 @@ class ValidationTracker : IDisposable
     public string StartValidation(string domain, DnsResolverService dns,
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
         CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null,
-        bool trace = false, TraceMasker? traceMasker = null)
+        bool trace = false, TraceMasker? traceMasker = null,
+        string? username = null)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
         _jobs[jobId] = job;
 
+        // Domain in logs/scopes is masked when masking is enabled. JobId and
+        // Username are deliberately NOT masked (they're identifiers, not PII
+        // like the validated target).
+        var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+
         _ = Task.Run(async () =>
         {
+            // Top-level scope for the whole validation: every log line emitted
+            // by this task (including those from the singleton DNS/SMTP/HTTP
+            // services via AsyncLocal) carries these structured fields.
+            using var jobScope = logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["JobId"] = jobId,
+                ["Username"] = username,
+                ["Endpoint"] = "validateDomainAsync",
+                ["Domain"] = displayDomain
+            });
+
             try
             {
                 var validator = new DomainValidator(dns, smtp, http);
                 if (traceMasker != null) validator.TraceMask = traceMasker;
-                if (trace) validator.Trace = msg => logger.LogDebug("{Trace}", msg);
+                if (trace) validator.Trace = msg =>
+                {
+                    using var traceScope = logger.BeginScope(new Dictionary<string, object?>
+                    {
+                        ["Phase"] = TraceContext.Phase,
+                        ["Check"] = TraceContext.Check
+                    });
+                    logger.LogDebug("{Trace}", msg);
+                };
 
                 // Determine recheck deps (bypass MemoryCache without clearing shared entries)
                 if (recheckSeverity != null)
@@ -775,8 +1009,7 @@ class ValidationTracker : IDisposable
                     if (deps != RecheckHelper.CacheDep.None)
                     {
                         validator.RecheckDeps = deps;
-                        var logDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
-                        logger.LogInformation("Recheck: bypassing cache for {Domain} ({Deps})", logDomain, deps);
+                        logger.LogInformation("Recheck: bypassing cache ({Deps})", deps);
                     }
                 }
 
@@ -808,8 +1041,7 @@ class ValidationTracker : IDisposable
             }
             catch (Exception ex)
             {
-                var errDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
-                logger.LogError(ex, "Validation failed for {Domain}", errDomain);
+                logger.LogError(ex, "Validation failed");
                 job.Error = ex.Message;
                 job.Status = JobStatus.Failed;
             }

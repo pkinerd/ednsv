@@ -155,4 +155,20 @@ public class ValidationOptions
     public bool EnableSmtpProbes { get; set; } = true;
     public bool EnableHttpProbes { get; set; } = true;
     public bool EnableDnsbl { get; set; } = true;
+
+    /// <summary>
+    /// Allow checks to talk directly to specific authoritative nameservers and
+    /// public resolvers (propagation, lame delegation, SOA-serial consistency,
+    /// glue records, parent-side delegation, open-recursive-resolver, AXFR).
+    /// When false, those checks are skipped and the regular configured resolver
+    /// is the only DNS path used.
+    /// </summary>
+    public bool EnableDirectDns { get; set; } = true;
+
+    /// <summary>
+    /// When true, the public-resolver propagation check (Google + Cloudflare)
+    /// uses DNS-over-HTTPS instead of raw UDP/53. Routes through HTTPS_PROXY
+    /// when configured. The other direct-DNS checks have no DoH equivalent.
+    /// </summary>
+    public bool EnableDoh { get; set; } = false;
 }

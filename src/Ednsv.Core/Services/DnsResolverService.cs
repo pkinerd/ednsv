@@ -27,20 +27,14 @@ public class DnsResolverService
 
     /// <summary>
     /// Optional trace callback for detailed timing diagnostics.
-    /// Set to a non-null action to enable trace output.
+    /// Backed by <see cref="TraceContext.Sink"/> (AsyncLocal) so concurrent
+    /// validations get their own sink instead of clobbering a shared field.
     /// </summary>
     public Action<string>? Trace
     {
-        get => _trace;
-        set
-        {
-            _trace = value;
-            _queryCache.Trace = value;
-            _ptrCache.Trace = value;
-            _serverQueryCache.Trace = value;
-        }
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
     }
-    private Action<string>? _trace;
 
     /// <summary>In-memory cache with per-entry TTL. Null = no expiry (CLI default).</summary>
     private readonly TimeSpan? _cacheTtl;

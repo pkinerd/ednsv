@@ -3,15 +3,21 @@ name: CI
 on:
   push:
     branches: ['*']
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
-  # Build & Test
+  # Build & Unit Tests — fast path. Gates docker and integration.
   # ──────────────────────────────────────────────────────────────────────────
-  build-and-test:
-    name: Build & Test
+  build:
+    name: Build & Unit Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -30,6 +36,29 @@ jobs:
 
       - name: Run unit tests
         run: dotnet test --no-build --configuration Release --verbosity normal
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Integration Tests — slow CLI smoke tests against real external domains.
+  # Runs in parallel with the docker job (docker doesn't wait on this).
+  # ──────────────────────────────────────────────────────────────────────────
+  integration:
+    name: Integration Tests
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
 
       - name: Run against test domains
         run: |
@@ -298,11 +327,18 @@ jobs:
           retention-days: 30
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Docker — build the Web UI image, push on non-PR events
+  # Docker — build and push the Web UI image. Tags:
+  #   latest        → default branch only (release pointer)
+  #   latest-any    → every successful build (rolling tip; whichever finishes last wins)
+  #   branch-<name> → push events on any branch (slashes sanitized to dashes)
+  #   pr-<number>   → pull-request events from same-repo branches
+  #   sha-<short>   → every build (immutable, content-identifying)
+  # Fork PRs build but do not push (the workflow's GITHUB_TOKEN has no GHCR
+  # write permission for forks); their image is verified locally only.
   # ──────────────────────────────────────────────────────────────────────────
   docker:
     name: Build & Push Docker Image
-    needs: [build-and-test]
+    needs: [build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -314,11 +350,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Determine push eligibility
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: steps.gate.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -331,17 +378,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=sha,format=short
+            type=ref,event=branch,prefix=branch-
+            type=ref,event=pr,prefix=pr-
+            type=sha,format=short,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest-any
 
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ steps.gate.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -352,7 +400,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   push-build-logs:
     name: Push Build Logs
-    needs: [build-and-test, docker]
+    needs: [build, integration, docker]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -362,12 +410,17 @@ jobs:
       - name: Determine build status
         id: status
         run: |
-          BUILD_RESULT="${{ needs.build-and-test.result }}"
-          if [ "$BUILD_RESULT" = "success" ]; then
+          BUILD_RESULT="${{ needs.build.result }}"
+          INTEGRATION_RESULT="${{ needs.integration.result }}"
+          DOCKER_RESULT="${{ needs.docker.result }}"
+          if [ "$BUILD_RESULT" = "success" ] && [ "$INTEGRATION_RESULT" = "success" ] && [ "$DOCKER_RESULT" = "success" ]; then
             echo "result=pass" >> "$GITHUB_OUTPUT"
           else
             echo "result=fail" >> "$GITHUB_OUTPUT"
           fi
+          echo "build=$BUILD_RESULT" >> "$GITHUB_OUTPUT"
+          echo "integration=$INTEGRATION_RESULT" >> "$GITHUB_OUTPUT"
+          echo "docker=$DOCKER_RESULT" >> "$GITHUB_OUTPUT"
 
       - name: Download test artifacts
         uses: actions/download-artifact@v4
@@ -386,6 +439,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.triggering_actor }}
           RESULT: ${{ steps.status.outputs.result }}
+          BUILD_RESULT: ${{ steps.status.outputs.build }}
+          INTEGRATION_RESULT: ${{ steps.status.outputs.integration }}
+          DOCKER_RESULT: ${{ steps.status.outputs.docker }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           HEAD_REF: ${{ github.head_ref }}
@@ -399,6 +455,9 @@ jobs:
             echo "| **Run** | #${RUN_NUMBER} (attempt ${RUN_ATTEMPT}) |"
             echo "| **Run ID** | ${RUN_ID} |"
             echo "| **Result** | ${RESULT} |"
+            echo "| **Build & Unit Tests** | ${BUILD_RESULT} |"
+            echo "| **Integration Tests** | ${INTEGRATION_RESULT} |"
+            echo "| **Docker** | ${DOCKER_RESULT} |"
             echo "| **Commit** | ${SHA} |"
             echo "| **Ref** | ${REF} |"
             echo "| **Event** | ${EVENT_NAME} |"

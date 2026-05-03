@@ -113,6 +113,9 @@ public class NsLameDelegationCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to authoritative nameservers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
         int lameCount = 0;
         int unreachableCount = 0;
@@ -269,6 +272,9 @@ public class SoaSerialConsistencyCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to authoritative nameservers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -374,6 +380,9 @@ public class OpenRecursiveResolverCheck : ICheck
             result.Summary = "Open resolver check skipped (use --open-resolver to enable)";
             return new List<CheckResult> { result };
         }
+
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to authoritative nameservers disabled");
 
         try
         {

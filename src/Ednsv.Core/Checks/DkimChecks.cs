@@ -37,7 +37,7 @@ public class DkimSelectorsCheck : ICheck
         {
             // Try AXFR to discover selectors from zone data (if enabled and NS IPs available)
             var axfrSelectors = new List<string>();
-            if (ctx.Options.EnableAxfr && ctx.NsHosts.Any())
+            if (ctx.Options.EnableAxfr && ctx.Options.EnableDirectDns && ctx.NsHosts.Any())
             {
                 bool axfrSucceeded = false;
                 foreach (var nsHost in ctx.NsHosts)

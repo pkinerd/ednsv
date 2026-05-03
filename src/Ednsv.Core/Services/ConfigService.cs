@@ -20,6 +20,28 @@ public sealed class AppConfig
     public bool EnableDnsbl { get; set; } = true;
 
     /// <summary>
+    /// Allow direct UDP/TCP 53 queries to specific authoritative nameservers and
+    /// public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) — used by propagation,
+    /// lame-delegation, SOA-serial, glue-record, parent-delegation, AXFR and
+    /// open-recursive-resolver checks. Disable in environments where outbound
+    /// raw DNS is blocked but a local recursive resolver is permitted; checks
+    /// that depend on direct DNS are reported as skipped.
+    /// </summary>
+    [JsonPropertyName("enableDirectDns")]
+    public bool EnableDirectDns { get; set; } = true;
+
+    /// <summary>
+    /// Enable DNS-over-HTTPS for the public-resolver propagation check
+    /// (8.8.8.8 / 1.1.1.1). When set, that check uses HTTPS to the
+    /// providers' JSON DoH endpoints instead of raw UDP/53, which routes
+    /// through HTTPS_PROXY when configured. The auth-NS direct-DNS checks
+    /// (lame delegation, SOA serial, glue, parent delegation, AXFR) have
+    /// no DoH equivalent — they remain gated by <see cref="EnableDirectDns"/>.
+    /// </summary>
+    [JsonPropertyName("enableDoh")]
+    public bool EnableDoh { get; set; } = false;
+
+    /// <summary>
     /// Default DKIM selectors probed when a domain has no per-domain entry
     /// and the request supplies no explicit list.
     /// </summary>
@@ -34,6 +56,15 @@ public sealed class AppConfig
     [JsonPropertyName("dkimSelectors")]
     public Dictionary<string, List<string>> DkimSelectors { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Operator-curated list of well-known domains for the validator page's
+    /// dropdown / autocomplete. Surfaced via /api/defaults; the UI merges
+    /// this with the keys of <see cref="DkimSelectors"/> and the user's
+    /// own client-side history.
+    /// </summary>
+    [JsonPropertyName("knownDomains")]
+    public List<string> KnownDomains { get; set; } = new();
 }
 
 public sealed class ConfigService
@@ -74,6 +105,7 @@ public sealed class ConfigService
                     {
                         // Normalize keys: lowercase, trim trailing dot
                         parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                        parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
                         lock (_lock) _current = parsed;
                         return Snapshot();
                     }
@@ -86,6 +118,7 @@ public sealed class ConfigService
         }
 
         seed.DkimSelectors = NormalizeKeys(seed.DkimSelectors ?? new Dictionary<string, List<string>>());
+        seed.KnownDomains = NormalizeDomainList(seed.KnownDomains ?? new List<string>());
         lock (_lock) _current = seed;
         SaveLocked();
         return Snapshot();
@@ -100,11 +133,14 @@ public sealed class ConfigService
                 EnableSmtpProbes = _current.EnableSmtpProbes,
                 EnableHttpProbes = _current.EnableHttpProbes,
                 EnableDnsbl = _current.EnableDnsbl,
+                EnableDirectDns = _current.EnableDirectDns,
+                EnableDoh = _current.EnableDoh,
                 DefaultDkimSelectors = new List<string>(_current.DefaultDkimSelectors),
                 DkimSelectors = new Dictionary<string, List<string>>(
                     _current.DkimSelectors.Select(kv =>
                         new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
-                    StringComparer.OrdinalIgnoreCase)
+                    StringComparer.OrdinalIgnoreCase),
+                KnownDomains = new List<string>(_current.KnownDomains)
             };
         }
     }
@@ -115,6 +151,7 @@ public sealed class ConfigService
         if (incoming == null) throw new ArgumentNullException(nameof(incoming));
         incoming.DefaultDkimSelectors ??= new List<string>();
         incoming.DkimSelectors = NormalizeKeys(incoming.DkimSelectors ?? new Dictionary<string, List<string>>());
+        incoming.KnownDomains = NormalizeDomainList(incoming.KnownDomains ?? new List<string>());
         lock (_lock)
         {
             _current = incoming;
@@ -161,4 +198,11 @@ public sealed class ConfigService
         }
         return result;
     }
+
+    private static List<string> NormalizeDomainList(List<string> src) =>
+        (src ?? new List<string>())
+            .Select(d => (d ?? "").Trim().TrimEnd('.').ToLowerInvariant())
+            .Where(d => d.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 }

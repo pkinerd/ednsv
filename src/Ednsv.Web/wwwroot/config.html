@@ -92,12 +92,24 @@
       <div class="field">
         <label class="cb"><input type="checkbox" id="cfgDnsbl"> Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc.</span></label>
       </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgDirectDns"> Direct DNS / external resolvers<span class="desc">Allow checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable in environments where outbound raw DNS is blocked but a local recursive resolver works — propagation, lame-delegation, SOA-serial, glue, parent-delegation, open-recursive-resolver and AXFR checks are skipped.</span></label>
+      </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgDoh"> DNS-over-HTTPS for propagation check<span class="desc">When set, the propagation check queries Google and Cloudflare's JSON DoH endpoints over HTTPS instead of raw UDP/53, so it routes through HTTPS_PROXY and works in environments without raw DNS egress. The other direct-DNS checks (lame delegation, SOA serial, glue, parent delegation, AXFR) have no DoH equivalent and remain gated by the option above.</span></label>
+      </div>
     </div>
 
     <div class="panel">
       <h2>Default DKIM selectors</h2>
       <p class="subtitle">Used when a domain has no per-domain entry below and the request supplies no explicit list. Comma- or whitespace-separated.</p>
       <textarea id="cfgDefaultDkim" placeholder="default, google, selector1, ..."></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Known domains</h2>
+      <p class="subtitle">Operator-curated list shown in the validator page's domain dropdown alongside each user's own history and any domains with per-domain DKIM config. Comma-, space-, or newline-separated. Domains are normalised (lowercased, trailing dot stripped).</p>
+      <textarea id="cfgKnownDomains" placeholder="example.com, gmail.com, your-customer.org"></textarea>
     </div>
 
     <div class="panel">
@@ -160,7 +172,10 @@ function fillForm(cfg) {
   $('#cfgSmtp').checked = !!cfg.enableSmtpProbes;
   $('#cfgHttp').checked = !!cfg.enableHttpProbes;
   $('#cfgDnsbl').checked = !!cfg.enableDnsbl;
+  $('#cfgDirectDns').checked = cfg.enableDirectDns !== false;
+  $('#cfgDoh').checked = !!cfg.enableDoh;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
+  $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');
   renderDomTable(cfg.dkimSelectors || {});
   $('#rawJson').value = JSON.stringify(cfg, null, 2);
 }
@@ -207,8 +222,11 @@ function collectFormConfig() {
     enableSmtpProbes: $('#cfgSmtp').checked,
     enableHttpProbes: $('#cfgHttp').checked,
     enableDnsbl:      $('#cfgDnsbl').checked,
+    enableDirectDns:  $('#cfgDirectDns').checked,
+    enableDoh:        $('#cfgDoh').checked,
     defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
-    dkimSelectors: dkim
+    dkimSelectors: dkim,
+    knownDomains: parseList($('#cfgKnownDomains').value)
   };
 }
 

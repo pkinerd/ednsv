@@ -68,18 +68,15 @@ public class SmtpProbeService
         Interlocked.Exchange(ref _portsCompleted, 0);
     }
 
-    /// <summary>Optional trace callback for detailed timing diagnostics.</summary>
+    /// <summary>
+    /// Optional trace callback. Backed by <see cref="TraceContext.Sink"/>
+    /// (AsyncLocal) so concurrent validations don't share a sink.
+    /// </summary>
     public Action<string>? Trace
     {
-        get => _trace;
-        set
-        {
-            _trace = value;
-            _probeCache.Trace = value;
-            _portCache.Trace = value;
-        }
+        get => TraceContext.Sink;
+        set => TraceContext.Sink = value;
     }
-    private Action<string>? _trace;
 
     public async Task<SmtpProbeResult> ProbeSmtpAsync(string host, int port = 25)
     {

@@ -179,26 +179,75 @@ public class DnsPropagationCheck : ICheck
         ("9.9.9.9", "Quad9"),
     };
 
+    // DoH JSON endpoints. Quad9 doesn't ship a JSON DoH API (only wire format),
+    // so we cover the other two when EnableDoh is set.
+    private static readonly (string baseUrl, string name)[] DohResolvers =
+    {
+        ("https://dns.google/resolve",           "Google (DoH)"),
+        ("https://cloudflare-dns.com/dns-query", "Cloudflare (DoH)"),
+    };
+
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        var useDoh = ctx.Options.EnableDoh;
+        if (!useDoh && !ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to public resolvers disabled (and DoH off)");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         var resolverResults = new Dictionary<string, List<string>>();
         var mxResults = new Dictionary<string, List<string>>();
 
-        foreach (var (ip, name) in PublicResolvers)
+        if (useDoh)
         {
-            var addr = IPAddress.Parse(ip);
+            int dohReached = 0;
+            foreach (var (baseUrl, name) in DohResolvers)
+            {
+                var (aRecords, aOk) = await DohQueryAsync(baseUrl, domain, "A", ctx);
+                var (mxAnswers, mxOk) = await DohQueryAsync(baseUrl, domain, "MX", ctx);
+                if (aOk || mxOk) dohReached++;
+                resolverResults[name] = aRecords.OrderBy(x => x).ToList();
+                // MX JSON data is "<preference> <exchange>." — normalise to "pref:host".
+                mxResults[name] = mxAnswers
+                    .Select(d =>
+                    {
+                        var parts = d.Split(' ', 2);
+                        return parts.Length == 2
+                            ? $"{parts[0]}:{parts[1].TrimEnd('.')}"
+                            : d.TrimEnd('.');
+                    })
+                    .OrderBy(x => x).ToList();
+                var status = aOk || mxOk ? "" : " (unreachable)";
+                result.Details.Add($"{name}{status}: A=[{string.Join(", ", resolverResults[name])}] MX=[{string.Join(", ", mxResults[name])}]");
+            }
+            if (dohReached == 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "DoH propagation check: no DoH endpoint reachable";
+                result.Warnings.Add("All configured DoH endpoints failed — check HTTPS_PROXY / outbound HTTPS connectivity");
+                return new List<CheckResult> { result };
+            }
+            if (dohReached < DohResolvers.Length)
+            {
+                result.Warnings.Add($"Only {dohReached}/{DohResolvers.Length} DoH endpoints responded — propagation comparison is partial");
+            }
+        }
+        else
+        {
+            foreach (var (ip, name) in PublicResolvers)
+            {
+                var addr = IPAddress.Parse(ip);
 
-            var aResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.A);
-            var aRecords = aResp.Answers.ARecords().Select(a => a.Address.ToString()).OrderBy(x => x).ToList();
-            resolverResults[name] = aRecords;
+                var aResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.A);
+                var aRecords = aResp.Answers.ARecords().Select(a => a.Address.ToString()).OrderBy(x => x).ToList();
+                resolverResults[name] = aRecords;
 
-            var mxResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.MX);
-            var mxRecords = mxResp.Answers.MxRecords().Select(m => $"{m.Preference}:{m.Exchange.Value.TrimEnd('.')}").OrderBy(x => x).ToList();
-            mxResults[name] = mxRecords;
+                var mxResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.MX);
+                var mxRecords = mxResp.Answers.MxRecords().Select(m => $"{m.Preference}:{m.Exchange.Value.TrimEnd('.')}").OrderBy(x => x).ToList();
+                mxResults[name] = mxRecords;
 
-            result.Details.Add($"{name} ({ip}): A=[{string.Join(", ", aRecords)}] MX=[{string.Join(", ", mxRecords)}]");
+                result.Details.Add($"{name} ({ip}): A=[{string.Join(", ", aRecords)}] MX=[{string.Join(", ", mxRecords)}]");
+            }
         }
 
         // Compare all resolver pairs (not just against the first)
@@ -229,9 +278,51 @@ public class DnsPropagationCheck : ICheck
         result.Severity = hasWarnings ? CheckSeverity.Warning : CheckSeverity.Pass;
         result.Summary = hasWarnings ?
             "DNS propagation inconsistency detected" :
-            "DNS answers consistent across resolvers";
+            $"DNS answers consistent across resolvers ({(useDoh ? "DoH" : "UDP/53")})";
 
         return new List<CheckResult> { result };
+    }
+
+    /// <summary>
+    /// DoH JSON query (Cloudflare/Google JSON variant — distinct from RFC 8484
+    /// wire format). Returns the data fields of Answer records matching the
+    /// requested type. Goes through HttpProbeService so any HTTPS_PROXY env
+    /// var is honoured. Both resolvers reliably return JSON when given
+    /// Accept: application/dns-json — Google also accepts it without the
+    /// header, but Cloudflare's /dns-query defaults to the binary
+    /// application/dns-message and the Accept header is required.
+    /// </summary>
+    private static async Task<(List<string> records, bool ok)> DohQueryAsync(string baseUrl, string domain, string type, CheckContext ctx)
+    {
+        var sep = baseUrl.Contains('?') ? '&' : '?';
+        var url = $"{baseUrl}{sep}name={Uri.EscapeDataString(domain)}&type={type}";
+        var (success, content, _) = await ctx.Http.GetWithAcceptAsync(url, "application/dns-json", maxRetries: 1);
+        if (!success || string.IsNullOrEmpty(content)) return (new List<string>(), false);
+        var typeNum = type switch { "A" => 1, "AAAA" => 28, "MX" => 15, "TXT" => 16, "CNAME" => 5, _ => 0 };
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(content);
+            // Status 0 = NOERROR (record may still be absent); 3 = NXDOMAIN. Both
+            // count as "endpoint reached"; only HTTP failures or unparseable
+            // responses are treated as unreachable.
+            if (!doc.RootElement.TryGetProperty("Answer", out var answers) || answers.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return (new List<string>(), true);
+            var list = new List<string>();
+            foreach (var a in answers.EnumerateArray())
+            {
+                if (a.TryGetProperty("type", out var t) && t.GetInt32() == typeNum
+                    && a.TryGetProperty("data", out var d))
+                {
+                    var s = d.GetString();
+                    if (!string.IsNullOrEmpty(s)) list.Add(s);
+                }
+            }
+            return (list, true);
+        }
+        catch
+        {
+            return (new List<string>(), false);
+        }
     }
 }
 
@@ -403,6 +494,9 @@ public class NsGlueRecordCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to parent nameservers disabled");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
