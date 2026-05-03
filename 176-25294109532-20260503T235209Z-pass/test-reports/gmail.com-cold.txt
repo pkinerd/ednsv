@@ -1,0 +1,903 @@
+[38;5;12m───────────────────────── [0m[1;38;5;12mednsv - Email DNS Validation[0m[38;5;12m ─────────────────────────[0m
+[1mDomain:[0m gmail.com
+[1mStarted:[0m 2026-05-03 23:43:52.246 UTC
+[38;5;8mVerbose mode: showing check descriptions[0m
+
+[HTTP] GET START https://crt.sh/?q=h:_dLGa4A95F&output=json
+[HTTP] GET START https://h:_dLGa4A95F/.well-known/h:wYU8hrp0pB
+[HTTP] GET START https://h:LYPf6YKdbz/.well-known/h:1U18MwjPOc
+[      2ms] [PHASE] PREFETCH START for h:_dLGa4A95F
+[DNS] AAAA h:_dLGa4A95F: 23ms (rate-wait:0ms concurrency-wait:0ms network:23ms)
+[HTTP] GET DONE https://h:LYPf6YKdbz/.well-known/h:1U18MwjPOc: 228ms status=OK
+[HTTP] GET DONE https://h:_dLGa4A95F/.well-known/h:wYU8hrp0pB: 241ms status=NotFound
+[HTTP] GET DONE https://crt.sh/?q=h:_dLGa4A95F&output=json: 634ms status=BadGateway
+[DNS] SOA h:_dLGa4A95F: 15018ms (rate-wait:0ms concurrency-wait:0ms network:15018ms)
+[DNS] TXT h:_dLGa4A95F: 45017ms (rate-wait:0ms concurrency-wait:0ms network:45017ms)
+[DNS] MX h:_dLGa4A95F FAILED: 90010ms (DnsResponseException: Query 56620 => h:_dLGa4A95F IN MX on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] A h:_dLGa4A95F FAILED: 90000ms (DnsResponseException: Query 52934 => h:_dLGa4A95F IN A on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] NS h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 52934 => h:_dLGa4A95F IN NS on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[  90080ms] [SMTP] PREFETCH 0 MX hosts, concurrency-limit=0
+[DNS] TXT _smtp._tls.h:_dLGa4A95F: 30016ms (rate-wait:0ms concurrency-wait:0ms network:30016ms)
+[DNS] TXT dkim:P2tNBpv3PC._domainkey.h:_dLGa4A95F: 45018ms (rate-wait:0ms concurrency-wait:0ms network:45018ms)
+[DNS] DNSKEY h:_dLGa4A95F: 60017ms (rate-wait:0ms concurrency-wait:0ms network:60017ms)
+[DNS] CNAME h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 22544 => h:_dLGa4A95F IN CNAME on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] TXT _mta-h:s2AyrCHWq0 FAILED: 90001ms (DnsResponseException: Query 28056 => _mta-h:s2AyrCHWq0 IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] TXT _bimi.h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 51484 => _bimi.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] DS h:_dLGa4A95F FAILED: 90000ms (DnsResponseException: Query 15139 => h:_dLGa4A95F IN DS on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] TXT _dmarc.h:_dLGa4A95F FAILED: 90002ms (DnsResponseException: Query 5068 => _dmarc.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] CAA h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 62454 => h:_dLGa4A95F IN CAA on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[ 180081ms] [PHASE] PREFETCH DONE: 180041ms (dns:0h/18m/15net smtp:0p/0ports)
+[DNS] TXT dkim:zEdW5H8zpg._domainkey.h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 1155 => dkim:zEdW5H8zpg._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] TXT dkim:mbLXMlZBUn._domainkey.h:_dLGa4A95F FAILED: 90001ms (DnsResponseException: Query 39480 => dkim:mbLXMlZBUn._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] TXT dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F FAILED: 90002ms (DnsResponseException: Query 53718 => dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+  [2mPrefetch: 180.0s (dns:0h/18m)[0m
+[ 180084ms] [PHASE] FOUNDATION START (6 checks)
+  [2;38;5;12m● Running: Authoritative NS…[0m
+[ 180086ms] [CHECK] START Authoritative NS
+[CACHE] HIT q:h:_dLGa4A95F:NS
+[ 180091ms] [CHECK] DONE Authoritative NS: 2ms [Warning]
+[1A[2K[38;5;8m────────────────────────────────── [0m[1;38;5;8mDelegation[0m[38;5;8m ──────────────────────────────────[0m
+  [2mValidates the DNS delegation chain, authoritative nameservers, SOA records, [0m
+[2mand NS configuration. Misconfigured delegation causes total mail delivery [0m
+[2mfailure and DNS resolution issues.[0m
+
+  [38;5;11mWARN[0m [1mAuthoritative NS[0m: Found 0 authoritative nameservers [2m(0.0s, dns:1h/0m)[0m
+  [2;38;5;12m● Running: A Records…[0m
+[ 180095ms] [CHECK] START A Records
+[CACHE] HIT q:h:_dLGa4A95F:A
+[ 180096ms] [CHECK] DONE A Records: 1ms [Info]
+[1A[2K
+[38;5;8m────────────────────────────────────── [0m[1;38;5;8mA[0m[38;5;8m ───────────────────────────────────────[0m
+  [2mChecks A, AAAA, and CNAME records for correctness. CNAME at the apex violates [0m
+[2mRFC 1034 and breaks MX/NS lookups. Missing address records prevent connectivity.[0m
+
+  [38;5;12mINFO[0m [1mA Records[0m: No A records found [2m(0.0s, dns:1h/0m)[0m
+  [2;38;5;12m● Running: AAAA Records…[0m
+[ 180097ms] [CHECK] START AAAA Records
+[CACHE] HIT q:h:_dLGa4A95F:AAAA
+[ 180098ms] [CHECK] DONE AAAA Records: 0ms [Pass]
+[1A[2K
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mAAAA[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mAAAA Records[0m: 1 AAAA record(s) found [2m(0.0s, dns:1h/0m)[0m
+       [38;5;8m2607:f8b0:4005:80b::2005 (TTL: 81s)[0m
+  [2;38;5;12m● Running: MX Records…[0m
+[ 180098ms] [CHECK] START MX Records
+[CACHE] HIT q:h:_dLGa4A95F:MX
+[CACHE] HIT q:h:_dLGa4A95F:A
+[CACHE] HIT q:h:_dLGa4A95F:AAAA
+[ 180100ms] [CHECK] DONE MX Records: 2ms [Warning]
+[1A[2K
+[38;5;8m────────────────────────────────────── [0m[1;38;5;8mMX[0m[38;5;8m ──────────────────────────────────────[0m
+  [2mVerifies MX record configuration including priority distribution, backup [0m
+[2mparity, RFC 5321 violations (IP literals, CNAMEs), null MX (RFC 7505), and [0m
+[2mprivate IP usage. MX misconfigurations directly prevent email delivery.[0m
+
+  [38;5;11mWARN[0m [1mMX Records[0m: No MX records — using implicit A/AAAA fallback (RFC 5321 §5) 
+[2m(0.0s, dns:3h/0m)[0m
+       [38;5;8m  Fallback AAAA: 2607:f8b0:4005:80b::2005[0m
+       [38;5;11m⚠ No MX records found — SMTP will attempt delivery to the domain's A/AAAA[0m
+[38;5;11maddresses directly[0m
+  [2;38;5;12m● Running: SPF Record…[0m
+[ 180101ms] [CHECK] START SPF Record
+[CACHE] HIT q:h:_dLGa4A95F:TXT
+[ 180105ms] [CHECK] DONE SPF Record: 3ms [Pass]
+[1A[2K
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSPF[0m[38;5;8m ──────────────────────────────────────[0m
+  [2mValidates SPF records, DNS lookup limits (max 10), include depth, record size,[0m
+[2mmacro usage, IP overlaps, and subdomain coverage. SPF authorizes which servers [0m
+[2mmay send mail for your domain; failures lead to spoofing or legitimate mail [0m
+[2mbeing rejected.[0m
+
+  [38;5;2mPASS[0m [1mSPF Record[0m: SPF record found: redirect [2m(0.0s, dns:1h/0m)[0m
+       [38;5;8mSPF: v=spf1 redirect=_spf.google.com[0m
+       [38;5;8m  Mechanism: redirect=_spf.google.com[0m
+       [38;5;8mPolicy defined by redirect= target (no local 'all' expected)[0m
+  [2;38;5;12m● Running: DMARC Record…[0m
+[ 180106ms] [CHECK] START DMARC Record
+[CACHE] HIT q:_dmarc.h:_dLGa4A95F:TXT
+[ 180108ms] [CHECK] DONE DMARC Record: 2ms [Warning]
+[1A[2K
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mDMARC[0m[38;5;8m ─────────────────────────────────────[0m
+  [2mChecks DMARC policy, inheritance, subdomain overrides, reporting URIs, and [0m
+[2malignment with SPF. DMARC ties SPF and DKIM together and tells receivers how to [0m
+[2mhandle authentication failures. Weak or missing DMARC policies enable domain [0m
+[2mspoofing.[0m
+
+  [38;5;11mWARN[0m [1mDMARC Record[0m: Could not query DMARC record — status unknown [2m(0.0s, [0m
+[2mdns:1h/0m)[0m
+       [38;5;11m⚠ DNS query for TXT at _dmarc.gmail.com failed — cannot determine DMARC [0m
+[38;5;11mconfiguration[0m
+[ 180109ms] [PHASE] FOUNDATION DONE: 24ms (mx:0 ns:0 spf:yes dmarc:no)
+[ 180109ms] [PHASE] CONCURRENT START (81 checks, max 12 parallel)
+  [2;38;5;12m● Running: NS Glue Records…[0m
+[ 180112ms] [CHECK] START NS Glue Records
+  [2;38;5;12m● Running: Delegation Chain…[0m
+[ 180112ms] [CHECK] START Delegation Chain
+  [2;38;5;12m● Running: SOA Record…[0m
+[ 180112ms] [CHECK] START SOA Record
+  [2;38;5;12m● Running: SOA Serial Consistency…[0m
+[ 180112ms] [CHECK] START SOA Serial Consistency
+  [2;38;5;12m● Running: Delegation Consistency…[0m
+[ 180112ms] [CHECK] START Delegation Consistency
+[ 180113ms] [CHECK] DONE NS Glue Records: 1ms [Pass]
+[CACHE] HIT q:h:_dLGa4A95F:NS
+[CACHE] HIT q:h:_dLGa4A95F:SOA
+[ 180114ms] [CHECK] DONE SOA Record: 2ms [Pass]
+[CACHE] DEDUP JOIN q:com:NS (awaiting in-flight request)
+  [2;38;5;12m● Running: NS Records…[0m
+[ 180115ms] [CHECK] START NS Records
+[CACHE] HIT q:h:_dLGa4A95F:NS
+[ 180117ms] [CHECK] DONE NS Records: 1ms [Info]
+[ 180117ms] [CHECK] DONE SOA Serial Consistency: 5ms [Info]
+  [2;38;5;12m● Running: NS Lame Delegation…[0m
+[ 180117ms] [CHECK] START NS Lame Delegation
+  [2;38;5;12m● Running: NS Minimum Count…[0m
+[ 180117ms] [CHECK] START NS Minimum Count
+  [2;38;5;12m● Running: NS Network Diversity…[0m
+[ 180117ms] [CHECK] START NS Network Diversity
+  [2;38;5;12m● Running: Open Recursive Resolver Detection…[0m
+[ 180117ms] [CHECK] START Open Recursive Resolver Detection
+[ 180117ms] [CHECK] DONE NS Minimum Count: 0ms [Info]
+  [2;38;5;12m● Running: CNAME Chain…[0m
+[ 180117ms] [CHECK] START CNAME Chain
+[ 180118ms] [CHECK] DONE NS Network Diversity: 1ms [Info]
+  [2;38;5;12m● Running: MX-to-IP Detection…[0m
+[ 180118ms] [CHECK] START MX-to-IP Detection
+  [2;38;5;12m● Running: Duplicate NS IPs…[0m
+[ 180118ms] [CHECK] START Duplicate NS IPs
+[ 180119ms] [CHECK] DONE Open Recursive Resolver Detection: 1ms [Info]
+[ 180119ms] [CHECK] DONE MX-to-IP Detection: 0ms [Pass]
+  [2;38;5;12m● Running: MX Private IP Detection…[0m
+[ 180119ms] [CHECK] START MX Private IP Detection
+  [2;38;5;12m● Running: MX CNAME Check…[0m
+[ 180119ms] [CHECK] START MX CNAME Check
+[CACHE] HIT q:h:_dLGa4A95F:CNAME
+[ 180119ms] [CHECK] DONE CNAME Chain: 2ms [Pass]
+  [2;38;5;12m● Running: Null MX / Duplicates…[0m
+[ 180119ms] [CHECK] START Null MX / Duplicates
+[ 180120ms] [CHECK] DONE MX CNAME Check: 1ms [Pass]
+[ 180120ms] [CHECK] DONE MX Private IP Detection: 1ms [Info]
+  [2;38;5;12m● Running: MX Backup Security Parity…[0m
+[ 180120ms] [CHECK] START MX Backup Security Parity
+  [2;38;5;12m● Running: MX Priority Distribution…[0m
+[ 180120ms] [CHECK] START MX Priority Distribution
+[CACHE] HIT q:h:_dLGa4A95F:MX
+[CACHE] HIT q:h:_dLGa4A95F:MX
+[ 180122ms] [CHECK] DONE MX Priority Distribution: 1ms [Info]
+[ 180122ms] [CHECK] DONE NS Lame Delegation: 5ms [Info]
+  [2;38;5;12m● Running: Mail Subdomain Survey…[0m
+[ 180122ms] [CHECK] START Mail Subdomain Survey
+  [2;38;5;12m● Running: SPF Recursive Expansion…[0m
+[ 180122ms] [CHECK] START SPF Recursive Expansion
+[ 180123ms] [CHECK] DONE Null MX / Duplicates: 3ms [Pass]
+  [2;38;5;12m● Running: SPF Lookup Count…[0m
+[ 180123ms] [CHECK] START SPF Lookup Count
+[CACHE] HIT q:h:_dLGa4A95F:MX
+[ 180123ms] [CHECK] DONE MX Backup Security Parity: 3ms [Info]
+  [2;38;5;12m● Running: SPF Include Depth…[0m
+[ 180124ms] [CHECK] START SPF Include Depth
+[ 180124ms] [CHECK] DONE Duplicate NS IPs: 7ms [Pass]
+  [2;38;5;12m● Running: SPF Record Size…[0m
+[ 180124ms] [CHECK] START SPF Record Size
+[ 180125ms] [CHECK] DONE SPF Record Size: 1ms [Pass]
+  [2;38;5;12m● Running: SPF Macros…[0m
+[ 180125ms] [CHECK] START SPF Macros
+[ 180127ms] [CHECK] DONE SPF Macros: 1ms [Pass]
+  [2;38;5;12m● Running: SPF +all in Includes…[0m
+[ 180127ms] [CHECK] START SPF +all in Includes
+[CACHE] DEDUP JOIN q:_spf.h:T7XJZV4c39:TXT (awaiting in-flight request)
+[CACHE] DEDUP JOIN q:_spf.h:T7XJZV4c39:TXT (awaiting in-flight request)
+  [2;38;5;12m● Running: SPF IP Overlap Detection…[0m
+[ 180132ms] [CHECK] START SPF IP Overlap Detection
+  [2;38;5;12m● Running: MX Hosts Covered by SPF…[0m
+[ 180132ms] [CHECK] START MX Hosts Covered by SPF
+  [2;38;5;12m● Running: Subdomain SPF Coverage…[0m
+[ 180132ms] [CHECK] START Subdomain SPF Coverage
+[CACHE] DEDUP JOIN q:_spf.h:T7XJZV4c39:TXT (awaiting in-flight request)
+[ 180133ms] [CHECK] DONE SPF IP Overlap Detection: 1ms [Pass]
+  [2;38;5;12m● Running: DMARC Percentage (pct) Analysis…[0m
+[ 180134ms] [CHECK] START DMARC Percentage (pct) Analysis
+[ 180134ms] [CHECK] DONE MX Hosts Covered by SPF: 1ms [Info]
+  [2;38;5;12m● Running: DMARC Inheritance…[0m
+[ 180134ms] [CHECK] START DMARC Inheritance
+[ 180134ms] [CHECK] DONE DMARC Percentage (pct) Analysis: 0ms [Warning]
+  [2;38;5;12m● Running: DMARC External Report Auth…[0m
+[ 180134ms] [CHECK] START DMARC External Report Auth
+  [2;38;5;12m● Running: DMARC Report Target MX…[0m
+[ 180134ms] [CHECK] START DMARC Report Target MX
+[ 180136ms] [CHECK] DONE DMARC External Report Auth: 2ms [Warning]
+  [2;38;5;12m● Running: SPF+DMARC Combined…[0m
+[ 180136ms] [CHECK] START SPF+DMARC Combined
+  [2;38;5;12m● Running: Subdomain DMARC Override…[0m
+[ 180137ms] [CHECK] START Subdomain DMARC Override
+[CACHE] HIT q:_dmarc.h:_dLGa4A95F:TXT
+[ 180137ms] [CHECK] DONE DMARC Inheritance: 3ms [Warning]
+[ 180138ms] [CHECK] DONE SPF+DMARC Combined: 1ms [Warning]
+  [2;38;5;12m● Running: DMARC Report URI Validation…[0m
+[ 180138ms] [CHECK] START DMARC Report URI Validation
+[ 180138ms] [CHECK] DONE Subdomain DMARC Override: 1ms [Warning]
+  [2;38;5;12m● Running: DMARC Subdomain Policy Analysis…[0m
+[ 180138ms] [CHECK] START DMARC Subdomain Policy Analysis
+  [2;38;5;12m● Running: DKIM Selectors…[0m
+[ 180138ms] [CHECK] START DKIM Selectors
+[ 180140ms] [CHECK] DONE DMARC Report Target MX: 4ms [Warning]
+  [2;38;5;12m● Running: ARC Selector Records…[0m
+[ 180141ms] [CHECK] START ARC Selector Records
+[ 180141ms] [CHECK] DONE DMARC Report URI Validation: 3ms [Warning]
+  [2;38;5;12m● Running: Reverse DNS (PTR)…[0m
+[ 180141ms] [CHECK] START Reverse DNS (PTR)
+[ 180142ms] [CHECK] DONE DMARC Subdomain Policy Analysis: 3ms [Warning]
+  [2;38;5;12m● Running: MX Reverse DNS (PTR)…[0m
+[ 180142ms] [CHECK] START MX Reverse DNS (PTR)
+[ 180143ms] [CHECK] DONE Reverse DNS (PTR): 1ms [Info]
+  [2;38;5;12m● Running: Forward-Confirmed rDNS (FCrDNS)…[0m
+[ 180143ms] [CHECK] START Forward-Confirmed rDNS (FCrDNS)
+[ 180144ms] [CHECK] DONE MX Reverse DNS (PTR): 2ms [Warning]
+  [2;38;5;12m● Running: IP Blocklist Check (DNSBL)…[0m
+[ 180145ms] [CHECK] START IP Blocklist Check (DNSBL)
+[ 180145ms] [CHECK] DONE Forward-Confirmed rDNS (FCrDNS): 2ms [Info]
+  [2;38;5;12m● Running: Extended IP Blocklist Check…[0m
+[ 180146ms] [CHECK] START Extended IP Blocklist Check
+[DNS] CACHE HIT TXT dkim:mbLXMlZBUn._domainkey.h:_dLGa4A95F
+[ 180148ms] [CHECK] DONE Extended IP Blocklist Check: 2ms [Info]
+  [2;38;5;12m● Running: Domain Blocklist Check…[0m
+[ 180148ms] [CHECK] START Domain Blocklist Check
+[ 180149ms] [CHECK] DONE IP Blocklist Check (DNSBL): 4ms [Warning]
+[DNS] CACHE HIT TXT dkim:zEdW5H8zpg._domainkey.h:_dLGa4A95F
+  [2;38;5;12m● Running: MX Hostname Blocklist (RHSBL)…[0m
+[ 180149ms] [CHECK] START MX Hostname Blocklist (RHSBL)
+[ 180149ms] [CHECK] DONE Domain Blocklist Check: 1ms [Info]
+  [2;38;5;12m● Running: DNSSEC…[0m
+[DNS] CACHE HIT TXT dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F
+[ 180149ms] [CHECK] START DNSSEC
+[DNS] CACHE HIT TXT dkim:P2tNBpv3PC._domainkey.h:_dLGa4A95F
+[ 180151ms] [CHECK] DONE MX Hostname Blocklist (RHSBL): 2ms [Info]
+  [2;38;5;12m● Running: NSEC/NSEC3 Zone Walk…[0m
+[ 180151ms] [CHECK] START NSEC/NSEC3 Zone Walk
+[CACHE] HIT q:h:_dLGa4A95F:DS
+[CACHE] HIT q:h:_dLGa4A95F:DNSKEY
+[CACHE] HIT q:h:_dLGa4A95F:DS
+[ 180153ms] [CHECK] DONE NSEC/NSEC3 Zone Walk: 1ms [Info]
+  [2;38;5;12m● Running: MTA-STS…[0m
+[ 180153ms] [CHECK] START MTA-STS
+[CACHE] HIT q:_mta-h:s2AyrCHWq0:TXT
+[ 180156ms] [CHECK] DONE MTA-STS: 2ms [Info]
+  [2;38;5;12m● Running: TLS Reporting (TLS-RPT)…[0m
+[ 180156ms] [CHECK] START TLS Reporting (TLS-RPT)
+[CACHE] HIT q:_smtp._tls.h:_dLGa4A95F:TXT
+[DNS] SPEC CNAME dkim:mbLXMlZBUn._domainkey.h:_dLGa4A95F: 3034ms (rate-wait:0ms concurrency-wait:0ms network:3034ms)
+[DNS] SPEC TXT dkim:YnnSVwPe3S._domainkey.h:_dLGa4A95F: 6773ms (rate-wait:754ms concurrency-wait:0ms network:6019ms)
+[DNS] SPEC CNAME dkim:zEdW5H8zpg._domainkey.h:_dLGa4A95F: 9018ms (rate-wait:0ms concurrency-wait:0ms network:9018ms)
+[DNS] SPEC TXT dkim:qNzj87vCK7._domainkey.h:_dLGa4A95F FAILED: 9021ms (DnsResponseException: Query 47330 => dkim:qNzj87vCK7._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:Ic1BJHClJd._domainkey.h:_dLGa4A95F FAILED: 9773ms (DnsResponseException: Query 4699 => dkim:Ic1BJHClJd._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC CNAME dkim:P2tNBpv3PC._domainkey.h:_dLGa4A95F FAILED: 12000ms (DnsResponseException: Query 8842 => dkim:P2tNBpv3PC._domainkey.h:_dLGa4A95F IN CNAME on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC CNAME dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F FAILED: 12000ms (DnsResponseException: Query 50802 => dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F IN CNAME on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:UhaspT3u2n._domainkey.h:_dLGa4A95F FAILED: 12000ms (DnsResponseException: Query 53681 => dkim:UhaspT3u2n._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:ScPY8HTaFB._domainkey.h:_dLGa4A95F FAILED: 12005ms (DnsResponseException: Query 45961 => dkim:ScPY8HTaFB._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:3EtkQUBPVt._domainkey.h:_dLGa4A95F FAILED: 12006ms (DnsResponseException: Query 50995 => dkim:3EtkQUBPVt._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:4oO5a_2FQS._domainkey.h:_dLGa4A95F FAILED: 12756ms (DnsResponseException: Query 34312 => dkim:4oO5a_2FQS._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:OUNe_Ei8Oz._domainkey.h:_dLGa4A95F FAILED: 12756ms (DnsResponseException: Query 10746 => dkim:OUNe_Ei8Oz._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:25X8lXj6P0._domainkey.h:_dLGa4A95F FAILED: 12756ms (DnsResponseException: Query 30073 => dkim:25X8lXj6P0._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:UKrxm7LdF9._domainkey.h:_dLGa4A95F FAILED: 12755ms (DnsResponseException: Query 31221 => dkim:UKrxm7LdF9._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:Z7_bQUOKYR._domainkey.h:_dLGa4A95F FAILED: 12756ms (DnsResponseException: Query 57489 => dkim:Z7_bQUOKYR._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:YqKIRxxi56._domainkey.h:_dLGa4A95F FAILED: 12756ms (DnsResponseException: Query 18447 => dkim:YqKIRxxi56._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:maNvT-P3Fo._domainkey.h:_dLGa4A95F FAILED: 15030ms (DnsResponseException: Query 22867 => dkim:maNvT-P3Fo._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:6a67pQPgJR._domainkey.h:_dLGa4A95F FAILED: 18032ms (DnsResponseException: Query 40270 => dkim:6a67pQPgJR._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:UosnMNzPic._domainkey.h:_dLGa4A95F: 18033ms (rate-wait:754ms concurrency-wait:8262ms network:9017ms)
+[DNS] SPEC TXT dkim:zGmRrEZYUn._domainkey.h:_dLGa4A95F: 18039ms (rate-wait:754ms concurrency-wait:8267ms network:9018ms)
+[DNS] SPEC TXT dkim:pXA3kgxOsa._domainkey.h:_dLGa4A95F FAILED: 18772ms (DnsResponseException: Query 58876 => dkim:pXA3kgxOsa._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:kiRdZyXzhD._domainkey.h:_dLGa4A95F FAILED: 18772ms (DnsResponseException: Query 62862 => dkim:kiRdZyXzhD._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:wVGCtJyVWx._domainkey.h:_dLGa4A95F: 18776ms (rate-wait:754ms concurrency-wait:12003ms network:6019ms)
+[DNS] SPEC TXT dkim:Oh8i75sdF4._domainkey.h:_dLGa4A95F: 21065ms (rate-wait:754ms concurrency-wait:17278ms network:3033ms)
+[DNS] SPEC TXT dkim:edESEb8_zF._domainkey.h:_dLGa4A95F FAILED: 21773ms (DnsResponseException: Query 20472 => dkim:edESEb8_zF._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:2Hep_tMGVX._domainkey.h:_dLGa4A95F FAILED: 23998ms (DnsResponseException: Query 53526 => dkim:2Hep_tMGVX._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:_5zuA89zVL._domainkey.h:_dLGa4A95F FAILED: 23998ms (DnsResponseException: Query 38288 => dkim:_5zuA89zVL._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:iLkGCDusKF._domainkey.h:_dLGa4A95F FAILED: 24000ms (DnsResponseException: Query 3480 => dkim:iLkGCDusKF._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:PpEoL4Y8qM._domainkey.h:_dLGa4A95F FAILED: 24006ms (DnsResponseException: Query 26268 => dkim:PpEoL4Y8qM._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:LFdpWtSYMP._domainkey.h:_dLGa4A95F FAILED: 24757ms (DnsResponseException: Query 3609 => dkim:LFdpWtSYMP._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:sSnwpinbeI._domainkey.h:_dLGa4A95F FAILED: 24757ms (DnsResponseException: Query 16460 => dkim:sSnwpinbeI._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:Q21APVHR21._domainkey.h:_dLGa4A95F FAILED: 24757ms (DnsResponseException: Query 3609 => dkim:Q21APVHR21._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:FR5U8P3ffH._domainkey.h:_dLGa4A95F FAILED: 24757ms (DnsResponseException: Query 18877 => dkim:FR5U8P3ffH._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:tKqm9Zumye._domainkey.h:_dLGa4A95F FAILED: 27032ms (DnsResponseException: Query 46584 => dkim:tKqm9Zumye._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC CNAME dkim:UhaspT3u2n._domainkey.h:_dLGa4A95F FAILED: 18017ms (DnsResponseException: Query 53254 => dkim:UhaspT3u2n._domainkey.h:_dLGa4A95F IN CNAME on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:DY9hbLZC9f._domainkey.h:_dLGa4A95F FAILED: 30033ms (DnsResponseException: Query 26420 => dkim:DY9hbLZC9f._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:Lrb2tl6iIn._domainkey.h:_dLGa4A95F FAILED: 30039ms (DnsResponseException: Query 498 => dkim:Lrb2tl6iIn._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:OWq451Xqet._domainkey.h:_dLGa4A95F FAILED: 30773ms (DnsResponseException: Query 29165 => dkim:OWq451Xqet._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:fAG4LwwL9O._domainkey.h:_dLGa4A95F FAILED: 30773ms (DnsResponseException: Query 44331 => dkim:fAG4LwwL9O._domainkey.h:_dLGa4A95F IN TXT on ip4:QsrsAW_83l:53 timed out or is a transient error.)
+[DNS] SPEC TXT dkim:1h98_u_ANh._domainkey.h:_dLGa4A95F FAILED: 30777ms (DnsResponseException: Query 41057 => dkim:1h98_u_ANh._domainkey.h:_dLGa4A95F IN TXT on ip4:vAxKn5LKyc:53 timed out or is a transient error.)
+[DNS] SPEC CNAME dkim:3EtkQUBPVt._domainkey.h:_dLGa4A95F: 19393ms (rate-wait:0ms concurrency-wait:11994ms network:7399ms)
+[DNS] SPEC CNAME dkim:ScPY8HTaFB._domainkey.h:_dLGa4A95F: 19393ms (rate-wait:0ms concurrency-wait:12000ms network:7393ms)
+[DNS] SPEC CNAME dkim:Ic1BJHClJd._domainkey.h:_dLGa4A95F: 21625ms (rate-wait:0ms concurrency-wait:14224ms network:7401ms)
+[DNS] NS com: 31439ms (rate-wait:0ms concurrency-wait:0ms network:31439ms)
+[CACHE] HIT q:h:_dLGa4A95F:NS
+[CACHE] HIT q:h:_dLGa4A95F:CNAME
+[ 211555ms] [CHECK] DONE Delegation Chain: 31443ms [Pass]
+  [2;38;5;12m● Running: BIMI…[0m
+[ 211556ms] [CHECK] START BIMI
+[DNS] TXT _spf.h:T7XJZV4c39: 31431ms (rate-wait:0ms concurrency-wait:0ms network:31431ms)
+[ 211562ms] [CHECK] DONE SPF Include Depth: 31439ms [Pass]
+  [2;38;5;12m● Running: DANE/TLSA…[0m
+[ 211563ms] [CHECK] START DANE/TLSA
+[ 211563ms] [CHECK] DONE SPF Recursive Expansion: 31440ms [Pass]
+[ 211563ms] [CHECK] DONE SPF Lookup Count: 31440ms [Pass]
+  [2;38;5;12m● Running: DANE TLSA Cert Match…[0m
+[ 211563ms] [CHECK] START DANE TLSA Cert Match
+  [2;38;5;12m● Running: SMTP TLS Certificate…[0m
+[ 211563ms] [CHECK] START SMTP TLS Certificate
+[ 211563ms] [CHECK] DONE SPF +all in Includes: 31436ms [Pass]
+  [2;38;5;12m● Running: SMTP TLS Certificate Chain…[0m
+[ 211564ms] [CHECK] START SMTP TLS Certificate Chain
+[ 211565ms] [CHECK] DONE DANE/TLSA: 2ms [Info]
+  [2;38;5;12m● Running: SMTP TLS Version…[0m
+[ 211565ms] [CHECK] START SMTP TLS Version
+[ 211565ms] [CHECK] DONE SMTP TLS Certificate Chain: 1ms [Warning]
+  [2;38;5;12m● Running: SMTP Banner Validation…[0m
+[ 211566ms] [CHECK] START SMTP Banner Validation
+[ 211566ms] [CHECK] DONE DANE TLSA Cert Match: 2ms [Info]
+  [2;38;5;12m● Running: EHLO Capabilities…[0m
+[ 211566ms] [CHECK] START EHLO Capabilities
+[ 211566ms] [CHECK] DONE SMTP TLS Certificate: 2ms [Warning]
+  [2;38;5;12m● Running: SMTP Max Message Size…[0m
+[ 211566ms] [CHECK] START SMTP Max Message Size
+[ 211566ms] [CHECK] DONE SMTP TLS Version: 1ms [Warning]
+  [2;38;5;12m● Running: SMTP REQUIRETLS (RFC 8689)…[0m
+[ 211567ms] [CHECK] START SMTP REQUIRETLS (RFC 8689)
+[ 211567ms] [CHECK] DONE SMTP Banner Validation: 1ms [Pass]
+  [2;38;5;12m● Running: STARTTLS Enforcement…[0m
+[ 211567ms] [CHECK] START STARTTLS Enforcement
+[ 211568ms] [CHECK] DONE EHLO Capabilities: 2ms [Pass]
+[ 211568ms] [CHECK] DONE SMTP REQUIRETLS (RFC 8689): 1ms [Warning]
+  [2;38;5;12m● Running: SMTP Banner vs Reverse DNS…[0m
+[ 211568ms] [CHECK] START SMTP Banner vs Reverse DNS
+  [2;38;5;12m● Running: SMTP Transaction Timing…[0m
+[ 211568ms] [CHECK] START SMTP Transaction Timing
+[ 211569ms] [CHECK] DONE STARTTLS Enforcement: 1ms [Warning]
+  [2;38;5;12m● Running: Submission Ports…[0m
+[ 211569ms] [CHECK] START Submission Ports
+[ 211570ms] [CHECK] DONE SMTP Banner vs Reverse DNS: 1ms [Warning]
+  [2;38;5;12m● Running: Mail Service SRV Records…[0m
+[ 211570ms] [CHECK] START Mail Service SRV Records
+[ 211570ms] [CHECK] DONE SMTP Transaction Timing: 1ms [Warning]
+  [2;38;5;12m● Running: Autodiscover…[0m
+[ 211570ms] [CHECK] DONE SMTP Max Message Size: 3ms [Warning]
+[ 211570ms] [CHECK] START Autodiscover
+  [2;38;5;12m● Running: CAA Records…[0m
+[ 211570ms] [CHECK] START CAA Records
+[CACHE] HIT q:h:_dLGa4A95F:CAA
+[ 211572ms] [CHECK] DONE CAA Records: 1ms [Info]
+  [2;38;5;12m● Running: IPv6 Readiness…[0m
+[ 211572ms] [CHECK] START IPv6 Readiness
+[ 211573ms] [CHECK] DONE IPv6 Readiness: 1ms [Info]
+  [2;38;5;12m● Running: SMTP IPv6 Connectivity…[0m
+[ 211573ms] [CHECK] START SMTP IPv6 Connectivity
+[ 211574ms] [CHECK] DONE Submission Ports: 4ms [Info]
+  [2;38;5;12m● Running: Postmaster Address…[0m
+[ 211574ms] [CHECK] START Postmaster Address
+[ 211574ms] [CHECK] DONE SMTP IPv6 Connectivity: 1ms [Warning]
+  [2;38;5;12m● Running: Abuse Address…[0m
+[ 211575ms] [CHECK] START Abuse Address
+[ 211575ms] [CHECK] DONE Postmaster Address: 1ms [Warning]
+  [2;38;5;12m● Running: DNS Propagation Consistency…[0m
+[ 211576ms] [CHECK] START DNS Propagation Consistency
+[ 211576ms] [CHECK] DONE Abuse Address: 1ms [Warning]
+  [2;38;5;12m● Running: Open Relay Test…[0m
+[ 211576ms] [CHECK] START Open Relay Test
+[DNS] CNAME h:ihLDZvqsdr: 31449ms (rate-wait:0ms concurrency-wait:0ms network:31449ms)
+[ 211577ms] [CHECK] DONE Open Relay Test: 1ms [Info]
+  [2;38;5;12m● Running: Catch-All Detection…[0m
+[ 211577ms] [CHECK] START Catch-All Detection
+[CACHE] DEDUP JOIN q:h:ihLDZvqsdr:A (awaiting in-flight request)
+[ 211578ms] [CHECK] DONE Catch-All Detection: 0ms [Info]
+  [2;38;5;12m● Running: Wildcard DNS…[0m
+[ 211578ms] [CHECK] START Wildcard DNS
+[DNS] MX h:T7XJZV4c39: 32494ms (rate-wait:747ms concurrency-wait:0ms network:31747ms)
+[ 212654ms] [CHECK] DONE TLS Reporting (TLS-RPT): 32497ms [Warning]
+  [2;38;5;12m● Running: TTL Sanity…[0m
+[ 212654ms] [CHECK] START TTL Sanity
+[CACHE] HIT q:h:_dLGa4A95F:MX
+[CACHE] HIT q:h:_dLGa4A95F:TXT
+[CACHE] HIT q:_dmarc.h:_dLGa4A95F:TXT
+[ 212658ms] [CHECK] DONE TTL Sanity: 4ms [Pass]
+  [2;38;5;12m● Running: AXFR Exposure…[0m
+[ 212658ms] [CHECK] START AXFR Exposure
+[DNS] CNAME h:zChW_JE43S: 32529ms (rate-wait:0ms concurrency-wait:0ms network:32529ms)
+[DNS] CNAME h:YpUILmlLiq: 32530ms (rate-wait:0ms concurrency-wait:0ms network:32530ms)
+[ 212659ms] [CHECK] DONE AXFR Exposure: 1ms [Info]
+  [2;38;5;12m● Running: security.txt (RFC 9116)…[0m
+[DNS] CNAME h:99c-sfboY2: 32530ms (rate-wait:0ms concurrency-wait:0ms network:32530ms)
+[ 212659ms] [CHECK] START h:wYU8hrp0pB (RFC 9116)
+[DNS] SPEC CNAME dkim:UosnMNzPic._domainkey.h:_dLGa4A95F: 14475ms (rate-wait:0ms concurrency-wait:12740ms network:1735ms)
+[DNS] CNAME h:lzc_0qNzkA: 32530ms (rate-wait:0ms concurrency-wait:0ms network:32530ms)
+[DNS] CNAME h:ow1nviO7PR: 32531ms (rate-wait:0ms concurrency-wait:0ms network:32531ms)
+[DNS] SPEC CNAME dkim:YnnSVwPe3S._domainkey.h:_dLGa4A95F: 25734ms (rate-wait:0ms concurrency-wait:14291ms network:11443ms)
+[DNS] CNAME h:AV7hzkwmxL: 32532ms (rate-wait:0ms concurrency-wait:0ms network:32532ms)
+[DNS] A h:AgDOTIrHrg: 32521ms (rate-wait:0ms concurrency-wait:0ms network:32521ms)
+[CACHE] HIT https://h:_dLGa4A95F/.well-known/h:wYU8hrp0pB
+[DNS] CNAME h:GW5sBIFPsr: 32533ms (rate-wait:0ms concurrency-wait:0ms network:32533ms)
+[CACHE] DEDUP JOIN q:h:GW5sBIFPsr:A (awaiting in-flight request)
+[ 212661ms] [CHECK] DONE h:wYU8hrp0pB (RFC 9116): 2ms [Info]
+  [2;38;5;12m● Running: Email Provider Verification TXT…[0m
+[ 212661ms] [CHECK] START Email Provider Verification TXT
+[CACHE] HIT q:h:_dLGa4A95F:TXT
+[ 212662ms] [CHECK] DONE Email Provider Verification TXT: 0ms [Info]
+  [2;38;5;12m● Running: Certificate Transparency…[0m
+[ 212662ms] [CHECK] START Certificate Transparency
+[CACHE] HIT https://crt.sh/?q=h:_dLGa4A95F&output=json
+[ 212663ms] [CHECK] DONE Certificate Transparency: 0ms [Info]
+  [2;38;5;12m● Running: Duplicate/Conflicting TXT Records…[0m
+[ 212663ms] [CHECK] START Duplicate/Conflicting TXT Records
+[CACHE] HIT q:h:_dLGa4A95F:TXT
+[CACHE] HIT q:_dmarc.h:_dLGa4A95F:TXT
+[CACHE] DEDUP JOIN q:default._bimi.h:_dLGa4A95F:TXT (awaiting in-flight request)
+[DNS] SPEC CNAME dkim:qNzj87vCK7._domainkey.h:_dLGa4A95F: 23493ms (rate-wait:0ms concurrency-wait:12752ms network:10741ms)
+[DNS] SPEC CNAME dkim:25X8lXj6P0._domainkey.h:_dLGa4A95F: 19758ms (rate-wait:0ms concurrency-wait:12001ms network:7757ms)
+[DNS] A h:ihLDZvqsdr: 32523ms (rate-wait:0ms concurrency-wait:0ms network:32523ms)
+[DNS] CNAME h:iaz7qhVIez: 32538ms (rate-wait:0ms concurrency-wait:0ms network:32538ms)
+[DNS] CNAME h:TXPBDRMa3T: 32536ms (rate-wait:0ms concurrency-wait:0ms network:32536ms)
+[DNS] CNAME h:EY1pCusUXg: 32538ms (rate-wait:0ms concurrency-wait:0ms network:32538ms)
+[CACHE] DEDUP JOIN q:h:TXPBDRMa3T:A (awaiting in-flight request)
+[DNS] CNAME h:gMyHkYa245: 32539ms (rate-wait:0ms concurrency-wait:0ms network:32539ms)
+[DNS] A h:g5GPLum1Xa: 32526ms (rate-wait:0ms concurrency-wait:0ms network:32526ms)
+[DNS] CNAME h:PgP4nHbi0q: 32538ms (rate-wait:0ms concurrency-wait:0ms network:32538ms)
+[CACHE] DEDUP JOIN q:h:PgP4nHbi0q:A (awaiting in-flight request)
+[DNS] CNAME h:z_q9kAR98K: 32537ms (rate-wait:0ms concurrency-wait:0ms network:32537ms)
+[CACHE] DEDUP JOIN q:h:z_q9kAR98K:A (awaiting in-flight request)
+[DNS] CNAME h:z1_JmXwHuM: 32543ms (rate-wait:0ms concurrency-wait:0ms network:32543ms)
+[CACHE] DEDUP JOIN q:h:z1_JmXwHuM:A (awaiting in-flight request)
+[DNS] A h:z1_JmXwHuM: 32525ms (rate-wait:0ms concurrency-wait:0ms network:32525ms)
+[DNS] CNAME h:gPZRdJWydm: 32540ms (rate-wait:0ms concurrency-wait:0ms network:32540ms)
+[DNS] SPEC CNAME dkim:UKrxm7LdF9._domainkey.h:_dLGa4A95F: 19761ms (rate-wait:0ms concurrency-wait:12001ms network:7760ms)
+[DNS] SPEC CNAME dkim:4oO5a_2FQS._domainkey.h:_dLGa4A95F: 19762ms (rate-wait:0ms concurrency-wait:12001ms network:7761ms)
+[DNS] CNAME h:rVQMX5lLVo: 32540ms (rate-wait:0ms concurrency-wait:0ms network:32540ms)
+[CACHE] DEDUP JOIN q:h:rVQMX5lLVo:A (awaiting in-flight request)
+[DNS] A h:ZRWtui-m6b: 32530ms (rate-wait:0ms concurrency-wait:0ms network:32530ms)
+[DNS] SPEC CNAME dkim:OUNe_Ei8Oz._domainkey.h:_dLGa4A95F: 19766ms (rate-wait:0ms concurrency-wait:12001ms network:7765ms)
+[DNS] SPEC CNAME dkim:pXA3kgxOsa._domainkey.h:_dLGa4A95F: 13751ms (rate-wait:0ms concurrency-wait:12626ms network:1125ms)
+[DNS] SPEC CNAME dkim:Z7_bQUOKYR._domainkey.h:_dLGa4A95F: 19768ms (rate-wait:0ms concurrency-wait:14275ms network:5493ms)
+[DNS] CNAME h:pcd5iKPTGd: 32549ms (rate-wait:0ms concurrency-wait:0ms network:32549ms)
+[DNS] CNAME h:ZRWtui-m6b: 32549ms (rate-wait:0ms concurrency-wait:0ms network:32549ms)
+[CACHE] HIT q:h:ZRWtui-m6b:A
+[DNS] SPEC CNAME dkim:zGmRrEZYUn._domainkey.h:_dLGa4A95F: 14494ms (rate-wait:0ms concurrency-wait:12734ms network:1760ms)
+[DNS] A h:gMyHkYa245: 19ms (rate-wait:0ms concurrency-wait:10ms network:9ms)
+[DNS] A h:zChW_JE43S: 33ms (rate-wait:0ms concurrency-wait:8ms network:25ms)
+[DNS] A h:rVQMX5lLVo: 32550ms (rate-wait:0ms concurrency-wait:0ms network:32550ms)
+[DNS] SPEC CNAME dkim:OWq451Xqet._domainkey.h:_dLGa4A95F: 1781ms (rate-wait:0ms concurrency-wait:1735ms network:46ms)
+[DNS] A h:OSSFAKIySq: 2099ms (rate-wait:0ms concurrency-wait:1111ms network:988ms)
+[DNS] RRSIG h:_dLGa4A95F: 33507ms (rate-wait:753ms concurrency-wait:0ms network:32754ms)
+[DNS] SPEC CNAME dkim:_5zuA89zVL._domainkey.h:_dLGa4A95F: 9510ms (rate-wait:0ms concurrency-wait:7426ms network:2084ms)
+[DNS] SPEC CNAME dkim:FR5U8P3ffH._domainkey.h:_dLGa4A95F: 8750ms (rate-wait:0ms concurrency-wait:7749ms network:1001ms)
+[DNS] A h:PgP4nHbi0q: 33519ms (rate-wait:0ms concurrency-wait:0ms network:33519ms)
+[DNS] SPEC CNAME dkim:Oh8i75sdF4._domainkey.h:_dLGa4A95F: 12443ms (rate-wait:0ms concurrency-wait:10333ms network:2110ms)
+[DNS] A h:GW5sBIFPsr: 33517ms (rate-wait:0ms concurrency-wait:0ms network:33517ms)
+[ 213661ms] [CHECK] DONE DNSSEC: 33511ms [Info]
+[DNS] SPEC CNAME dkim:tKqm9Zumye._domainkey.h:_dLGa4A95F: 6477ms (rate-wait:0ms concurrency-wait:5475ms network:1002ms)
+[DNS] A h:AV7hzkwmxL: 1000ms (rate-wait:0ms concurrency-wait:9ms network:991ms)
+[DNS] SPEC CNAME dkim:2Hep_tMGVX._domainkey.h:_dLGa4A95F: 9511ms (rate-wait:0ms concurrency-wait:7411ms network:2100ms)
+  [2;38;5;12m● Running: All TXT Records…[0m
+[ 213661ms] [CHECK] START All TXT Records
+[DNS] TXT dkim:1F6lnAM8NP._domainkey.h:_dLGa4A95F: 33515ms (rate-wait:0ms concurrency-wait:0ms network:33515ms)
+[DNS] SPEC CNAME dkim:YqKIRxxi56._domainkey.h:_dLGa4A95F: 20752ms (rate-wait:0ms concurrency-wait:17259ms network:3493ms)
+[DNS] SPEC CNAME dkim:Q21APVHR21._domainkey.h:_dLGa4A95F: 8751ms (rate-wait:0ms concurrency-wait:7750ms network:1001ms)
+[CACHE] HIT q:h:_dLGa4A95F:TXT
+[ 213662ms] [CHECK] DONE All TXT Records: 1ms [Info]
+[DNS] SERVER ip4:h2g11MZhCR NS h:_dLGa4A95F: 9ms (rate-wait:0ms concurrency-wait:0ms network:9ms)
+[ 213665ms] [CHECK] DONE Delegation Consistency: 33553ms [Warning]
+[DNS] SPEC CNAME dkim:LFdpWtSYMP._domainkey.h:_dLGa4A95F: 8757ms (rate-wait:0ms concurrency-wait:7749ms network:1008ms)
+[DNS] SERVER ip4:vAxKn5LKyc A h:_dLGa4A95F: 2086ms (rate-wait:0ms concurrency-wait:1086ms network:1000ms)
+[DNS] SPEC CNAME dkim:wVGCtJyVWx._domainkey.h:_dLGa4A95F: 14739ms (rate-wait:0ms concurrency-wait:12623ms network:2116ms)
+[DNS] SPEC CNAME dkim:edESEb8_zF._domainkey.h:_dLGa4A95F: 11743ms (rate-wait:0ms concurrency-wait:9629ms network:2114ms)
+[DNS] SPEC SRV _submission._tcp.h:_dLGa4A95F: 2096ms (rate-wait:0ms concurrency-wait:1095ms network:1001ms)
+[DNS] SPEC CNAME dkim:iLkGCDusKF._domainkey.h:_dLGa4A95F: 9517ms (rate-wait:0ms concurrency-wait:8500ms network:1017ms)
+[DNS] SPEC CNAME dkim:maNvT-P3Fo._domainkey.h:_dLGa4A95F: 18486ms (rate-wait:0ms concurrency-wait:15002ms network:3484ms)
+[DNS] SPEC CNAME dkim:DY9hbLZC9f._domainkey.h:_dLGa4A95F: 3483ms (rate-wait:0ms concurrency-wait:2474ms network:1009ms)
+[DNS] SPEC CNAME dkim:fAG4LwwL9O._domainkey.h:_dLGa4A95F: 2743ms (rate-wait:0ms concurrency-wait:1734ms network:1009ms)
+[DNS] A h:z_q9kAR98K: 33528ms (rate-wait:0ms concurrency-wait:0ms network:33528ms)
+[DNS] SPEC CNAME dkim:Lrb2tl6iIn._domainkey.h:_dLGa4A95F: 3478ms (rate-wait:0ms concurrency-wait:2468ms network:1010ms)
+[DNS] SERVER ip4:vAxKn5LKyc MX h:_dLGa4A95F: 1ms (rate-wait:0ms concurrency-wait:0ms network:1ms)
+[DNS] MX h:ihLDZvqsdr: 1003ms (rate-wait:0ms concurrency-wait:8ms network:995ms)
+[DNS] SPEC CNAME dkim:1h98_u_ANh._domainkey.h:_dLGa4A95F: 2741ms (rate-wait:0ms concurrency-wait:1736ms network:1005ms)
+[DNS] A h:TXPBDRMa3T: 33529ms (rate-wait:0ms concurrency-wait:0ms network:33529ms)
+[DNS] SPEC CNAME dkim:sSnwpinbeI._domainkey.h:_dLGa4A95F: 8761ms (rate-wait:0ms concurrency-wait:7749ms network:1012ms)
+[DNS] SERVER ip4:AqwJfwCSua A h:_dLGa4A95F: 1ms (rate-wait:0ms concurrency-wait:0ms network:1ms)
+[DNS] SPEC CNAME dkim:kiRdZyXzhD._domainkey.h:_dLGa4A95F: 14747ms (rate-wait:0ms concurrency-wait:12005ms network:2742ms)
+[DNS] SPEC CNAME dkim:6a67pQPgJR._domainkey.h:_dLGa4A95F: 15490ms (rate-wait:0ms concurrency-wait:12007ms network:3483ms)
+[DNS] SPEC CNAME dkim:PpEoL4Y8qM._domainkey.h:_dLGa4A95F: 9517ms (rate-wait:0ms concurrency-wait:8500ms network:1017ms)
+[ 213676ms] [CHECK] DONE DKIM Selectors: 33537ms [Warning]
+[DNS] A h:EY1pCusUXg: 1011ms (rate-wait:0ms concurrency-wait:7ms network:1004ms)
+[DNS] MX h:g5GPLum1Xa: 1011ms (rate-wait:0ms concurrency-wait:10ms network:1001ms)
+[DNS] A h:YpUILmlLiq: 1020ms (rate-wait:0ms concurrency-wait:9ms network:1011ms)
+[DNS] TXT default._bimi.h:_dLGa4A95F: 2122ms (rate-wait:0ms concurrency-wait:1108ms network:1014ms)
+[CACHE] HIT q:_mta-h:s2AyrCHWq0:TXT
+[CACHE] HIT q:_smtp._tls.h:_dLGa4A95F:TXT
+[ 213681ms] [CHECK] DONE BIMI: 2125ms [Info]
+[ 213681ms] [CHECK] DONE Duplicate/Conflicting TXT Records: 1017ms [Pass]
+[DNS] TXT h:H1gEC3_lOQ: 2105ms (rate-wait:0ms concurrency-wait:1087ms network:1018ms)
+[DNS] A h:pcd5iKPTGd: 1008ms (rate-wait:0ms concurrency-wait:15ms network:993ms)
+[DNS] MX h:AgDOTIrHrg: 1025ms (rate-wait:0ms concurrency-wait:9ms network:1016ms)
+[DNS] MX h:z1_JmXwHuM: 1017ms (rate-wait:0ms concurrency-wait:10ms network:1007ms)
+[DNS] SPEC SRV _autodiscover._tcp.h:_dLGa4A95F: 2114ms (rate-wait:0ms concurrency-wait:1094ms network:1020ms)
+[DNS] A h:ow1nviO7PR: 1026ms (rate-wait:0ms concurrency-wait:9ms network:1017ms)
+[DNS] SPEC SRV _imap._tcp.h:_dLGa4A95F: 18ms (rate-wait:0ms concurrency-wait:0ms network:18ms)
+[DNS] MX h:ZRWtui-m6b: 1016ms (rate-wait:0ms concurrency-wait:15ms network:1001ms)
+[DNS] A h:iaz7qhVIez: 1021ms (rate-wait:0ms concurrency-wait:4ms network:1017ms)
+[DNS] A h:lzc_0qNzkA: 1029ms (rate-wait:0ms concurrency-wait:9ms network:1020ms)
+[DNS] A h:99c-sfboY2: 1033ms (rate-wait:0ms concurrency-wait:9ms network:1024ms)
+[DNS] TXT dkim:ScPY8HTaFB._domainkey.h:_dLGa4A95F: 48ms (rate-wait:0ms concurrency-wait:0ms network:48ms)
+[DNS] TXT dkim:YqKIRxxi56._domainkey.h:_dLGa4A95F: 44ms (rate-wait:0ms concurrency-wait:0ms network:44ms)
+[CACHE] HIT q:dkim:zEdW5H8zpg._domainkey.h:_dLGa4A95F:TXT
+[CACHE] HIT q:dkim:HB5Zl4v3cB._domainkey.h:_dLGa4A95F:TXT
+[CACHE] HIT q:dkim:P2tNBpv3PC._domainkey.h:_dLGa4A95F:TXT
+[CACHE] HIT q:dkim:mbLXMlZBUn._domainkey.h:_dLGa4A95F:TXT
+[ 213754ms] [CHECK] DONE ARC Selector Records: 33613ms [Info]
+[DNS] MX h:GW5sBIFPsr: 993ms (rate-wait:0ms concurrency-wait:0ms network:993ms)
+[DNS] MX h:PgP4nHbi0q: 994ms (rate-wait:0ms concurrency-wait:0ms network:994ms)
+[DNS] SERVER ip4:AqwJfwCSua MX h:_dLGa4A95F: 983ms (rate-wait:0ms concurrency-wait:0ms network:983ms)
+[DNS] MX h:rVQMX5lLVo: 1968ms (rate-wait:0ms concurrency-wait:0ms network:1968ms)
+[DNS] SPEC SRV _imaps._tcp.h:_dLGa4A95F: 974ms (rate-wait:0ms concurrency-wait:0ms network:974ms)
+[DNS] TXT h:ihLDZvqsdr: 992ms (rate-wait:0ms concurrency-wait:0ms network:992ms)
+[DNS] SERVER ip4:dWYeMcW85c A h:_dLGa4A95F: 8ms (rate-wait:0ms concurrency-wait:0ms network:8ms)
+[DNS] A h:H1gEC3_lOQ: 3089ms (rate-wait:0ms concurrency-wait:1087ms network:2002ms)
+[DNS] A h:gPZRdJWydm: 2000ms (rate-wait:0ms concurrency-wait:15ms network:1985ms)
+[ 214670ms] [CHECK] DONE Mail Subdomain Survey: 34548ms [Info]
+[DNS] MX h:H1gEC3_lOQ: 3092ms (rate-wait:0ms concurrency-wait:1087ms network:2005ms)
+[ 214672ms] [CHECK] DONE Wildcard DNS: 3093ms [Pass]
+[DNS] SERVER ip4:dWYeMcW85c MX h:_dLGa4A95F: 8ms (rate-wait:0ms concurrency-wait:0ms network:8ms)
+[DNS] MX h:TXPBDRMa3T: 1001ms (rate-wait:0ms concurrency-wait:0ms network:1001ms)
+[ 214673ms] [CHECK] DONE DNS Propagation Consistency: 3097ms [Pass]
+[DNS] MX h:z_q9kAR98K: 1008ms (rate-wait:0ms concurrency-wait:0ms network:1008ms)
+[ 214679ms] [CHECK] DONE Subdomain SPF Coverage: 34546ms [Warning]
+[DNS] SPEC SRV _pop3s._tcp.h:_dLGa4A95F: 24ms (rate-wait:0ms concurrency-wait:0ms network:24ms)
+[DNS] CNAME h:ZgzdcI7d_S: 999ms (rate-wait:0ms concurrency-wait:0ms network:999ms)
+[DNS] SPEC SRV _jmap._tcp.h:_dLGa4A95F: 24ms (rate-wait:0ms concurrency-wait:0ms network:24ms)
+[ 214711ms] [CHECK] DONE Mail Service SRV Records: 3141ms [Pass]
+[DNS] A h:ZgzdcI7d_S: 25ms (rate-wait:0ms concurrency-wait:0ms network:25ms)
+[ 214712ms] [CHECK] DONE Autodiscover: 3142ms [Info]
+[ 214716ms] [PHASE] CONCURRENT DONE: 81 checks in 34548ms wall-clock (timed-out:0 errors:0)
+[1A[2K
+[38;5;8m────────────────────────────────── [0m[1;38;5;8mDelegation[0m[38;5;8m ──────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mDelegation Chain[0m: Delegation chain walked through 2 levels [2m(31.4s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8mZone [com] NS: f.gtld-servers.net, l.gtld-servers.net, [0m
+[38;5;8me.gtld-servers.net, a.gtld-servers.net, g.gtld-servers.net, j.gtld-servers.net, [0m
+[38;5;8md.gtld-servers.net, c.gtld-servers.net, m.gtld-servers.net, h.gtld-servers.net, [0m
+[38;5;8mk.gtld-servers.net, b.gtld-servers.net, i.gtld-servers.net[0m
+  [38;5;11mWARN[0m [1mDelegation Consistency[0m: Delegation consistency check completed [2m(33.6s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8mParent NS set: ns2.google.com, ns1.google.com, ns3.google.com, [0m
+[38;5;8mns4.google.com[0m
+       [38;5;8mChild NS set: [0m
+       [38;5;11m⚠ NS only in parent: ns2.google.com, ns1.google.com, ns3.google.com, [0m
+[38;5;11mns4.google.com[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSOA[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mSOA Record[0m: SOA: ns1.google.com [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mPrimary NS: ns1.google.com[0m
+       [38;5;8mAdmin: dns-admin.google.com[0m
+       [38;5;8mSerial: 909505500[0m
+       [38;5;8mRefresh: 900s[0m
+       [38;5;8mRetry: 900s[0m
+       [38;5;8mExpire: 1800s[0m
+       [38;5;8mMinimum TTL: 60s[0m
+       [38;5;11m⚠ Serial 909505500 doesn't follow YYYYMMDDnn convention[0m
+       [38;5;11m⚠ Refresh interval 900s is low (recommended >= 3600)[0m
+       [38;5;11m⚠ Retry (900s) should be less than Refresh (900s)[0m
+       [38;5;11m⚠ Expire interval 1800s is low (recommended >= 604800)[0m
+  [38;5;12mINFO[0m [1mSOA Serial Consistency[0m: No NS hosts to check SOA serial consistency 
+[2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m────────────────────────────────── [0m[1;38;5;8mDelegation[0m[38;5;8m ──────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mNS Glue Records[0m: No in-bailiwick NS (no glue records needed) [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8mAll NS hostnames are out-of-bailiwick - glue records not required[0m
+
+[38;5;8m────────────────────────────────────── [0m[1;38;5;8mNS[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mNS Records[0m: No NS records at this name (may be a subdomain) [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mNS Minimum Count[0m: No NS records (may be a subdomain) [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mNS Lame Delegation[0m: No nameservers to check [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mNS Network Diversity[0m: No IPv4 NS IPs to check diversity [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mDuplicate NS IPs[0m: No duplicate NS IPs found [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mOpen Recursive Resolver Detection[0m: Open resolver check skipped (use 
+--open-resolver to enable) [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mCNAME[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mCNAME Chain[0m: No CNAME chain (direct resolution) [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m────────────────────────────────────── [0m[1;38;5;8mMX[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mMX-to-IP Detection[0m: No MX-to-IP issues [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mMX Private IP Detection[0m: No MX IPs to check [2m(0.0s, dns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mMX CNAME Check[0m: No MX CNAME issues [2m(0.0s, dns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mNull MX / Duplicates[0m: No null MX or duplicate issues [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mMX Priority Distribution[0m: No MX records to analyze [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mMX Backup Security Parity[0m: Single or no MX - backup parity check not 
+applicable [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mMail Subdomain Survey[0m: 3/19 common mail subdomains resolve [2m(34.5s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8msmtp.gmail.com: A -> 142.250.142.108[0m
+       [38;5;8mpop.gmail.com: A -> 172.217.78.109, 172.217.78.108[0m
+       [38;5;8mimap.gmail.com: A -> 142.250.141.109, 142.250.141.108[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSPF[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mSPF Recursive Expansion[0m: SPF expanded: 1 lookups, depth 1 [2m(31.4s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8mTotal DNS lookups: 1[0m
+       [38;5;8mVoid lookups: 0[0m
+       [38;5;8mMax nesting depth: 1[0m
+       [38;5;8mredirect=_spf.google.com[0m
+       [38;5;8m  ip4:74.125.0.0/16[0m
+       [38;5;8m  ip4:209.85.128.0/17[0m
+       [38;5;8m  ip6:2001:4860:4864::/56[0m
+       [38;5;8m  ip6:2404:6800:4864::/56[0m
+       [38;5;8m  ip6:2607:f8b0:4864::/56[0m
+       [38;5;8m  ip6:2800:3f0:4864::/56[0m
+       [38;5;8m  ip6:2a00:1450:4864::/56[0m
+       [38;5;8m  ip6:2c0f:fb50:4864::/56[0m
+       [38;5;8m  ~all[0m
+  [38;5;2mPASS[0m [1mSPF Lookup Count[0m: SPF uses 1/10 lookups [2m(31.4s, dns:7h/16m)[0m
+       [38;5;8mDNS lookups: 1/10[0m
+       [38;5;8mVoid lookups: 0/2[0m
+  [38;5;2mPASS[0m [1mSPF Include Depth[0m: SPF nesting depth: 1 [2m(31.4s, dns:7h/16m)[0m
+       [38;5;8mMaximum nesting depth: 1[0m
+  [38;5;2mPASS[0m [1mSPF Record Size[0m: SPF record size: 31 bytes [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mSPF record size: 31 bytes[0m
+  [38;5;2mPASS[0m [1mSPF Macros[0m: No SPF macros detected [2m(0.0s, dns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mSPF +all in Includes[0m: No +all found in included SPF records [2m(31.4s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mSPF IP Overlap Detection[0m: No SPF IP overlaps detected [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mIPv4 ranges: 0, IPv6 ranges: 0[0m
+  [38;5;12mINFO[0m [1mMX Hosts Covered by SPF[0m: No MX IPs to check against SPF [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSubdomain SPF Coverage[0m: 1 active mail subdomain(s) missing SPF records 
+[2m(34.5s, dns:7h/16m)[0m
+       [38;5;11m⚠ smtp.gmail.com: Exists but no SPF — spoofable (DMARC sp≠reject)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mDMARC[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;11mWARN[0m [1mDMARC Percentage (pct) Analysis[0m: No DMARC record [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mDMARC Inheritance[0m: No DMARC record found in hierarchy [2m(0.0s, dns:7h/16m)[0m
+       [38;5;11m⚠ No DMARC policy applies to this domain[0m
+  [38;5;11mWARN[0m [1mDMARC External Report Auth[0m: No DMARC record to check [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mDMARC Report Target MX[0m: No DMARC record [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSPF+DMARC Combined[0m: Cannot check combo - missing SPF or DMARC [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSubdomain DMARC Override[0m: No DMARC to check for subdomain overrides 
+[2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mDMARC Subdomain Policy Analysis[0m: No DMARC record to analyze subdomain 
+policy [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mDMARC Report URI Validation[0m: No DMARC record to validate report URIs 
+[2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mDKIM[0m[38;5;8m ─────────────────────────────────────[0m
+  [2mProbes common DKIM selectors and ARC records, detecting broken CNAME [0m
+[2mdelegations. DKIM cryptographically signs messages to prove they haven't been [0m
+[2mtampered with; missing or misconfigured DKIM weakens DMARC and harms [0m
+[2mdeliverability.[0m
+
+  [38;5;11mWARN[0m [1mDKIM Selectors[0m: No DKIM selectors found [2m(33.5s, dns:7h/16m)[0m
+       [38;5;8mDKIM selectors checked (default list): default, google, selector1, [0m
+[38;5;8mselector2, k1, k2, k3, s1, s2, s3, dkim, mail, email, smtp, google2048, [0m
+[38;5;8meverlytickey1, everlytickey2, mandrill, amazonses, postmark, sendgrid, cm, [0m
+[38;5;8mmxvault, protonmail, protonmail2, protonmail3, fm1, fm2, fm3, pic, mailjet, [0m
+[38;5;8mzoho, turbo-smtp, sig1, smtpapi, hs1, hs2, m1, m2[0m
+       [38;5;11m⚠ Probed 39 selectors - none found[0m
+  [38;5;12mINFO[0m [1mARC Selector Records[0m: No dedicated ARC selectors found (ARC uses DKIM 
+keys) [2m(33.6s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mPTR[0m[38;5;8m ──────────────────────────────────────[0m
+  [2mVerifies PTR records and forward-confirmed reverse DNS for mail server IPs. [0m
+[2mMany receiving servers reject mail from IPs without valid reverse DNS, making [0m
+[2mthis essential for deliverability.[0m
+
+  [38;5;12mINFO[0m [1mReverse DNS (PTR)[0m: No A records to check PTR for [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mMX Reverse DNS (PTR)[0m: No MX hosts to check PTR records [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mFCrDNS[0m[38;5;8m ────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mForward-Confirmed rDNS (FCrDNS)[0m: No MX IPs to check FCrDNS [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mDNSBL[0m[38;5;8m ─────────────────────────────────────[0m
+  [2mChecks mail server IPs and the domain against DNS-based blocklists. [0m
+[2mBlocklisted IPs/domains will have mail rejected by most receivers.[0m
+
+  [38;5;11mWARN[0m [1mIP Blocklist Check (DNSBL)[0m: No MX IPv4 addresses to check against 
+blocklists [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mExtended IP Blocklist Check[0m: No MX IPv4 addresses to check [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+
+[38;5;8m─────────────────────────────────── [0m[1;38;5;8mDomainBL[0m[38;5;8m ───────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mDomain Blocklist Check[0m: Skipped — domain blocklists (Spamhaus DBL, SURBL,
+URIBL) require a private DNS resolver (use --private-dnsbl to enable) [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mMX Hostname Blocklist (RHSBL)[0m: Skipped — MX hostname blocklists (Spamhaus
+DBL, SURBL, URIBL) require a private DNS resolver (use --private-dnsbl to 
+enable) [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mDNSSEC[0m[38;5;8m ────────────────────────────────────[0m
+  [2mValidates DNSSEC signing and checks for NSEC/NSEC3 zone walk exposure. DNSSEC [0m
+[2mprevents DNS spoofing and cache poisoning, protecting email routing integrity.[0m
+
+  [38;5;12mINFO[0m [1mDNSSEC[0m: DNSSEC is not enabled [2m(33.5s, dns:7h/16m)[0m
+       [38;5;8mNo DS or DNSKEY records found[0m
+  [38;5;12mINFO[0m [1mNSEC/NSEC3 Zone Walk[0m: DNSSEC not enabled — NSEC/NSEC3 not applicable 
+[2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mMTASTS[0m[38;5;8m ────────────────────────────────────[0m
+  [2mTests MTA-STS policy, TLS-RPT reporting, DANE/TLSA records, SMTP TLS [0m
+[2mcertificates, TLS version, STARTTLS enforcement, EHLO capabilities, and [0m
+[2msubmission ports. These protect mail in transit from interception and downgrade [0m
+[2mattacks.[0m
+
+  [38;5;12mINFO[0m [1mMTA-STS[0m: MTA-STS not configured [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mNo _mta-sts TXT record found[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mTLSRPT[0m[38;5;8m ────────────────────────────────────[0m
+  [38;5;11mWARN[0m [1mTLS Reporting (TLS-RPT)[0m: TLS-RPT configured [2m(32.5s, dns:7h/16m)[0m
+       [38;5;8mTLS-RPT: v=TLSRPTv1;rua=mailto:sts-reports@google.com[0m
+       [38;5;8m  Report URI: mailto:sts-reports@google.com[0m
+       [38;5;8m    Report domain google.com: MX records exist[0m
+       [38;5;11m⚠ TLS-RPT rua= sends reports to external domain google.com — verify [0m
+[38;5;11mexternal authorization record exists at appropriate location[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mBIMI[0m[38;5;8m ─────────────────────────────────────[0m
+  [2mValidates Brand Indicators for Message Identification including SVG logos and [0m
+[2mVMC certificates. BIMI displays your brand logo in supporting email clients, [0m
+[2mimproving trust and engagement.[0m
+
+  [38;5;12mINFO[0m [1mBIMI[0m: BIMI not configured [2m(2.1s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mDANE[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mDANE/TLSA[0m: No DANE/TLSA records [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mDANE checked for port 25 only — submission ports (587/465) not checked[0m
+  [38;5;12mINFO[0m [1mDANE TLSA Cert Match[0m: No TLSA records to match against certificates 
+[2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSMTP[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;11mWARN[0m [1mSMTP TLS Certificate[0m: No MX hosts to check TLS certificates [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP TLS Certificate Chain[0m: No MX hosts to check certificate chains 
+[2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP TLS Version[0m: No MX hosts to check TLS version [2m(0.0s, dns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mSMTP Banner Validation[0m: Checked SMTP banners for 0 MX host(s) [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+  [38;5;2mPASS[0m [1mEHLO Capabilities[0m: EHLO capabilities retrieved [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP Max Message Size[0m: No MX hosts [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP REQUIRETLS (RFC 8689)[0m: No MX hosts [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSTARTTLS Enforcement[0m: No MX hosts to check STARTTLS [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP Banner vs Reverse DNS[0m: No MX hosts to check banner/rDNS match [2m(0.0s,[0m
+[2mdns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP Transaction Timing[0m: No MX hosts to measure timing [2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mSubmission Ports[0m: Submission port probe completed [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSRV[0m[38;5;8m ──────────────────────────────────────[0m
+  [2mChecks mail-related SRV records and Autodiscover/Autoconfig endpoints. These [0m
+[2menable automatic mail client configuration, reducing support burden and [0m
+[2mmisconfiguration.[0m
+
+  [38;5;2mPASS[0m [1mMail Service SRV Records[0m: 4 mail SRV record(s) found [2m(3.1s, dns:7h/16m)[0m
+       [38;5;8m_submission._tcp: smtp.gmail.com:587 (priority=5, weight=0)[0m
+       [38;5;8m_imap._tcp: :0 (priority=0, weight=0)[0m
+       [38;5;8m_imaps._tcp: imap.gmail.com:993 (priority=5, weight=0)[0m
+       [38;5;8m_pop3s._tcp: pop.gmail.com:995 (priority=20, weight=0)[0m
+       [38;5;8m_jmap._tcp: Not found[0m
+
+[38;5;8m───────────────────────────────── [0m[1;38;5;8mAutodiscover[0m[38;5;8m ─────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mAutodiscover[0m: Could not query autodiscover DNS records [2m(3.1s, dns:7h/16m)[0m
+       [38;5;8m_autodiscover._tcp SRV: Not found[0m
+       [38;5;8mautodiscover.gmail.com: Not found[0m
+       [38;5;8mDNS query for autodiscover SRV records failed[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mCAA[0m[38;5;8m ──────────────────────────────────────[0m
+  [2mValidates CAA records, IPv6 readiness, wildcard DNS, TTL sanity, zone transfer[0m
+[2mexposure (AXFR), security.txt, and TXT record hygiene. These checks cover [0m
+[2moperational security, certificate issuance policy, and DNS best practices.[0m
+
+  [38;5;12mINFO[0m [1mCAA Records[0m: No CAA records [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mNo CAA records - any CA can issue certificates for this domain[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mIPv6[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mIPv6 Readiness[0m: No MX hosts to check IPv6 [2m(0.0s, dns:7h/16m)[0m
+  [38;5;11mWARN[0m [1mSMTP IPv6 Connectivity[0m: No MX hosts to check IPv6 connectivity [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+
+[38;5;8m────────────────────────────────── [0m[1;38;5;8mPostmaster[0m[38;5;8m ──────────────────────────────────[0m
+  [2mVerifies that postmaster@ and abuse@ addresses are deliverable per RFC [0m
+[2m5321/2142. These mandatory addresses enable other operators to report issues [0m
+[2mwith your mail.[0m
+
+  [38;5;11mWARN[0m [1mPostmaster Address[0m: No MX hosts to check postmaster [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m──────────────────────────────────── [0m[1;38;5;8mAbuse[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;11mWARN[0m [1mAbuse Address[0m: No MX hosts to check abuse@ [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m────────────────────────────────────── [0m[1;38;5;8mNS[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mDNS Propagation Consistency[0m: DNS answers consistent across resolvers 
+(UDP/53) [2m(3.1s, dns:7h/16m)[0m
+       [38;5;8mGoogle (8.8.8.8): A=[142.251.218.197] MX=[[0m
+[38;5;8m10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, [0m
+[38;5;8m30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, [0m
+[38;5;8m5:gmail-smtp-in.l.google.com][0m
+       [38;5;8mCloudflare (1.1.1.1): A=[142.251.218.133] MX=[[0m
+[38;5;8m10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, [0m
+[38;5;8m30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, [0m
+[38;5;8m5:gmail-smtp-in.l.google.com][0m
+       [38;5;8mQuad9 (9.9.9.9): A=[142.251.35.69] MX=[[0m
+[38;5;8m10:alt1.gmail-smtp-in.l.google.com, 20:alt2.gmail-smtp-in.l.google.com, [0m
+[38;5;8m30:alt3.gmail-smtp-in.l.google.com, 40:alt4.gmail-smtp-in.l.google.com, [0m
+[38;5;8m5:gmail-smtp-in.l.google.com][0m
+       [38;5;8mA record IPs differ across resolvers (normal for anycast/GeoDNS)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mSMTP[0m[38;5;8m ─────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mOpen Relay Test[0m: Open relay test skipped (use --open-relay to enable) 
+[2m(0.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mCatch-All Detection[0m: Catch-all test skipped (use --catch-all to enable) 
+[2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m─────────────────────────────────── [0m[1;38;5;8mWildcard[0m[38;5;8m ───────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mWildcard DNS[0m: No wildcard DNS records [2m(3.1s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mTTL[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mTTL Sanity[0m: TTLs within reasonable range [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mSPF/TXT (gmail.com): TTL 133s[0m
+
+[38;5;8m───────────────────────────────── [0m[1;38;5;8mZoneTransfer[0m[38;5;8m ─────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mAXFR Exposure[0m: AXFR test skipped (use --axfr to enable) [2m(0.0s, [0m
+[2mdns:7h/16m)[0m
+       [38;5;8mZone transfer test is disabled by default — use --axfr to enable[0m
+
+[38;5;8m───────────────────────────────── [0m[1;38;5;8mSecurityTxt[0m[38;5;8m ──────────────────────────────────[0m
+  [38;5;12mINFO[0m [1msecurity.txt (RFC 9116)[0m: Could not fetch security.txt [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mHTTP request to gmail.com/.well-known/security.txt failed (status 404)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mTXT[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mEmail Provider Verification TXT[0m: No provider verification TXT records 
+detected [2m(0.0s, dns:7h/16m)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mCAA[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;12mINFO[0m [1mCertificate Transparency[0m: Could not query CT logs — crt.sh unreachable 
+[2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mHTTP request to crt.sh failed (status 502)[0m
+
+[38;5;8m───────────────────────────────────── [0m[1;38;5;8mTXT[0m[38;5;8m ──────────────────────────────────────[0m
+  [38;5;2mPASS[0m [1mDuplicate/Conflicting TXT Records[0m: No duplicate or conflicting TXT 
+records [2m(1.0s, dns:7h/16m)[0m
+  [38;5;12mINFO[0m [1mAll TXT Records[0m: 4 TXT record(s) found [2m(0.0s, dns:7h/16m)[0m
+       [38;5;8mTXT: yahoo-verification-key=+eZwIPSgRxkAUzDtqT8Qhk+j4A1JF6V/wtGoyGTkELY=[0m
+       [38;5;8mTXT: globalsign-smime-dv=CDYX+XFHUw2wml6/Gb8+59BsH31KzUr6c1l2BPvqKX8=[0m
+       [38;5;8mTXT: v=spf1 redirect=_spf.google.com[0m
+       [38;5;8mTXT: yahoo-verification-key=dKYwfVbaxatmcXiXy6LDAxMRirqpOq5tj98iJv9qWVk=[0m
+[ 214722ms] [PHASE] VALIDATION COMPLETE: 214722ms total, 88 results (pass:24 warn:29 err:0 crit:0)
+
+[38;5;8m─────────────────────────────────── [0m[1;38;5;8mSummary[0m[38;5;8m ────────────────────────────────────[0m
+╭──────────────┬────────╮
+│ Metric       │ Count  │
+├──────────────┼────────┤
+│ [38;5;2mPass[0m         │ 24     │
+│ [38;5;11mWarning[0m      │ 29     │
+│ [38;5;9mError[0m        │ 0      │
+│ [1;38;5;9mCritical[0m     │ 0      │
+│ [38;5;12mTotal Checks[0m │ 88     │
+│ [38;5;8mDuration[0m     │ 214.7s │
+╰──────────────┴────────╯
+[2mDNS cache: 42 hits, 170 misses (125 entries)[0m
+[2mSlow checks (≥1s):[0m
+[2m   34.5s  Mail Subdomain Survey[0m
+[2m   34.5s  Subdomain SPF Coverage[0m
+[2m   33.6s  ARC Selector Records[0m
+[2m   33.6s  Delegation Consistency[0m
+[2m   33.5s  DKIM Selectors[0m
+[2m   33.5s  DNSSEC[0m
+[2m   32.5s  TLS Reporting (TLS-RPT)[0m
+[2m   31.4s  Delegation Chain[0m
+[2m   31.4s  SPF Recursive Expansion[0m
+[2m   31.4s  SPF Lookup Count[0m
+[2m   31.4s  SPF Include Depth[0m
+[2m   31.4s  SPF +all in Includes[0m
+[2m    3.1s  Autodiscover[0m
+[2m    3.1s  Mail Service SRV Records[0m
+[2m    3.1s  DNS Propagation Consistency[0m
+[2m    3.1s  Wildcard DNS[0m
+[2m    2.1s  BIMI[0m
+[2m    1.0s  Duplicate/Conflicting TXT Records[0m
+
+[38;5;8m─────────────────────────────────── [0m[1;38;5;8mVerdict[0m[38;5;8m ────────────────────────────────────[0m
+[38;5;11mWarnings found - review recommended.[0m
