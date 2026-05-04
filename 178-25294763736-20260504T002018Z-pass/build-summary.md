@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #127 (attempt 1) |
-| **Run ID** | 24174974723 |
+| **Run** | #178 (attempt 1) |
+| **Run ID** | 25294763736 |
 | **Result** | pass |
-| **Commit** | f9461c772289b74ada40dc576f6e41f62af9e816 |
-| **Ref** | refs/pull/6/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | a827632e5e7d5d82ac359a100db9776c9943595e |
+| **Ref** | refs/pull/18/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #6: Add DKIM selector masking to TraceMasker |
-| **Branch** | claude/add-dkim-selector-masking-d94ed |
+| **PR** | #18: Disable translation and fix DKIM selectors array handling |
+| **Branch** | claude/fix-dkim-loading-translation-f3c2a |
 
 ## Artifacts
 ```
