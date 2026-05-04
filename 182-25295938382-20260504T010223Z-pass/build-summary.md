@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #131 (attempt 1) |
-| **Run ID** | 24184442161 |
+| **Run** | #182 (attempt 1) |
+| **Run ID** | 25295938382 |
 | **Result** | pass |
-| **Commit** | 7d8b96a637289eca5aa5060693f2440f3c8d21f0 |
-| **Ref** | refs/pull/7/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 2a48d07adeae0dc6e516b42cf6d04fdce62ad270 |
+| **Ref** | refs/pull/19/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
+| **PR** | #19: Add clear button to domain input field |
+| **Branch** | claude/add-validators-clear-button-k1o4K |
 
 ## Artifacts
 ```
@@ -30,6 +33,7 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
+test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
