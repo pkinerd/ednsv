@@ -426,7 +426,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?privateDnsbl=true                  include private/registered DNSBLs
 app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, string? recheck,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, CancellationToken ct) =>
+    CacheManager cache, ILogger<Program> logger, CancellationToken ct) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -436,7 +436,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
     var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
 
-    using var requestScope = app.Logger.BeginScope(new Dictionary<string, object?>
+    using var requestScope = logger.BeginScope(new Dictionary<string, object?>
     {
         ["RequestId"] = requestId,
         ["Username"] = username,
@@ -448,12 +448,12 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     if (traceMasker != null) validator.TraceMask = traceMasker;
     if (enableTrace) validator.Trace = msg =>
     {
-        using var traceScope = app.Logger.BeginScope(new Dictionary<string, object?>
+        using var traceScope = logger.BeginScope(new Dictionary<string, object?>
         {
             ["Phase"] = TraceContext.Phase,
             ["Check"] = TraceContext.Check
         });
-        app.Logger.LogDebug("{Trace}", msg);
+        logger.LogDebug("{Trace}", msg);
     };
 
     if (!string.IsNullOrEmpty(recheck) &&
