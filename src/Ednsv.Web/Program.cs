@@ -7,6 +7,9 @@ using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
 using Ednsv.Core.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Console;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,13 +26,13 @@ var useJsonLogs = string.Equals(explicitFormatter, "Json", StringComparison.Ordi
 
 if (useJsonLogs)
 {
-    builder.Logging.AddJsonConsole(options =>
+    builder.Logging.AddConsoleFormatter<CleanJsonFormatter, JsonConsoleFormatterOptions>(options =>
     {
         options.IncludeScopes = true;
         options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
         options.UseUtcTimestamp = true;
-        options.JsonWriterOptions = new System.Text.Json.JsonWriterOptions { Indented = false };
     });
+    builder.Logging.AddConsole(options => options.FormatterName = CleanJsonFormatter.FormatterName);
 }
 else
 {
@@ -1055,6 +1058,121 @@ class ValidationTracker : IDisposable
                 .ToList()
         };
     }
+}
+
+// ── Clean JSON formatter ─────────────────────────────────────────────────
+// Strips {OriginalFormat} template strings and redundant Message duplicates
+// from State and Scope objects so JSON output contains only typed values.
+sealed class CleanJsonFormatter : ConsoleFormatter, IDisposable
+{
+    public const string FormatterName = "CleanJson";
+
+    IDisposable? _reload;
+    JsonConsoleFormatterOptions _opts;
+
+    public CleanJsonFormatter(IOptionsMonitor<JsonConsoleFormatterOptions> options)
+        : base(FormatterName)
+    {
+        _opts = options.CurrentValue;
+        _reload = options.OnChange(o => _opts = o);
+    }
+
+    public override void Write<TState>(in LogEntry<TState> logEntry,
+        IExternalScopeProvider? scopeProvider, TextWriter textWriter)
+    {
+        var message = logEntry.Formatter?.Invoke(logEntry.State, logEntry.Exception);
+        if (message is null && logEntry.Exception is null) return;
+
+        using var buf = new MemoryStream();
+        var jw = new Utf8JsonWriter(buf);
+        jw.WriteStartObject();
+
+        if (_opts.TimestampFormat is not null)
+        {
+            var ts = _opts.UseUtcTimestamp ? DateTimeOffset.UtcNow : DateTimeOffset.Now;
+            jw.WriteString("Timestamp", ts.ToString(_opts.TimestampFormat));
+        }
+        jw.WriteNumber("EventId", logEntry.EventId.Id);
+        jw.WriteString("LogLevel", GetLogLevelString(logEntry.LogLevel));
+        jw.WriteString("Category", logEntry.Category);
+        jw.WriteString("Message", message ?? "");
+
+        if (logEntry.Exception is not null)
+            jw.WriteString("Exception", logEntry.Exception.ToString());
+
+        if (logEntry.State is IEnumerable<KeyValuePair<string, object?>> stateKvps)
+        {
+            jw.WriteStartObject("State");
+            foreach (var (k, v) in stateKvps)
+            {
+                if (k is "{OriginalFormat}" or "Message") continue;
+                WriteValue(jw, k, v);
+            }
+            jw.WriteEndObject();
+        }
+
+        if (_opts.IncludeScopes && scopeProvider is not null)
+        {
+            jw.WriteStartArray("Scopes");
+            scopeProvider.ForEachScope((scope, w) =>
+            {
+                if (scope is IEnumerable<KeyValuePair<string, object?>> kvps)
+                {
+                    w.WriteStartObject();
+                    foreach (var (k, v) in kvps)
+                    {
+                        if (k is "{OriginalFormat}" or "Message") continue;
+                        WriteValue(w, k, v);
+                    }
+                    w.WriteEndObject();
+                }
+                else if (scope is not null)
+                {
+                    w.WriteStringValue(scope.ToString());
+                }
+            }, jw);
+            jw.WriteEndArray();
+        }
+
+        jw.WriteEndObject();
+        jw.Flush();
+        textWriter.Write(Encoding.UTF8.GetString(buf.ToArray()));
+        textWriter.Write('\n');
+    }
+
+    static void WriteValue(Utf8JsonWriter jw, string key, object? value)
+    {
+        switch (value)
+        {
+            case null:     jw.WriteNull(key);            break;
+            case bool b:   jw.WriteBoolean(key, b);      break;
+            case byte n:   jw.WriteNumber(key, n);       break;
+            case sbyte n:  jw.WriteNumber(key, n);       break;
+            case short n:  jw.WriteNumber(key, n);       break;
+            case ushort n: jw.WriteNumber(key, n);       break;
+            case int n:    jw.WriteNumber(key, n);       break;
+            case uint n:   jw.WriteNumber(key, n);       break;
+            case long n:   jw.WriteNumber(key, n);       break;
+            case ulong n:  jw.WriteNumber(key, n);       break;
+            case float n:  jw.WriteNumber(key, (double)n); break;
+            case double n: jw.WriteNumber(key, n);       break;
+            case decimal n:jw.WriteNumber(key, n);       break;
+            default:       jw.WriteString(key, value.ToString()); break;
+        }
+    }
+
+    static string GetLogLevelString(LogLevel l) => l switch
+    {
+        LogLevel.Trace =>       "Trace",
+        LogLevel.Debug =>       "Debug",
+        LogLevel.Information => "Information",
+        LogLevel.Warning =>     "Warning",
+        LogLevel.Error =>       "Error",
+        LogLevel.Critical =>    "Critical",
+        _                =>     l.ToString()
+    };
+
+    public void Dispose() => _reload?.Dispose();
 }
 
 // Make Program accessible for logging DI
