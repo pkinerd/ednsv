@@ -2,13 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #129 (attempt 1) |
-| **Run ID** | 24175291474 |
+| **Run** | #180 (attempt 1) |
+| **Run ID** | 25295330998 |
 | **Result** | pass |
-| **Commit** | 8b6d449cfa7756ea2bb4f4dfbccb157673493f21 |
-| **Ref** | refs/heads/main |
-| **Event** | push |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | e5a804f49c358914520fe00d1210407974243a23 |
+| **Ref** | refs/pull/18/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #18: Disable translation and fix DKIM selectors array handling |
+| **Branch** | claude/fix-dkim-loading-translation-f3c2a |
 
 ## Artifacts
 ```
