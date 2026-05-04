@@ -7,6 +7,9 @@ using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
 using Ednsv.Core.Services;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging.Console;
+using Microsoft.Extensions.Options;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,13 +26,13 @@ var useJsonLogs = string.Equals(explicitFormatter, "Json", StringComparison.Ordi
 
 if (useJsonLogs)
 {
-    builder.Logging.AddJsonConsole(options =>
+    builder.Logging.AddConsoleFormatter<CleanJsonFormatter, JsonConsoleFormatterOptions>(options =>
     {
         options.IncludeScopes = true;
         options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
         options.UseUtcTimestamp = true;
-        options.JsonWriterOptions = new System.Text.Json.JsonWriterOptions { Indented = false };
     });
+    builder.Logging.AddConsole(options => options.FormatterName = CleanJsonFormatter.FormatterName);
 }
 else
 {
@@ -211,12 +214,9 @@ else
 var requestScopeLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Request");
 app.Use(async (ctx, next) =>
 {
-    using var scope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
-    {
-        ["RequestId"] = ctx.TraceIdentifier,
-        ["Method"] = ctx.Request.Method,
-        ["Path"] = ctx.Request.Path.Value
-    });
+    using var scope = requestScopeLogger.BeginScope(
+        "RequestId={RequestId} Method={Method} Path={Path}",
+        ctx.TraceIdentifier, ctx.Request.Method, ctx.Request.Path.Value);
     await next();
 });
 
@@ -228,7 +228,7 @@ app.Use(async (ctx, next) =>
 {
     if (authService.Disabled)
     {
-        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(auth-disabled)" });
+        using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(auth-disabled)");
         await next();
         return;
     }
@@ -238,7 +238,7 @@ app.Use(async (ctx, next) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
     {
-        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(anonymous)" });
+        using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(anonymous)");
         await next();
         return;
     }
@@ -289,11 +289,9 @@ app.Use(async (ctx, next) =>
 
     ctx.Items["AuthUser"] = user;
 
-    using var userScope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
-    {
-        ["Username"] = user.Username,
-        ["IsAdmin"] = user.IsAdmin
-    });
+    using var userScope = requestScopeLogger.BeginScope(
+        "Username={Username} IsAdmin={IsAdmin}",
+        user.Username, user.IsAdmin);
 
     // Admin-only static pages: gate /config.html before static files serve it.
     var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
@@ -426,7 +424,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 //   ?privateDnsbl=true                  include private/registered DNSBLs
 app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, string? recheck,
     DnsResolverService dnsSvc, SmtpProbeService smtpSvc, HttpProbeService httpSvc,
-    CacheManager cache, CancellationToken ct) =>
+    CacheManager cache, ILogger<Program> logger, CancellationToken ct) =>
 {
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
@@ -436,24 +434,18 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
     var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
 
-    using var requestScope = app.Logger.BeginScope(new Dictionary<string, object?>
-    {
-        ["RequestId"] = requestId,
-        ["Username"] = username,
-        ["Endpoint"] = "validateDomainSync",
-        ["Domain"] = displayDomain
-    });
+    using var requestScope = logger.BeginScope(
+        "RequestId={RequestId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
+        requestId, username, "validateDomainSync", displayDomain);
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (traceMasker != null) validator.TraceMask = traceMasker;
     if (enableTrace) validator.Trace = msg =>
     {
-        using var traceScope = app.Logger.BeginScope(new Dictionary<string, object?>
-        {
-            ["Phase"] = TraceContext.Phase,
-            ["Check"] = TraceContext.Check
-        });
-        app.Logger.LogDebug("{Trace}", msg);
+        using var traceScope = logger.BeginScope(
+            "Phase={Phase} Check={Check}",
+            TraceContext.Phase, TraceContext.Check);
+        logger.LogDebug("{Trace}", msg);
     };
 
     if (!string.IsNullOrEmpty(recheck) &&
@@ -980,13 +972,9 @@ class ValidationTracker : IDisposable
             // Top-level scope for the whole validation: every log line emitted
             // by this task (including those from the singleton DNS/SMTP/HTTP
             // services via AsyncLocal) carries these structured fields.
-            using var jobScope = logger.BeginScope(new Dictionary<string, object?>
-            {
-                ["JobId"] = jobId,
-                ["Username"] = username,
-                ["Endpoint"] = "validateDomainAsync",
-                ["Domain"] = displayDomain
-            });
+            using var jobScope = logger.BeginScope(
+                "JobId={JobId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
+                jobId, username, "validateDomainAsync", displayDomain);
 
             try
             {
@@ -994,11 +982,9 @@ class ValidationTracker : IDisposable
                 if (traceMasker != null) validator.TraceMask = traceMasker;
                 if (trace) validator.Trace = msg =>
                 {
-                    using var traceScope = logger.BeginScope(new Dictionary<string, object?>
-                    {
-                        ["Phase"] = TraceContext.Phase,
-                        ["Check"] = TraceContext.Check
-                    });
+                    using var traceScope = logger.BeginScope(
+                        "Phase={Phase} Check={Check}",
+                        TraceContext.Phase, TraceContext.Check);
                     logger.LogDebug("{Trace}", msg);
                 };
 
@@ -1072,6 +1058,121 @@ class ValidationTracker : IDisposable
                 .ToList()
         };
     }
+}
+
+// ── Clean JSON formatter ─────────────────────────────────────────────────
+// Strips {OriginalFormat} template strings and redundant Message duplicates
+// from State and Scope objects so JSON output contains only typed values.
+sealed class CleanJsonFormatter : ConsoleFormatter, IDisposable
+{
+    public const string FormatterName = "CleanJson";
+
+    IDisposable? _reload;
+    JsonConsoleFormatterOptions _opts;
+
+    public CleanJsonFormatter(IOptionsMonitor<JsonConsoleFormatterOptions> options)
+        : base(FormatterName)
+    {
+        _opts = options.CurrentValue;
+        _reload = options.OnChange(o => _opts = o);
+    }
+
+    public override void Write<TState>(in LogEntry<TState> logEntry,
+        IExternalScopeProvider? scopeProvider, TextWriter textWriter)
+    {
+        var message = logEntry.Formatter?.Invoke(logEntry.State, logEntry.Exception);
+        if (message is null && logEntry.Exception is null) return;
+
+        using var buf = new MemoryStream();
+        var jw = new Utf8JsonWriter(buf);
+        jw.WriteStartObject();
+
+        if (_opts.TimestampFormat is not null)
+        {
+            var ts = _opts.UseUtcTimestamp ? DateTimeOffset.UtcNow : DateTimeOffset.Now;
+            jw.WriteString("Timestamp", ts.ToString(_opts.TimestampFormat));
+        }
+        jw.WriteNumber("EventId", logEntry.EventId.Id);
+        jw.WriteString("LogLevel", GetLogLevelString(logEntry.LogLevel));
+        jw.WriteString("Category", logEntry.Category);
+        jw.WriteString("Message", message ?? "");
+
+        if (logEntry.Exception is not null)
+            jw.WriteString("Exception", logEntry.Exception.ToString());
+
+        if (logEntry.State is IEnumerable<KeyValuePair<string, object?>> stateKvps)
+        {
+            jw.WriteStartObject("State");
+            foreach (var (k, v) in stateKvps)
+            {
+                if (k is "{OriginalFormat}" or "Message") continue;
+                WriteValue(jw, k, v);
+            }
+            jw.WriteEndObject();
+        }
+
+        if (_opts.IncludeScopes && scopeProvider is not null)
+        {
+            jw.WriteStartArray("Scopes");
+            scopeProvider.ForEachScope((scope, w) =>
+            {
+                if (scope is IEnumerable<KeyValuePair<string, object?>> kvps)
+                {
+                    w.WriteStartObject();
+                    foreach (var (k, v) in kvps)
+                    {
+                        if (k is "{OriginalFormat}" or "Message") continue;
+                        WriteValue(w, k, v);
+                    }
+                    w.WriteEndObject();
+                }
+                else if (scope is not null)
+                {
+                    w.WriteStringValue(scope.ToString());
+                }
+            }, jw);
+            jw.WriteEndArray();
+        }
+
+        jw.WriteEndObject();
+        jw.Flush();
+        textWriter.Write(Encoding.UTF8.GetString(buf.ToArray()));
+        textWriter.Write('\n');
+    }
+
+    static void WriteValue(Utf8JsonWriter jw, string key, object? value)
+    {
+        switch (value)
+        {
+            case null:     jw.WriteNull(key);            break;
+            case bool b:   jw.WriteBoolean(key, b);      break;
+            case byte n:   jw.WriteNumber(key, n);       break;
+            case sbyte n:  jw.WriteNumber(key, n);       break;
+            case short n:  jw.WriteNumber(key, n);       break;
+            case ushort n: jw.WriteNumber(key, n);       break;
+            case int n:    jw.WriteNumber(key, n);       break;
+            case uint n:   jw.WriteNumber(key, n);       break;
+            case long n:   jw.WriteNumber(key, n);       break;
+            case ulong n:  jw.WriteNumber(key, n);       break;
+            case float n:  jw.WriteNumber(key, (double)n); break;
+            case double n: jw.WriteNumber(key, n);       break;
+            case decimal n:jw.WriteNumber(key, n);       break;
+            default:       jw.WriteString(key, value.ToString()); break;
+        }
+    }
+
+    static string GetLogLevelString(LogLevel l) => l switch
+    {
+        LogLevel.Trace =>       "Trace",
+        LogLevel.Debug =>       "Debug",
+        LogLevel.Information => "Information",
+        LogLevel.Warning =>     "Warning",
+        LogLevel.Error =>       "Error",
+        LogLevel.Critical =>    "Critical",
+        _                =>     l.ToString()
+    };
+
+    public void Dispose() => _reload?.Dispose();
 }
 
 // Make Program accessible for logging DI

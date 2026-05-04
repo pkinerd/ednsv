@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" translate="no">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -195,7 +195,7 @@ function loadUserOptions() {
     if (typeof o.enableDirectDns === 'boolean')  { optDirectDns.checked = o.enableDirectDns;   userOverrideKeys.add('directDns'); }
     if (typeof o.enableDoh === 'boolean')        { optDoh.checked = o.enableDoh;               userOverrideKeys.add('doh'); }
     if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
-    if (Array.isArray(o.dkimSelectors)) {
+    if (Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
       optDkim.value = o.dkimSelectors.join(', ');
       dkimUserCustomized = true;
     }
