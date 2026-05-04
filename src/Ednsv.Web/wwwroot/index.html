@@ -19,8 +19,11 @@
   .nav .signout { color: var(--muted); }
   .search-form { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
   .domain-combo { flex: 1; position: relative; display: flex; }
-  .domain-combo input { flex: 1; padding: 0.6rem 0.8rem; padding-right: 2.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
+  .domain-combo input { flex: 1; padding: 0.6rem 0.8rem; padding-right: 3.8rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; outline: none; }
   .domain-combo input:focus { border-color: var(--accent); }
+  .domain-combo .clear-btn { position: absolute; right: 2rem; top: 0; bottom: 0; width: 1.6rem; background: transparent; border: none; color: var(--muted); font-size: 1rem; cursor: pointer; padding: 0; display: none; align-items: center; justify-content: center; line-height: 1; }
+  .domain-combo .clear-btn:hover { color: var(--text); }
+  .domain-combo.has-value .clear-btn { display: flex; }
   .domain-combo .arrow-btn { position: absolute; right: 0; top: 0; bottom: 0; width: 2rem; background: transparent; border: none; color: var(--muted); font-size: 0.75rem; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
   .domain-combo .arrow-btn:hover { color: var(--accent); }
   .domain-combo .suggestions { position: absolute; top: calc(100% + 2px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; max-height: 18rem; overflow-y: auto; z-index: 10; box-shadow: 0 6px 18px rgba(0,0,0,0.4); display: none; }
@@ -108,6 +111,7 @@
   <form class="search-form" id="form">
     <div class="domain-combo" id="domainCombo">
       <input type="text" id="domain" placeholder="Enter domain (e.g. example.com)" autocomplete="off" autofocus>
+      <button type="button" class="clear-btn" id="domainClear" title="Clear" aria-label="Clear input">&times;</button>
       <button type="button" class="arrow-btn" id="domainArrow" title="Show all known domains" aria-label="Show all known domains">&#9662;</button>
       <div class="suggestions" id="domainSuggestions" role="listbox"></div>
     </div>
@@ -321,7 +325,12 @@ function forgetDomain(d) {
 
 const combo = document.getElementById('domainCombo');
 const arrowBtn = document.getElementById('domainArrow');
+const clearBtn = document.getElementById('domainClear');
 const suggestionsEl = document.getElementById('domainSuggestions');
+
+function updateClearBtn() {
+  combo.classList.toggle('has-value', input.value.length > 0);
+}
 
 function buildSuggestionGroups(query) {
   const q = (query || '').trim().toLowerCase();
@@ -390,6 +399,7 @@ function renderSuggestions() {
       if (e.target.classList.contains('remove')) return;
       e.preventDefault();
       input.value = el.dataset.domain;
+      updateClearBtn();
       closeCombo();
       input.focus();
       updateDomainHint();
@@ -409,12 +419,21 @@ function openCombo() { renderSuggestions(); combo.classList.add('open'); }
 function closeCombo() { combo.classList.remove('open'); }
 function toggleCombo() { combo.classList.contains('open') ? closeCombo() : openCombo(); }
 
+clearBtn.addEventListener('mousedown', e => {
+  e.preventDefault(); // keep input focused
+  input.value = '';
+  updateClearBtn();
+  openCombo();
+  input.focus();
+});
+
 arrowBtn.addEventListener('click', toggleCombo);
 input.addEventListener('focus', openCombo);
 input.addEventListener('input', () => {
   // Re-filter on every keystroke; auto-open if the user is typing into a
   // closed combo (e.g. after Escape, the next keystroke pops it back).
   if (!combo.classList.contains('open')) combo.classList.add('open');
+  updateClearBtn();
   renderSuggestions();
 });
 input.addEventListener('keydown', e => {
