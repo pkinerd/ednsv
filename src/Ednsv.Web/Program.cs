@@ -211,12 +211,9 @@ else
 var requestScopeLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Request");
 app.Use(async (ctx, next) =>
 {
-    using var scope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
-    {
-        ["RequestId"] = ctx.TraceIdentifier,
-        ["Method"] = ctx.Request.Method,
-        ["Path"] = ctx.Request.Path.Value
-    });
+    using var scope = requestScopeLogger.BeginScope(
+        "RequestId={RequestId} Method={Method} Path={Path}",
+        ctx.TraceIdentifier, ctx.Request.Method, ctx.Request.Path.Value);
     await next();
 });
 
@@ -228,7 +225,7 @@ app.Use(async (ctx, next) =>
 {
     if (authService.Disabled)
     {
-        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(auth-disabled)" });
+        using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(auth-disabled)");
         await next();
         return;
     }
@@ -238,7 +235,7 @@ app.Use(async (ctx, next) =>
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
     {
-        using var anonScope = requestScopeLogger.BeginScope(new Dictionary<string, object?> { ["Username"] = "(anonymous)" });
+        using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(anonymous)");
         await next();
         return;
     }
@@ -289,11 +286,9 @@ app.Use(async (ctx, next) =>
 
     ctx.Items["AuthUser"] = user;
 
-    using var userScope = requestScopeLogger.BeginScope(new Dictionary<string, object?>
-    {
-        ["Username"] = user.Username,
-        ["IsAdmin"] = user.IsAdmin
-    });
+    using var userScope = requestScopeLogger.BeginScope(
+        "Username={Username} IsAdmin={IsAdmin}",
+        user.Username, user.IsAdmin);
 
     // Admin-only static pages: gate /config.html before static files serve it.
     var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
@@ -436,23 +431,17 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
     var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
 
-    using var requestScope = logger.BeginScope(new Dictionary<string, object?>
-    {
-        ["RequestId"] = requestId,
-        ["Username"] = username,
-        ["Endpoint"] = "validateDomainSync",
-        ["Domain"] = displayDomain
-    });
+    using var requestScope = logger.BeginScope(
+        "RequestId={RequestId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
+        requestId, username, "validateDomainSync", displayDomain);
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (traceMasker != null) validator.TraceMask = traceMasker;
     if (enableTrace) validator.Trace = msg =>
     {
-        using var traceScope = logger.BeginScope(new Dictionary<string, object?>
-        {
-            ["Phase"] = TraceContext.Phase,
-            ["Check"] = TraceContext.Check
-        });
+        using var traceScope = logger.BeginScope(
+            "Phase={Phase} Check={Check}",
+            TraceContext.Phase, TraceContext.Check);
         logger.LogDebug("{Trace}", msg);
     };
 
@@ -980,13 +969,9 @@ class ValidationTracker : IDisposable
             // Top-level scope for the whole validation: every log line emitted
             // by this task (including those from the singleton DNS/SMTP/HTTP
             // services via AsyncLocal) carries these structured fields.
-            using var jobScope = logger.BeginScope(new Dictionary<string, object?>
-            {
-                ["JobId"] = jobId,
-                ["Username"] = username,
-                ["Endpoint"] = "validateDomainAsync",
-                ["Domain"] = displayDomain
-            });
+            using var jobScope = logger.BeginScope(
+                "JobId={JobId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
+                jobId, username, "validateDomainAsync", displayDomain);
 
             try
             {
@@ -994,11 +979,9 @@ class ValidationTracker : IDisposable
                 if (traceMasker != null) validator.TraceMask = traceMasker;
                 if (trace) validator.Trace = msg =>
                 {
-                    using var traceScope = logger.BeginScope(new Dictionary<string, object?>
-                    {
-                        ["Phase"] = TraceContext.Phase,
-                        ["Check"] = TraceContext.Check
-                    });
+                    using var traceScope = logger.BeginScope(
+                        "Phase={Phase} Check={Check}",
+                        TraceContext.Phase, TraceContext.Check);
                     logger.LogDebug("{Trace}", msg);
                 };
 

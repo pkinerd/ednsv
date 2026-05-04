@@ -19,6 +19,7 @@ export Logging__LogLevel__Default=Information
 export Logging__LogLevel__Microsoft__AspNetCore=Warning
 
 if $TRACE; then
+  export Trace=True
   export Logging__LogLevel__Program=Debug
   export Logging__LogLevel__Ednsv__Web=Debug
   if $NO_MASK; then
