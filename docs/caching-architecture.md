@@ -28,7 +28,7 @@ flowchart TD
     PC -->|miss| DEDUP
     DEDUP -->|miss| NET["Network Request<br/><i>DNS / SMTP / HTTP</i>"]
     NET -->|result| PC
-    PC -->|export log<br/>(only if shouldPersist)| DCACHE
+    PC -->|"export log<br/>(only if shouldPersist)"| DCACHE
 
     CM["CacheManager"] -->|LoadAsync| DCACHE
     DCACHE -->|Import| PC
