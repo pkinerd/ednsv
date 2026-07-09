@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #133 (attempt 1) |
-| **Run ID** | 24195292022 |
+| **Run** | #184 (attempt 1) |
+| **Run ID** | 28994976474 |
 | **Result** | pass |
-| **Commit** | e53ac2919a6860403ccf02e51f06a3eb65b0710d |
-| **Ref** | refs/pull/7/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 2c25c61e1145744f0b34f6825ab3f50749ddfa1f |
+| **Ref** | refs/pull/21/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
+| **PR** | #21: Verify BIMI logo hash against VMC certificate |
+| **Branch** | claude/bimi-pem-signature-check-zgif49 |
 
 ## Artifacts
 ```
