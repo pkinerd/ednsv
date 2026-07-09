@@ -566,7 +566,9 @@ public class BimiCheck : ICheck
                     result.Details.Add($"Unknown tag '{tagName}' in BIMI record (will be ignored, possible typo?)");
             }
 
-            // Validate logo URL (l= tag)
+            // Validate logo URL (l= tag) — remember the first successful fetch so the
+            // VMC's logotype hash can be verified against the actual bytes we retrieved.
+            string? fetchedSvgContent = null;
             if (tags.TryGetValue("l", out var logoUrl))
             {
                 result.Details.Add($"Logo URL: {logoUrl}");
@@ -601,6 +603,7 @@ public class BimiCheck : ICheck
                                 result.Details.Add($"SVG logo served with Content-Type '{svgContentType}' — expected image/svg+xml");
 
                             ValidateSvg(svgContent, result);
+                            fetchedSvgContent ??= svgContent;
                         }
                     }
                 }
@@ -631,7 +634,7 @@ public class BimiCheck : ICheck
                     }
                     else
                     {
-                        ValidateVmc(pemContent, domain, result);
+                        ValidateVmc(pemContent, domain, fetchedSvgContent, result);
                     }
                 }
             }
@@ -753,7 +756,7 @@ public class BimiCheck : ICheck
         }
     }
 
-    private static void ValidateVmc(string pemContent, string domain, CheckResult result)
+    private static void ValidateVmc(string pemContent, string domain, string? svgContent, CheckResult result)
     {
         if (!pemContent.Contains("-----BEGIN CERTIFICATE-----"))
         {
@@ -824,19 +827,26 @@ public class BimiCheck : ICheck
                 }
             }
 
-            // Check for the Mark Type extension (OID 1.3.6.1.5.5.7.1.12 = id-pe-logotype)
-            bool hasLogotype = false;
+            // Check for the Mark Type extension (OID 1.3.6.1.5.5.7.1.12 = id-pe-logotype).
+            // If present and we have the SVG, verify its hash matches the value embedded
+            // in the certificate — this proves the DNS-advertised logo is the one the CA
+            // signed off on.
+            byte[]? logotypeExtBytes = null;
             foreach (var ext in cert.Extensions)
             {
                 if (ext.Oid?.Value == "1.3.6.1.5.5.7.1.12")
                 {
-                    hasLogotype = true;
+                    logotypeExtBytes = ext.RawData;
                     result.Details.Add("VMC contains logotype extension (id-pe-logotype)");
                     break;
                 }
             }
-            if (!hasLogotype)
+            if (logotypeExtBytes == null)
                 result.Details.Add("VMC does not contain logotype extension");
+            else if (svgContent == null)
+                result.Details.Add("Logo hash not verified — SVG was not retrieved");
+            else
+                VerifyLogotypeHash(logotypeExtBytes, svgContent, result);
 
             // Count certificates in the PEM chain
             int chainCount = 0;
@@ -857,6 +867,123 @@ public class BimiCheck : ICheck
         {
             result.Warnings.Add($"Could not parse VMC certificate: {ex.Message}");
         }
+    }
+
+    private static void VerifyLogotypeHash(byte[] extBytes, string svgContent, CheckResult result)
+    {
+        var parsed = ParseSubjectLogoHashes(extBytes);
+        if (parsed == null)
+        {
+            result.Warnings.Add("Could not parse VMC logotype extension for hash verification");
+            return;
+        }
+
+        var (hashes, _) = parsed.Value;
+        if (hashes.Count == 0)
+        {
+            result.Warnings.Add("VMC logotype extension contains no hash values");
+            return;
+        }
+
+        var svgBytes = System.Text.Encoding.UTF8.GetBytes(svgContent);
+        string? algoTried = null;
+        foreach (var (oid, expected) in hashes)
+        {
+            var (algoName, computed) = oid switch
+            {
+                "2.16.840.1.101.3.4.2.1" => ("SHA-256", System.Security.Cryptography.SHA256.HashData(svgBytes)),
+                "2.16.840.1.101.3.4.2.2" => ("SHA-384", System.Security.Cryptography.SHA384.HashData(svgBytes)),
+                "2.16.840.1.101.3.4.2.3" => ("SHA-512", System.Security.Cryptography.SHA512.HashData(svgBytes)),
+                "1.3.14.3.2.26"          => ("SHA-1",   System.Security.Cryptography.SHA1.HashData(svgBytes)),
+                _ => (oid, (byte[]?)null)
+            };
+            if (computed == null)
+            {
+                result.Details.Add($"Logotype hash algorithm {algoName} not supported by verifier");
+                continue;
+            }
+            algoTried = algoName;
+            if (computed.AsSpan().SequenceEqual(expected))
+            {
+                result.Details.Add($"Logo hash matches VMC ({algoName})");
+                return;
+            }
+        }
+
+        if (algoTried != null)
+            result.Warnings.Add($"Logo hash ({algoTried}) does not match VMC — retrieved SVG differs from the logo signed in the certificate");
+    }
+
+    // Parse RFC 3709 LogotypeExtn, returning the hashes and URIs for the first image
+    // referenced by subjectLogo (the only field BIMI uses). Returns null when the
+    // structure isn't a directly-embedded subject logo or fails to decode.
+    private static (List<(string oid, byte[] hash)> hashes, List<string> uris)? ParseSubjectLogoHashes(byte[] extBytes)
+    {
+        try
+        {
+            var reader = new System.Formats.Asn1.AsnReader(extBytes, System.Formats.Asn1.AsnEncodingRules.DER);
+            var extn = reader.ReadSequence();
+
+            var subjectTag = new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 2, isConstructed: true);
+            var directTag  = new System.Formats.Asn1.Asn1Tag(System.Formats.Asn1.TagClass.ContextSpecific, 0, isConstructed: true);
+
+            while (extn.HasData)
+            {
+                var tag = extn.PeekTag();
+                if (tag.TagClass != System.Formats.Asn1.TagClass.ContextSpecific || tag.TagValue != 2)
+                {
+                    extn.ReadEncodedValue();
+                    continue;
+                }
+
+                var subject = extn.ReadSequence(subjectTag);
+
+                // LogotypeInfo CHOICE — only 'direct' [0] is meaningful for verification.
+                var infoTag = subject.PeekTag();
+                if (infoTag.TagClass != System.Formats.Asn1.TagClass.ContextSpecific || infoTag.TagValue != 0)
+                    return null;
+
+                var data = subject.ReadSequence(directTag);
+                if (!data.HasData) return null;
+
+                // LogotypeData: image (untagged SEQUENCE OF LogotypeImage) OPTIONAL, audio [1] OPTIONAL.
+                var firstTag = data.PeekTag();
+                if (firstTag.TagClass != System.Formats.Asn1.TagClass.Universal ||
+                    firstTag.TagValue != (int)System.Formats.Asn1.UniversalTagNumber.Sequence)
+                    return null;
+
+                var images = data.ReadSequence();
+                if (!images.HasData) return null;
+
+                var image = images.ReadSequence();          // LogotypeImage
+                var details = image.ReadSequence();         // LogotypeDetails
+                _ = details.ReadCharacterString(System.Formats.Asn1.UniversalTagNumber.IA5String); // mediaType
+
+                var hashSeq = details.ReadSequence();
+                var hashes = new List<(string, byte[])>();
+                while (hashSeq.HasData)
+                {
+                    var hashAlgVal = hashSeq.ReadSequence();
+                    var algId = hashAlgVal.ReadSequence();
+                    var algOid = algId.ReadObjectIdentifier();
+                    while (algId.HasData) algId.ReadEncodedValue(); // consume optional parameters
+                    var hashValue = hashAlgVal.ReadOctetString();
+                    hashes.Add((algOid, hashValue));
+                }
+
+                var uriSeq = details.ReadSequence();
+                var uris = new List<string>();
+                while (uriSeq.HasData)
+                    uris.Add(uriSeq.ReadCharacterString(System.Formats.Asn1.UniversalTagNumber.IA5String));
+
+                return (hashes, uris);
+            }
+        }
+        catch
+        {
+            return null;
+        }
+        return null;
     }
 
     private static string ExtractCn(string distinguishedName)
