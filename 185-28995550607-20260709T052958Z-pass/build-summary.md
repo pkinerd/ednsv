@@ -2,15 +2,16 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #134 (attempt 1) |
-| **Run ID** | 24215726074 |
+| **Run** | #185 (attempt 1) |
+| **Run ID** | 28995550607 |
 | **Result** | pass |
-| **Commit** | 1e9c9fae5177a32f204ce3d930ed6e34c56acd5f |
-| **Ref** | refs/pull/7/merge |
-| **Event** | pull_request |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 860d9e8fdc7b28c91d322d45d465862615cc50ac |
+| **Ref** | refs/heads/main |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
 
 ## Artifacts
 ```
