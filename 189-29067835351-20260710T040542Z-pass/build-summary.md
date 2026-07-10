@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #138 (attempt 1) |
-| **Run ID** | 24223151846 |
+| **Run** | #189 (attempt 1) |
+| **Run ID** | 29067835351 |
 | **Result** | pass |
-| **Commit** | a01a7fb15f331027cc5741f6eac1446a54a8f75e |
-| **Ref** | refs/pull/7/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | d614be21e757108912d3bcf670bb2bd216ac6da0 |
+| **Ref** | refs/pull/22/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
+| **PR** | #22: Security hardening: auth gating, input validation, and cache fixes |
+| **Branch** | claude/codebase-quality-review-0fp4qn |
 
 ## Artifacts
 ```
@@ -30,7 +33,6 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
