@@ -1,7 +1,9 @@
 using System.Net;
+using System.Net.Sockets;
 using DnsClient;
 using DnsClient.Protocol;
 using Ednsv.Core.Models;
+using Ednsv.Core.Services;
 
 namespace Ednsv.Core.Checks;
 
@@ -135,6 +137,15 @@ public class NsLameDelegationCheck : ICheck
 
                 foreach (var ip in ips)
                 {
+                    // Don't test IPv6 nameserver addresses from a host with no IPv6 route —
+                    // the probe would fail and be misreported as a lame/unreachable NS.
+                    if (!NetworkCapabilities.HasIpv6 && IPAddress.TryParse(ip, out var parsed)
+                        && parsed.AddressFamily == AddressFamily.InterNetworkV6)
+                    {
+                        result.Details.Add($"{nsHost} ({ip}): Skipped — host has no outbound IPv6 connectivity");
+                        continue;
+                    }
+
                     totalChecked++;
                     var capturedHost = nsHost;
                     var capturedIp = ip;
@@ -299,6 +310,15 @@ public class SoaSerialConsistencyCheck : ICheck
 
                 foreach (var ip in ips)
                 {
+                    // Skip IPv6 targets when the host can't reach IPv6 — otherwise the
+                    // failed query shows up as a spurious "No SOA in response".
+                    if (!NetworkCapabilities.HasIpv6 && IPAddress.TryParse(ip, out var parsed)
+                        && parsed.AddressFamily == AddressFamily.InterNetworkV6)
+                    {
+                        result.Details.Add($"{nsHost} ({ip}): Skipped — host has no outbound IPv6 connectivity");
+                        continue;
+                    }
+
                     try
                     {
                         var resp = await ctx.Dns.QueryServerAsync(IPAddress.Parse(ip), domain, QueryType.SOA);

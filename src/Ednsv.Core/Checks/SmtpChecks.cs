@@ -1121,6 +1121,11 @@ public class SmtpIpv6ConnectivityCheck : ICheck
         if (!ctx.Options.EnableSmtpProbes)
             return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
 
+        // Can't meaningfully test MX IPv6 reachability from a host with no IPv6 route —
+        // every probe would time out and be misreported as the target's problem.
+        if (!NetworkCapabilities.HasIpv6)
+            return CheckContext.SkippedResult(this, "Skipped: host has no outbound IPv6 connectivity — cannot test MX IPv6 reachability");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try

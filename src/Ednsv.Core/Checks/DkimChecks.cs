@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using DnsClient;
 using Ednsv.Core.Models;
 
@@ -293,17 +294,19 @@ public class DkimSelectorsCheck : ICheck
                             else
                             {
                                 activeKeyTypes.Add("rsa");
-                                // RSA key size estimation from base64 length
-                                var keyBytes = pubKey.Length * 3 / 4;
-                                var keyBits = keyBytes * 8;
-                                result.Details.Add($"  Key size: ~{keyBits} bits");
+                                // Derive the true RSA modulus size by parsing the key, rather than
+                                // estimating from the base64 length (which counts the ASN.1
+                                // SubjectPublicKeyInfo wrapper and overstates the size by ~270 bits).
+                                var (keyBits, exact) = GetRsaKeyBits(pubKey);
+                                var approx = exact ? "" : "~";
+                                result.Details.Add($"  Key size: {approx}{keyBits} bits{(exact ? "" : " (approx)")}");
                                 if (keyBits < 1024)
-                                    result.Errors.Add($"Selector {selector}: Key is only ~{keyBits} bits — too weak (RFC 8301 requires >= 1024 for RSA)");
+                                    result.Errors.Add($"Selector {selector}: Key is only {approx}{keyBits} bits — too weak (RFC 8301 requires >= 1024 for RSA)");
                                 else if (keyBits < 2048)
-                                    result.Warnings.Add($"Selector {selector}: Key is ~{keyBits} bits (RFC 8301 recommends >= 2048)");
+                                    result.Warnings.Add($"Selector {selector}: Key is {approx}{keyBits} bits (RFC 8301 recommends >= 2048)");
                                 // #53 - RSA keys >4096 bits interoperability note
                                 else if (keyBits > 4096)
-                                    result.Details.Add($"  Key is ~{keyBits} bits — keys >4096 bits may have interoperability issues (RFC 8301)");
+                                    result.Details.Add($"  Key is {approx}{keyBits} bits — keys >4096 bits may have interoperability issues (RFC 8301)");
                             }
                         }
                     }
@@ -393,6 +396,29 @@ public class DkimSelectorsCheck : ICheck
     }
 
     /// <summary>
+    /// Returns the true RSA modulus size in bits for a DKIM p= value, parsing the
+    /// key rather than estimating from base64 length. <c>exact</c> is false when the
+    /// key could not be parsed as a SubjectPublicKeyInfo or PKCS#1 RSAPublicKey and
+    /// the value falls back to the (SPKI-inflated) length estimate for display.
+    /// </summary>
+    internal static (int bits, bool exact) GetRsaKeyBits(string pubKeyBase64)
+    {
+        byte[] der;
+        try { der = Convert.FromBase64String(pubKeyBase64); }
+        catch { return (0, false); }
+
+        using var rsa = RSA.Create();
+        try { rsa.ImportSubjectPublicKeyInfo(der, out _); return (rsa.KeySize, true); }
+        catch { }
+        // Some legacy keys publish a bare PKCS#1 RSAPublicKey instead of an SPKI.
+        try { rsa.ImportRSAPublicKey(der, out _); return (rsa.KeySize, true); }
+        catch { }
+        // Unparseable (or a non-RSA blob) — approximate from DER length, matching
+        // the old estimate so thresholds behave as before.
+        return (der.Length * 8, false);
+    }
+
+    /// <summary>
     /// Parses DKIM tag-value pairs from a record string.
     /// Returns (tags dictionary, duplicate tag names, malformed entries).
     /// </summary>
@@ -479,12 +505,13 @@ public class DkimSelectorsCheck : ICheck
                 }
                 else
                 {
-                    var keyBits = pubKey.Length * 3 / 4 * 8;
-                    result.Details.Add($"  {label} key size: ~{keyBits} bits");
+                    var (keyBits, exact) = GetRsaKeyBits(pubKey);
+                    var approx = exact ? "" : "~";
+                    result.Details.Add($"  {label} key size: {approx}{keyBits} bits{(exact ? "" : " (approx)")}");
                     if (keyBits < 1024)
-                        result.Errors.Add($"{label}: Key is only ~{keyBits} bits — too weak (RFC 8301)");
+                        result.Errors.Add($"{label}: Key is only {approx}{keyBits} bits — too weak (RFC 8301)");
                     else if (keyBits < 2048)
-                        result.Warnings.Add($"{label}: Key is ~{keyBits} bits (RFC 8301 recommends >= 2048)");
+                        result.Warnings.Add($"{label}: Key is {approx}{keyBits} bits (RFC 8301 recommends >= 2048)");
                 }
             }
         }
