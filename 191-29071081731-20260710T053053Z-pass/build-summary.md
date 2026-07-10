@@ -2,15 +2,16 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #140 (attempt 1) |
-| **Run ID** | 24223365989 |
+| **Run** | #191 (attempt 1) |
+| **Run ID** | 29071081731 |
 | **Result** | pass |
-| **Commit** | cbee25bf70db3a98eb05ab981cfc1de0bd963f66 |
-| **Ref** | refs/pull/7/merge |
-| **Event** | pull_request |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 103a604b04390a6d6d6f0b6e00b9b35e434da070 |
+| **Ref** | refs/heads/main |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
 
 ## Artifacts
 ```
@@ -30,7 +31,6 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
