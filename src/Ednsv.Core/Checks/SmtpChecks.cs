@@ -432,7 +432,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                     if (!ptrs.Any())
                     {
-                        result.Warnings.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");
+                        result.Details.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");
                         mismatched++;
                         continue;
                     }
@@ -448,7 +448,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                     else
                     {
                         mismatched++;
-                        result.Warnings.Add(
+                        result.Details.Add(
                             $"{mxHost} ({ip}): PTR [{string.Join(", ", ptrs.Select(p => p.TrimEnd('.')))}] " +
                             $"does not match banner hostname '{bannerHost}'");
                     }
@@ -457,9 +457,15 @@ public class SmtpBannerRdnsMatchCheck : ICheck
 
             if (mismatched > 0)
             {
-                result.Severity = CheckSeverity.Warning;
-                result.Summary = $"{mismatched} MX IP(s) have rDNS/banner hostname mismatch";
-                result.Warnings.Add("Reverse DNS should match the SMTP banner hostname for best deliverability");
+                // A banner/rDNS mismatch on an inbound MX is normal for load-balanced or
+                // pooled fleets (Microsoft 365, Google, etc.), where the banner names the
+                // specific edge node that answered rather than the connecting IP's PTR. It
+                // does not by itself affect inbound deliverability, so report it as Info.
+                result.Severity = CheckSeverity.Info;
+                result.Summary = matched > 0
+                    ? $"{mismatched} MX IP(s) have rDNS/banner hostname mismatch (common for load-balanced MX)"
+                    : "MX rDNS does not match the SMTP banner hostname (common for load-balanced MX)";
+                result.Details.Add("Banner/rDNS mismatch is expected for load-balanced or pooled MX (e.g. Microsoft 365, Google) and does not by itself affect inbound deliverability");
             }
             else if (matched > 0)
             {
@@ -1121,6 +1127,11 @@ public class SmtpIpv6ConnectivityCheck : ICheck
         if (!ctx.Options.EnableSmtpProbes)
             return CheckContext.SkippedResult(this, "Skipped: SMTP probes disabled (--no-smtp)");
 
+        // Can't meaningfully test MX IPv6 reachability from a host with no IPv6 route —
+        // every probe would time out and be misreported as the target's problem.
+        if (!NetworkCapabilities.HasIpv6)
+            return CheckContext.SkippedResult(this, "Skipped: host has no outbound IPv6 connectivity — cannot test MX IPv6 reachability");
+
         var result = new CheckResult { CheckName = Name, Category = Category };
 
         try
@@ -1172,6 +1183,9 @@ public class SmtpIpv6ConnectivityCheck : ICheck
                 }
             }
 
+            // The check only runs when this host has outbound IPv6 (see the
+            // NetworkCapabilities.HasIpv6 gate at the top), so an unreachable MX IPv6
+            // address is the target's problem, not ours — report it as a Warning.
             if (hasAaaa == 0)
             {
                 result.Severity = CheckSeverity.Info;

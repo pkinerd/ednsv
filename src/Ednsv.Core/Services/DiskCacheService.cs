@@ -192,12 +192,23 @@ public class DiskCacheService
         var merged = existing ?? new Dictionary<string, T>();
         foreach (var kvp in newEntries)
         {
-            // Preserve original cache timestamp for entries already on disk so that
-            // TTL expiry works correctly across runs. Only stamp genuinely new entries.
-            if (existing != null && existing.TryGetValue(kvp.Key, out var existingEntry))
+            if (kvp.Value.CachedAtUtc != default)
+            {
+                // The source stamped a real fetch time (e.g. DNS query caches track
+                // when each response was actually fetched). Honour it so a re-fetched
+                // entry's TTL ages from its latest fetch, while an untouched entry
+                // loaded from disk keeps its original timestamp and expires on schedule.
+            }
+            else if (existing != null && existing.TryGetValue(kvp.Key, out var existingEntry))
+            {
+                // No fetch time supplied — preserve the on-disk timestamp so TTL
+                // expiry still works across runs for caches that don't track it.
                 kvp.Value.CachedAtUtc = existingEntry.CachedAtUtc;
+            }
             else
+            {
                 kvp.Value.CachedAtUtc = now;
+            }
             merged[kvp.Key] = kvp.Value;
         }
 

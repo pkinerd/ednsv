@@ -75,23 +75,10 @@ public class DnssecCheck : ICheck
                         result.Warnings.Add($"DNSKEY Algorithm {alg} (RSA/SHA-1) should be replaced — use Algorithm 8 (RSA/SHA-256) or 13 (ECDSA P-256)");
                 }
 
-                // #8 - DS KeyTag cross-reference with DNSKEY
-                if (dsRecords.Any() && dnskeys.Any())
-                {
-                    var dnskeyFlags = dnskeys.Select(k => k.Flags).ToHashSet();
-                    foreach (var ds in dsRecords)
-                    {
-                        // Check if any DNSKEY could match this DS KeyTag
-                        // DnsClient doesn't expose KeyTag on DnsKeyRecord directly,
-                        // so we note if no KSK (flags=257) exists to anchor the DS
-                        // We can't compute KeyTag from DnsKeyRecord without raw data,
-                        // so we check structurally
-                        if (!dnskeys.Any())
-                            result.Errors.Add($"DS record KeyTag={ds.KeyTag} does not match any DNSKEY record — DNSSEC chain is broken");
-                    }
-                }
-
-                // #9 - DS digest verification note
+                // #9 - DS digest verification note. DnsClient does not expose the
+                // DNSKEY key tag, so a DS→DNSKEY key-tag/digest match cannot be
+                // computed here; the KSK presence heuristic in #44 below is the
+                // closest structural check we can perform.
                 if (dsRecords.Any() && dnskeys.Any())
                     result.Warnings.Add("DS digest-to-DNSKEY verification not performed — verify manually that DS digests match published DNSKEYs");
 
@@ -988,15 +975,38 @@ public class BimiCheck : ICheck
 
     private static string ExtractCn(string distinguishedName)
     {
-        // Extract CN= value from a distinguished name string
-        var parts = distinguishedName.Split(',');
-        foreach (var part in parts)
+        // Extract the CN= value from a distinguished name. Split on RDN separators
+        // while respecting quoted values and backslash escapes, so a CN such as
+        // CN="Cable News Network, Inc." isn't truncated at the internal comma.
+        foreach (var rdn in SplitDn(distinguishedName))
         {
-            var trimmed = part.Trim();
+            var trimmed = rdn.Trim();
             if (trimmed.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))
-                return trimmed.Substring(3).Trim();
+            {
+                var value = trimmed.Substring(3).Trim();
+                if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+                    value = value.Substring(1, value.Length - 2);
+                return value;
+            }
         }
         return distinguishedName;
+    }
+
+    private static IEnumerable<string> SplitDn(string dn)
+    {
+        var parts = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        for (int i = 0; i < dn.Length; i++)
+        {
+            var c = dn[i];
+            if (c == '\\' && i + 1 < dn.Length) { sb.Append(c).Append(dn[++i]); continue; }
+            if (c == '"') { inQuotes = !inQuotes; sb.Append(c); continue; }
+            if (c == ',' && !inQuotes) { parts.Add(sb.ToString()); sb.Clear(); continue; }
+            sb.Append(c);
+        }
+        if (sb.Length > 0) parts.Add(sb.ToString());
+        return parts;
     }
 }
 

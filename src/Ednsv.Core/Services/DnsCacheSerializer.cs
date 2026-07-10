@@ -12,6 +12,9 @@ public class DnsCacheEntry : ICacheEntry
     public DateTime CachedAtUtc { get; set; }
     public bool HasError { get; set; }
     public string? ErrorMessage { get; set; }
+    /// <summary>DNS header RCODE (0=NoError, 3=NXDOMAIN, …). Persisted so a reloaded
+    /// response can expose a real <see cref="IDnsQueryResponse.Header"/>.</summary>
+    public int ResponseCode { get; set; }
     public List<DnsCacheRecord> Answers { get; set; } = new();
     public List<DnsCacheRecord> Authorities { get; set; } = new();
     public List<DnsCacheRecord> Additionals { get; set; } = new();
@@ -39,7 +42,10 @@ public static class DnsCacheSerializer
         var entry = new DnsCacheEntry
         {
             HasError = response.HasError,
-            ErrorMessage = response.HasError ? response.ErrorMessage : null
+            ErrorMessage = response.HasError ? response.ErrorMessage : null,
+            // Capture the RCODE where available. EmptyResponse / already-cached
+            // responses don't implement Header, so guard against it.
+            ResponseCode = TryGetResponseCode(response)
         };
 
         foreach (var record in response.Answers)
@@ -86,7 +92,13 @@ public static class DnsCacheSerializer
             if (record != null) additionals.Add(record);
         }
 
-        return new CachedDnsResponse(answers, authorities, additionals, entry.HasError, entry.ErrorMessage);
+        return new CachedDnsResponse(answers, authorities, additionals, entry.HasError, entry.ErrorMessage, entry.ResponseCode);
+    }
+
+    private static int TryGetResponseCode(IDnsQueryResponse response)
+    {
+        try { return (int)response.Header.ResponseCode; }
+        catch { return 0; }
     }
 
     private static DnsCacheRecord? SerializeRecord(DnsResourceRecord record)
@@ -314,18 +326,22 @@ public class CachedDnsResponse : IDnsQueryResponse
     private readonly IReadOnlyList<DnsResourceRecord> _authorities;
     private readonly IReadOnlyList<DnsResourceRecord> _additionals;
 
+    private readonly int _responseCode;
+
     public CachedDnsResponse(
         List<DnsResourceRecord> answers,
         List<DnsResourceRecord> authorities,
         List<DnsResourceRecord> additionals,
         bool hasError,
-        string? errorMessage)
+        string? errorMessage,
+        int responseCode = 0)
     {
         _answers = answers;
         _authorities = authorities;
         _additionals = additionals;
         HasError = hasError;
         ErrorMessage = errorMessage ?? "";
+        _responseCode = responseCode;
     }
 
     public IReadOnlyList<DnsQuestion> Questions => Array.Empty<DnsQuestion>();
@@ -337,8 +353,20 @@ public class CachedDnsResponse : IDnsQueryResponse
     public string AuditTrail => "";
     public bool HasError { get; }
     public string ErrorMessage { get; }
-    public DnsResponseHeader Header => throw new NotImplementedException();
+    // Reconstruct a header carrying the persisted RCODE in the low 4 bits of the
+    // flags word (with the QR/response bit set), so consumers such as
+    // CheckContext.IsNxDomain can read Header.ResponseCode from a cached response
+    // instead of hitting a NotImplementedException.
+    public DnsResponseHeader Header => new(
+        id: 0,
+        flags: (ushort)(0x8000 | (_responseCode & 0x000F)),
+        questionCount: 0,
+        answerCount: _answers.Count,
+        additionalCount: _additionals.Count,
+        serverCount: _authorities.Count);
     public int MessageSize => 0;
+    // NameServer and Settings have no meaning for a response reconstructed from
+    // disk (there was no live query), so these remain unavailable by design.
     public NameServer NameServer => throw new NotImplementedException();
     public DnsQuerySettings Settings => throw new NotImplementedException();
 }
