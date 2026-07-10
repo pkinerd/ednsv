@@ -432,7 +432,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
                     if (!ptrs.Any())
                     {
-                        result.Warnings.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");
+                        result.Details.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");
                         mismatched++;
                         continue;
                     }
@@ -448,7 +448,7 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                     else
                     {
                         mismatched++;
-                        result.Warnings.Add(
+                        result.Details.Add(
                             $"{mxHost} ({ip}): PTR [{string.Join(", ", ptrs.Select(p => p.TrimEnd('.')))}] " +
                             $"does not match banner hostname '{bannerHost}'");
                     }
@@ -457,9 +457,15 @@ public class SmtpBannerRdnsMatchCheck : ICheck
 
             if (mismatched > 0)
             {
-                result.Severity = CheckSeverity.Warning;
-                result.Summary = $"{mismatched} MX IP(s) have rDNS/banner hostname mismatch";
-                result.Warnings.Add("Reverse DNS should match the SMTP banner hostname for best deliverability");
+                // A banner/rDNS mismatch on an inbound MX is normal for load-balanced or
+                // pooled fleets (Microsoft 365, Google, etc.), where the banner names the
+                // specific edge node that answered rather than the connecting IP's PTR. It
+                // does not by itself affect inbound deliverability, so report it as Info.
+                result.Severity = CheckSeverity.Info;
+                result.Summary = matched > 0
+                    ? $"{mismatched} MX IP(s) have rDNS/banner hostname mismatch (common for load-balanced MX)"
+                    : "MX rDNS does not match the SMTP banner hostname (common for load-balanced MX)";
+                result.Details.Add("Banner/rDNS mismatch is expected for load-balanced or pooled MX (e.g. Microsoft 365, Google) and does not by itself affect inbound deliverability");
             }
             else if (matched > 0)
             {

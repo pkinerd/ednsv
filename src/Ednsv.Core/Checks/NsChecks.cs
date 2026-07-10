@@ -31,12 +31,14 @@ public class SoaRecordCheck : ICheck
                 result.Details.Add($"Expire: {soa.Expire}s");
                 result.Details.Add($"Minimum TTL: {soa.Minimum}s");
 
-                // Check serial convention
+                // Serial format is purely a convention (RFC 1912) with no operational
+                // impact — many managed DNS providers (e.g. AWS Route 53) use a plain
+                // counter starting at 1. Report as an informational detail, not a warning.
                 var serialStr = soa.Serial.ToString();
                 if (serialStr.Length == 10 && serialStr.StartsWith("20"))
                     result.Details.Add("Serial follows YYYYMMDDnn convention");
                 else
-                    result.Warnings.Add($"Serial {soa.Serial} doesn't follow YYYYMMDDnn convention");
+                    result.Details.Add($"Serial {soa.Serial} does not follow the YYYYMMDDnn convention (informational — many providers such as AWS Route 53 use a plain counter)");
 
                 // RFC 1035 §3.3.13 / RFC 2308 SOA timer validation
                 if (soa.Refresh < 3600)
