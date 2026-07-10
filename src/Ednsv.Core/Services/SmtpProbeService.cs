@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
@@ -49,16 +48,6 @@ public class SmtpProbeService
     }
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
     private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
-
-    /// <summary>
-    /// Creates a TcpClient whose socket family matches the target. The parameterless
-    /// <see cref="TcpClient"/> constructor creates an IPv4-only (InterNetwork) socket,
-    /// so connecting to a literal IPv6 address throws NotSupportedException before any
-    /// network attempt — which previously made every IPv6 probe fail spuriously. When
-    /// the host is a literal IP we honour its family; hostnames keep the default path.
-    /// </summary>
-    private static TcpClient CreateTcpClient(string host)
-        => IPAddress.TryParse(host, out var ip) ? new TcpClient(ip.AddressFamily) : new TcpClient();
 
     // Counters for diagnostics
     private int _probesStarted;
@@ -128,7 +117,7 @@ public class SmtpProbeService
         TcpClient? client = null;
         try
         {
-            client = CreateTcpClient(host);
+            client = new TcpClient();
             var sw = Stopwatch.StartNew();
             var connectTask = client.ConnectAsync(host, port);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
@@ -284,7 +273,7 @@ public class SmtpProbeService
             {
                 try
                 {
-                    using var client = CreateTcpClient(host);
+                    using var client = new TcpClient();
                     var connectTask = client.ConnectAsync(host, port);
                     if (await Task.WhenAny(connectTask, Task.Delay(_portTimeout)) != connectTask)
                         reachable = false; // timeout — transient
@@ -344,7 +333,7 @@ public class SmtpProbeService
         TcpClient? client = null;
         try
         {
-            client = CreateTcpClient(host);
+            client = new TcpClient();
             var connectTask = client.ConnectAsync(host, 25);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");
@@ -471,7 +460,7 @@ public class SmtpProbeService
         TcpClient? client = null;
         try
         {
-            client = CreateTcpClient(mxHost);
+            client = new TcpClient();
             var connectTask = client.ConnectAsync(mxHost, 25);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");

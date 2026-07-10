@@ -1169,7 +1169,6 @@ public class SmtpIpv6ConnectivityCheck : ICheck
             if (probes.Count > 0)
                 await Task.WhenAll(probes.Select(p => p.task));
 
-            var unreachableLines = new List<string>();
             foreach (var (host, addr, task) in probes)
             {
                 if (task.Result)
@@ -1180,35 +1179,22 @@ public class SmtpIpv6ConnectivityCheck : ICheck
                 else
                 {
                     unreachable++;
-                    unreachableLines.Add($"{host} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
+                    result.Warnings.Add($"{host} [{addr}]: AAAA exists but port 25 unreachable over IPv6");
                 }
             }
 
+            // The check only runs when this host has outbound IPv6 (see the
+            // NetworkCapabilities.HasIpv6 gate at the top), so an unreachable MX IPv6
+            // address is the target's problem, not ours — report it as a Warning.
             if (hasAaaa == 0)
             {
                 result.Severity = CheckSeverity.Info;
                 result.Summary = "No MX hosts have AAAA records — IPv6 not applicable";
             }
-            else if (reachable == 0)
-            {
-                // Reached none of the domain's IPv6 MX on port 25. This is ambiguous: it
-                // could be the domain's IPv6, or this host being unable to egress TCP/25
-                // over IPv6 (common on clouds/ISPs even when general IPv6 routing works —
-                // an ICMP ping succeeding does not prove port-25 egress). Without a single
-                // successful IPv6:25 connection we can't prove our own capability, so we
-                // report Info rather than blaming the domain.
-                result.Severity = CheckSeverity.Info;
-                result.Summary = $"Could not reach any MX over IPv6 port 25 ({unreachable} address(es)) — may be the domain's IPv6 or this host's outbound IPv6:25";
-                foreach (var l in unreachableLines) result.Details.Add(l);
-                result.Details.Add("If IPv4 SMTP works but no IPv6 MX is reachable, verify from an IPv6-capable network with outbound port 25 before treating this as the domain's problem.");
-            }
             else if (unreachable > 0)
             {
-                // At least one IPv6:25 connection succeeded, so this host CAN egress IPv6:25
-                // — the remaining failures are genuinely unreachable / stale AAAA.
                 result.Severity = CheckSeverity.Warning;
-                result.Summary = $"{unreachable} of {reachable + unreachable} MX IPv6 address(es) unreachable — stale AAAA records cause delivery delays";
-                foreach (var l in unreachableLines) result.Warnings.Add(l);
+                result.Summary = $"{unreachable} MX IPv6 address(es) unreachable — stale AAAA records cause delivery delays";
             }
             else
             {
