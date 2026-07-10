@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #135 (attempt 1) |
-| **Run ID** | 24216109906 |
+| **Run** | #186 (attempt 1) |
+| **Run ID** | 29066587856 |
 | **Result** | pass |
-| **Commit** | b30cb9658596ff31bd8878cda4423d324b55c696 |
-| **Ref** | refs/pull/7/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 1a11a466aec5ab865659afedf3ce13ec98d8e59f |
+| **Ref** | refs/pull/22/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
+| **PR** | #22: Security hardening: auth gating, input validation, and cache fixes |
+| **Branch** | claude/codebase-quality-review-0fp4qn |
 
 ## Artifacts
 ```
