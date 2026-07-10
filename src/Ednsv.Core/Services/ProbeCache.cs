@@ -24,8 +24,12 @@ public class ProbeCache<TValue> where TValue : class
 {
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
-    // Write-through log for disk export — never read during cache lookups
-    private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
+    // Write-through log for disk export — never read during cache lookups.
+    // Each entry carries the time its value was obtained (a fresh network fetch
+    // stamps DateTime.UtcNow via Set; an entry loaded from disk keeps its original
+    // disk timestamp via the Import overload) so disk persistence can age entries
+    // from when they were actually fetched, not from first-ever cache or save time.
+    private readonly ConcurrentDictionary<string, (TValue Value, DateTime CachedAtUtc)> _exportLog = new();
     // In-flight query deduplication — concurrent callers for the same key share one Task.
     // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
     // factory on multiple threads, only one Lazy is stored and only its .Value (which
@@ -135,7 +139,8 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a value in MemoryCache and the disk export log.</summary>
+    /// <summary>Store a value in MemoryCache and the disk export log, stamping it
+    /// with the current time (a fresh fetch).</summary>
     public void Set(string key, TValue value)
     {
         if (_ttl.HasValue)
@@ -143,7 +148,7 @@ public class ProbeCache<TValue> where TValue : class
         else
             _cache.Set(key, value);
 
-        _exportLog[key] = value;
+        _exportLog[key] = (value, DateTime.UtcNow);
     }
 
     /// <summary>
@@ -159,10 +164,23 @@ public class ProbeCache<TValue> where TValue : class
             _cache.Set(key, value);
     }
 
-    /// <summary>Import entries from disk into the cache.</summary>
+    /// <summary>Import an entry from disk, stamping it with the current time.
+    /// Prefer the overload that preserves the original fetch timestamp.</summary>
     public void Import(string key, TValue value)
     {
         Set(key, value);
+    }
+
+    /// <summary>Import an entry from disk, preserving its original fetch timestamp
+    /// so per-entry TTL continues to age from when the value was fetched.</summary>
+    public void Import(string key, TValue value, DateTime cachedAtUtc)
+    {
+        if (_ttl.HasValue)
+            _cache.Set(key, value, _ttl.Value);
+        else
+            _cache.Set(key, value);
+
+        _exportLog[key] = (value, cachedAtUtc);
     }
 
     /// <summary>Export all entries that are still alive in MemoryCache.</summary>
@@ -174,6 +192,19 @@ public class ProbeCache<TValue> where TValue : class
             // Only export entries still alive in MemoryCache (not expired)
             if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
                 result[kvp.Key] = val;
+        }
+        return result;
+    }
+
+    /// <summary>Export live entries together with the time each value was fetched,
+    /// so disk persistence can age entries from their real fetch time.</summary>
+    public Dictionary<string, (TValue Value, DateTime CachedAtUtc)> ExportTimed()
+    {
+        var result = new Dictionary<string, (TValue, DateTime)>();
+        foreach (var kvp in _exportLog)
+        {
+            if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
+                result[kvp.Key] = (val, kvp.Value.CachedAtUtc);
         }
         return result;
     }

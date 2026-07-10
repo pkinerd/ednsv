@@ -32,8 +32,9 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `Trace`                | bool     | `false`          | Emits per-check trace messages at `Debug` level. See **Trace logging** below. |
 | `MaskTrace`            | bool     | `true`           | Hashes domains/recipients in trace output for privacy. |
 | `MaskSalt`             | string   | random per-run   | Stable salt for `MaskTrace` hashes — set this to keep hashes consistent across runs. |
-| `AuthTokenHash`        | string   | `none`           | Token hash for the root `ednsv` user. `none` disables auth entirely. Overridden by `EDNSV_AUTH_TOKEN_HASH`. |
-| `EDNSV_AUTH_TOKEN_HASH`| env only | —                | Highest-precedence source for the root token hash. See `appsettings.json` for the hash recipe. |
+| `AuthTokenHash`        | string   | `none`           | Token hash for the root `ednsv` user. `none` disables auth — **but an auth-disabled server refuses to start unless it is bound to loopback only** (see **Authentication** below). Overridden by `EDNSV_AUTH_TOKEN_HASH`. |
+| `EDNSV_AUTH_TOKEN_HASH`| env only | —                | Highest-precedence source for the root token hash. See `appsettings.json` for the hash recipe and the minimum-entropy requirement. |
+| `ValidateHttpsCertificates` | bool | `true`         | Validate TLS certificates on outbound HTTPS probes (MTA-STS policy, BIMI logo/VMC, DoH, security.txt, crt.sh). Keep `true` — RFC 8461 requires MTA-STS policies to be fetched over a validated connection, so disabling this makes those HTTPS verdicts untrustworthy. Set to `false` **only** behind a TLS-intercepting egress proxy whose CA is not in the host trust store. |
 
 `ASPNETCORE_HTTP_PORTS` (built-in ASP.NET Core variable) controls the HTTP
 listen port. The Docker image sets it to `8080`.
@@ -263,5 +264,20 @@ echo "hash:  $HASH"
 export EDNSV_AUTH_TOKEN_HASH="$HASH"
 ```
 
-Setting either value to `none` (the default) disables authentication and
-opens every endpoint — only acceptable for local development.
+**Root-token entropy.** The root token is verified with a single unsalted
+SHA-256, so it must be a cryptographically random, high-entropy value —
+**at least 128 bits** (≥ 22 base64url or 32 hex characters). The
+`openssl rand -base64 32` recipe above yields 256 bits and is the recommended
+way to generate it. Never use a human-chosen password: a fast unsalted hash
+makes a weak root token trivially brute-forceable offline if the hash or
+`users.json` ever leaks. (Tokens issued to non-root users are always generated
+this way automatically.)
+
+**Disabling auth is gated to localhost.** Setting either value to `none` (the
+default) disables authentication and opens every endpoint. To prevent an
+accidentally network-exposed open instance, the server **refuses to start**
+with auth disabled unless it is bound to loopback addresses only (e.g.
+`ASPNETCORE_URLS=http://127.0.0.1:5000`). Any non-loopback binding —
+including the Docker image's `ASPNETCORE_HTTP_PORTS=8080`, `0.0.0.0`, `*`, or a
+real IP/host — requires a configured root token hash. The `/api/debug/proxy`
+diagnostic is likewise unavailable whenever auth is disabled.

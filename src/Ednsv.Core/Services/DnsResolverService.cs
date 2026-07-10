@@ -51,6 +51,28 @@ public class DnsResolverService
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
+    // One LookupClient per target server IP, reused across queries. LookupClient is
+    // thread-safe, holds an internal UDP socket pool, and is not IDisposable, so
+    // constructing a fresh one per query (as this code previously did) wasted
+    // allocations and prevented socket reuse for repeat queries to the same server
+    // (e.g. propagation / lame-delegation / SOA-serial checks that hit each NS IP
+    // for multiple record types). The per-server options are identical to what was
+    // built inline, so behaviour is unchanged.
+    private readonly ConcurrentDictionary<string, LookupClient> _serverClients = new();
+
+    private LookupClient GetServerClient(IPAddress server) =>
+        _serverClients.GetOrAdd(server.ToString(), _ =>
+        {
+            var opts = new LookupClientOptions(new IPEndPoint(server, 53))
+            {
+                UseCache = false,
+                Timeout = TimeSpan.FromSeconds(15),
+                Retries = 2,
+                ThrowDnsErrors = false
+            };
+            return new LookupClient(opts);
+        });
+
     public DnsResolverService() : this(null) { }
 
     /// <summary>
@@ -360,15 +382,7 @@ public class DnsResolverService
             Interlocked.Increment(ref _cacheMisses);
             try
             {
-                var serverEndpoint = new IPEndPoint(server, 53);
-                var opts = new LookupClientOptions(serverEndpoint)
-                {
-                    UseCache = false,
-                    Timeout = TimeSpan.FromSeconds(15),
-                    Retries = 2,
-                    ThrowDnsErrors = false
-                };
-                var client = new LookupClient(opts);
+                var client = GetServerClient(server);
                 var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
                 Interlocked.Increment(ref _responsesReceived);
                 if (!result.HasError)
@@ -621,14 +635,17 @@ public class DnsResolverService
     public Dictionary<string, DnsCacheEntry> ExportQueryCache()
     {
         var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _queryCache.Export())
+        foreach (var kvp in _queryCache.ExportTimed())
         {
             // ProbeCache key is "q:domain:type", disk format is "domain|type"
             var cacheKey = kvp.Key.StartsWith("q:") ? kvp.Key[2..] : kvp.Key;
             var diskKey = cacheKey.Replace(':', '|');
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value.Value);
             if (entry != null)
+            {
+                entry.CachedAtUtc = kvp.Value.CachedAtUtc; // real fetch time, honoured on merge-save
                 result[diskKey] = entry;
+            }
         }
         return result;
     }
@@ -641,21 +658,24 @@ public class DnsResolverService
             if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
                 continue;
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response);
+            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response, kvp.Value.CachedAtUtc);
         }
     }
 
     public Dictionary<string, DnsCacheEntry> ExportServerQueryCache()
     {
         var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _serverQueryCache.Export())
+        foreach (var kvp in _serverQueryCache.ExportTimed())
         {
             // ProbeCache key is "sq:server:domain:type", disk format is "server|domain|type"
             var cacheKey = kvp.Key.StartsWith("sq:") ? kvp.Key[3..] : kvp.Key;
             var diskKey = cacheKey.Replace(':', '|');
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value);
+            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value.Value);
             if (entry != null)
+            {
+                entry.CachedAtUtc = kvp.Value.CachedAtUtc; // real fetch time, honoured on merge-save
                 result[diskKey] = entry;
+            }
         }
         return result;
     }
@@ -668,7 +688,7 @@ public class DnsResolverService
             if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
                 continue;
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response);
+            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response, kvp.Value.CachedAtUtc);
         }
     }
 

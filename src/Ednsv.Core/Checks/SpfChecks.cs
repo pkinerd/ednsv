@@ -192,38 +192,37 @@ public class SpfRecordCheck : ICheck
                 result.Warnings.Add("SPF uses deprecated 'ptr' mechanism (RFC 7208 §5.5) — slow, unreliable, and should be replaced with ip4/ip6/include");
             }
 
-            // Check all mechanism
-            var allMech = parts.LastOrDefault(p => p.TrimStart('+', '-', '~', '?').StartsWith("all"));
+            // Check all mechanism. Match the mechanism token exactly ("all" after
+            // stripping the qualifier) rather than by prefix, then normalize the
+            // qualifier: a bare "all" carries the implicit "+" qualifier
+            // (RFC 7208 §4.6.2), i.e. "all" ≡ "+all" ≡ allow every sender.
+            var allMech = parts.LastOrDefault(p => p.TrimStart('+', '-', '~', '?').Equals("all", StringComparison.OrdinalIgnoreCase));
             if (allMech != null)
             {
-                result.Details.Add($"  Policy: {allMech}");
-                if (allMech == "+all")
+                var qualifier = allMech.Length > 0 && "+-~?".Contains(allMech[0]) ? allMech[0] : '+';
+                result.Details.Add($"  Policy: {qualifier}all");
+                switch (qualifier)
                 {
-                    result.Severity = CheckSeverity.Error;
-                    result.Errors.Add("+all allows any server to send email - SPF is effectively disabled");
-                }
-                else if (allMech == "~all")
-                {
-                    // ~all (softfail) is the recommended policy when DMARC is enforced.
-                    // It allows DKIM-signed forwarded mail to pass while DMARC catches
-                    // unauthenticated mail. -all can break legitimate forwarding.
-                    result.Severity = CheckSeverity.Pass;
-                    result.Details.Add("~all (softfail) is the recommended policy when used with DMARC enforcement");
-                }
-                else if (allMech == "-all")
-                {
-                    result.Severity = CheckSeverity.Pass;
-                    result.Details.Add("-all (hardfail) - note: ~all is generally preferred when DMARC is enforced, as -all can break legitimate mail forwarding");
-                }
-                else if (allMech == "?all")
-                {
-                    // #40 - ?all (neutral) provides no protection
-                    result.Severity = CheckSeverity.Warning;
-                    result.Warnings.Add("?all (neutral) provides no protection against spoofing");
-                }
-                else
-                {
-                    result.Severity = CheckSeverity.Pass;
+                    case '+':
+                        result.Severity = CheckSeverity.Error;
+                        result.Errors.Add("+all allows any server to send email - SPF is effectively disabled");
+                        break;
+                    case '~':
+                        // ~all (softfail) is the recommended policy when DMARC is enforced.
+                        // It allows DKIM-signed forwarded mail to pass while DMARC catches
+                        // unauthenticated mail. -all can break legitimate forwarding.
+                        result.Severity = CheckSeverity.Pass;
+                        result.Details.Add("~all (softfail) is the recommended policy when used with DMARC enforcement");
+                        break;
+                    case '-':
+                        result.Severity = CheckSeverity.Pass;
+                        result.Details.Add("-all (hardfail) - note: ~all is generally preferred when DMARC is enforced, as -all can break legitimate mail forwarding");
+                        break;
+                    case '?':
+                        // #40 - ?all (neutral) provides no protection
+                        result.Severity = CheckSeverity.Warning;
+                        result.Warnings.Add("?all (neutral) provides no protection against spoofing");
+                        break;
                 }
             }
             else
@@ -287,8 +286,24 @@ public class SpfExpansionCheck : ICheck
             result.Details.Insert(1, $"Void lookups: {_voidLookupCount}");
             result.Details.Insert(2, $"Max nesting depth: {_maxDepth}");
 
-            result.Severity = CheckSeverity.Pass;
-            result.Summary = $"SPF expanded: {_lookupCount} lookups, depth {_maxDepth}";
+            // Severity must reflect any problems recorded during expansion —
+            // e.g. an include:/redirect= target with no SPF record produces a
+            // PermError (added to Errors) and must not be reported as Pass.
+            if (result.Errors.Any())
+            {
+                result.Severity = CheckSeverity.Error;
+                result.Summary = $"SPF expansion found {result.Errors.Count} PermError(s): {_lookupCount} lookups, depth {_maxDepth}";
+            }
+            else if (result.Warnings.Any())
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = $"SPF expanded with {result.Warnings.Count} warning(s): {_lookupCount} lookups, depth {_maxDepth}";
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Pass;
+                result.Summary = $"SPF expanded: {_lookupCount} lookups, depth {_maxDepth}";
+            }
         }
         catch (Exception ex)
         {
@@ -458,13 +473,19 @@ public class SpfExpansionCheck : ICheck
 
     private async Task<(string? spf, string? error)> GetSpfForDomainAsync(CheckContext ctx, string domain)
     {
-        var errorsBefore = ctx.Dns.QueryErrors.Count;
+        // Read the per-validation error bag (CheckContext.QueryErrors). DNS errors are
+        // routed there via the DnsResolverService.CurrentQueryErrors AsyncLocal, which
+        // DomainValidator points at ctx.QueryErrors for both CLI and web flows. The
+        // shared ctx.Dns.QueryErrors is only populated in the legacy CLI fallback and
+        // stays empty under the web server, so reading it here would miss transient
+        // failures and mis-report a timed-out include as a permanent "no SPF record".
+        var errorsBefore = ctx.QueryErrors.Count;
         var txts = await ctx.Dns.GetTxtRecordsAsync(domain);
-        var errorsAfter = ctx.Dns.QueryErrors.Count;
+        var errorsAfter = ctx.QueryErrors.Count;
 
         if (errorsAfter > errorsBefore)
         {
-            var error = ctx.Dns.QueryErrors.LastOrDefault() ?? "DNS query failed";
+            var error = ctx.QueryErrors.LastOrDefault() ?? "DNS query failed";
             return (null, error);
         }
 

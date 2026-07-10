@@ -75,23 +75,10 @@ public class DnssecCheck : ICheck
                         result.Warnings.Add($"DNSKEY Algorithm {alg} (RSA/SHA-1) should be replaced — use Algorithm 8 (RSA/SHA-256) or 13 (ECDSA P-256)");
                 }
 
-                // #8 - DS KeyTag cross-reference with DNSKEY
-                if (dsRecords.Any() && dnskeys.Any())
-                {
-                    var dnskeyFlags = dnskeys.Select(k => k.Flags).ToHashSet();
-                    foreach (var ds in dsRecords)
-                    {
-                        // Check if any DNSKEY could match this DS KeyTag
-                        // DnsClient doesn't expose KeyTag on DnsKeyRecord directly,
-                        // so we note if no KSK (flags=257) exists to anchor the DS
-                        // We can't compute KeyTag from DnsKeyRecord without raw data,
-                        // so we check structurally
-                        if (!dnskeys.Any())
-                            result.Errors.Add($"DS record KeyTag={ds.KeyTag} does not match any DNSKEY record — DNSSEC chain is broken");
-                    }
-                }
-
-                // #9 - DS digest verification note
+                // #9 - DS digest verification note. DnsClient does not expose the
+                // DNSKEY key tag, so a DS→DNSKEY key-tag/digest match cannot be
+                // computed here; the KSK presence heuristic in #44 below is the
+                // closest structural check we can perform.
                 if (dsRecords.Any() && dnskeys.Any())
                     result.Warnings.Add("DS digest-to-DNSKEY verification not performed — verify manually that DS digests match published DNSKEYs");
 

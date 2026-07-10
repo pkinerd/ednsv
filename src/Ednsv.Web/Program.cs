@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
@@ -89,7 +90,13 @@ else
     dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl);
 }
 var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl);
+// HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
+// BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
+// isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
+var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts);
+if (!validateHttpsCerts)
+    Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
 builder.Services.AddSingleton(dns);
 builder.Services.AddSingleton(smtp);
@@ -137,6 +144,16 @@ ValidationOptions BuildDefaultOptions()
             .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
     };
 }
+
+// Basic hostname sanity check for the (already lowercased, dot-trimmed) domain
+// input. Internal tool — this is deliberately lightweight: it rejects the obvious
+// bad/hostile inputs (userinfo '@', path '/', port ':', whitespace, schemes) that
+// would otherwise be interpolated into probe URLs, but is not a full public-suffix
+// or egress-policy check.
+var DomainPattern = new Regex(
+    @"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+    RegexOptions.Compiled);
+bool IsPlausibleDomain(string d) => !string.IsNullOrEmpty(d) && DomainPattern.IsMatch(d);
 
 // ── Cache manager ────────────────────────────────────────────────────────
 var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
@@ -201,10 +218,57 @@ if (cacheResult != null)
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
 
+// Fail closed: an auth-disabled instance may only run when it is bound to
+// loopback addresses (localhost) — never when reachable from the network.
+if (authService.Disabled && !IsLoopbackOnlyBinding(builder))
+{
+    app.Logger.LogCritical(
+        "Refusing to start: authentication is disabled (EDNSV_AUTH_TOKEN_HASH=none) but the server is bound to a non-loopback address. " +
+        "Set EDNSV_AUTH_TOKEN_HASH (or AuthTokenHash) to enable auth, or bind to localhost only (e.g. ASPNETCORE_URLS=http://127.0.0.1:5000).");
+    throw new InvalidOperationException(
+        "Authentication is disabled but the server is network-exposed. Enable auth or bind to localhost only.");
+}
+
 if (authService.Disabled)
-    app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none). All endpoints are open.");
+    app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none) and the server is bound to localhost only. All endpoints are open to local callers.");
 else
     app.Logger.LogInformation("Authentication enabled. Root user: '{User}'. Auth data: {Path}", AuthService.RootUsername, authDir);
+
+// Determines whether the configured Kestrel binding is loopback-only. Errs on the
+// side of "exposed" (returns false) whenever the binding can't be proven local, so
+// an auth-disabled instance only runs when it is definitely not network-reachable.
+static bool IsLoopbackOnlyBinding(WebApplicationBuilder b)
+{
+    // ASPNETCORE_HTTP_PORTS / HTTPS_PORTS bind every interface (0.0.0.0 / [::]).
+    if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_HTTP_PORTS"))
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_HTTPS_PORTS")))
+        return false;
+
+    // Explicit Kestrel endpoint config can bind anywhere; we don't parse it here,
+    // so treat its presence as "exposed" to stay safe.
+    if (b.Configuration.GetSection("Kestrel:Endpoints").GetChildren().Any())
+        return false;
+
+    var urls = b.Configuration["urls"]
+        ?? Environment.GetEnvironmentVariable("ASPNETCORE_URLS")
+        ?? b.Configuration["ASPNETCORE_URLS"];
+
+    // No explicit binding → the .NET host default is http://localhost:5000 (+https:5001).
+    if (string.IsNullOrWhiteSpace(urls))
+        return true;
+
+    foreach (var raw in urls.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries))
+    {
+        if (!Uri.TryCreate(raw.Trim(), UriKind.Absolute, out var uri))
+            return false; // unparseable → assume exposed
+        var host = uri.Host.Trim('[', ']');
+        var isLoopback = host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(host, out var ip) && IPAddress.IsLoopback(ip));
+        if (!isLoopback)
+            return false;
+    }
+    return true;
+}
 
 // ── Per-request log scope ───────────────────────────────────────────────
 // Every log line emitted while handling this request carries RequestId,
@@ -328,6 +392,8 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
     var domain = req.Domain?.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
+    if (!IsPlausibleDomain(domain))
+        return Results.BadRequest(new { error = "invalid domain" });
 
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
 
@@ -429,6 +495,8 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     domain = domain.Trim().TrimEnd('.').ToLowerInvariant();
     if (string.IsNullOrEmpty(domain))
         return Results.BadRequest(new { error = "domain is required" });
+    if (!IsPlausibleDomain(domain))
+        return Results.BadRequest(new { error = "invalid domain" });
 
     var requestId = httpCtx.TraceIdentifier;
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
@@ -605,6 +673,11 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
 // is breaking the handshake.
 app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string? url) =>
 {
+    // This endpoint is a deliberate outbound-fetch diagnostic. It is only ever
+    // available when authentication is enabled AND the caller is an admin — never
+    // when auth is disabled (where RequireAdmin would otherwise treat everyone as
+    // admin), so it can't become an open SSRF surface on an unauthenticated instance.
+    if (auth.Disabled) return Results.NotFound();
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
     if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
         return Results.BadRequest(new { error = "url must be an absolute URI, e.g. ?url=https://example.com/foo" });
@@ -817,8 +890,10 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
                 result.User.IsAdmin,
                 result.User.IssuedBy,
                 result.User.IssuedAt,
-                result.User.IssuedFromIp,
-                result.User.Hash
+                result.User.IssuedFromIp
+                // NOTE: the stored token hash (the verifier) is deliberately NOT
+                // returned. The raw one-time token above is the only secret the
+                // caller needs; echoing the hash would expose a credential-equivalent.
             }
         }),
         AuthService.IssueStatus.UsernameTaken => Results.Conflict(new { error = "username taken" }),
@@ -933,6 +1008,10 @@ class ValidationTracker : IDisposable
     private readonly ConcurrentDictionary<string, ValidationJob> _jobs = new();
     private readonly Timer _cleanupTimer;
     private static readonly TimeSpan _jobRetention = TimeSpan.FromHours(1);
+    // Hard cap for jobs still marked Running. A validation is bounded by its own
+    // check timeouts (45s + 30s retry) and the caller's request lifetime, so a job
+    // that is still "running" well past this is stuck/abandoned and must not leak.
+    private static readonly TimeSpan _runningJobMaxAge = TimeSpan.FromHours(2);
 
     public ValidationTracker()
     {
@@ -942,10 +1021,16 @@ class ValidationTracker : IDisposable
 
     private void Cleanup()
     {
-        var cutoff = DateTime.UtcNow - _jobRetention;
+        var now = DateTime.UtcNow;
+        var cutoff = now - _jobRetention;
+        var runningCutoff = now - _runningJobMaxAge;
         foreach (var kvp in _jobs)
         {
-            if (kvp.Value.Status != JobStatus.Running && kvp.Value.StartedAt < cutoff)
+            var job = kvp.Value;
+            // Evict finished jobs after the retention window, and stuck/abandoned
+            // Running jobs after a hard maximum age so they can't accumulate.
+            if ((job.Status != JobStatus.Running && job.StartedAt < cutoff)
+                || (job.Status == JobStatus.Running && job.StartedAt < runningCutoff))
                 _jobs.TryRemove(kvp.Key, out _);
         }
     }
