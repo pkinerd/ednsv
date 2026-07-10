@@ -2,13 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #136 (attempt 1) |
-| **Run ID** | 24222416647 |
+| **Run** | #188 (attempt 1) |
+| **Run ID** | 29067347839 |
 | **Result** | pass |
-| **Commit** | 47c0303b5cef3f329d38eea1fe99d3c190c7b9bc |
-| **Ref** | refs/heads/architecture-docs-2026-04-10 |
-| **Event** | push |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | b0c5a178383e97ebcb29a1bd76719afab4554c6f |
+| **Ref** | refs/pull/22/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #22: Security hardening: auth gating, input validation, and cache fixes |
+| **Branch** | claude/codebase-quality-review-0fp4qn |
 
 ## Artifacts
 ```
@@ -28,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
