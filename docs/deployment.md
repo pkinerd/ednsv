@@ -243,6 +243,41 @@ A single-page web application at `src/Ednsv.Web/wwwroot/index.html`:
 - Displays results with severity filtering
 - Supports recheck functionality
 
+## Network egress (outbound ports)
+
+EDNSV validates third-party infrastructure, so it makes outbound connections to
+**arbitrary internet hosts** (both IPv4 and IPv6). IPv6-only probes self-skip when the
+host has no IPv6 route. If `HTTPS_PROXY` is set, all HTTPS (443) egress goes through the
+proxy while DNS and SMTP go direct (see [Configuration → proxy](configuration.md#httphttps-proxy)).
+
+### Core — needed for a full validation
+
+| Port | Protocol | Purpose | Destinations |
+|------|----------|---------|--------------|
+| **53** | UDP + TCP | All DNS: record lookups, DNSBL, propagation, direct-to-nameserver checks (lame delegation, SOA-serial, glue, parent delegation), AXFR (TCP, opt-in). TCP/53 is also the truncation fallback. | Configured resolver (web default = OS resolvers; CLI default = Google `8.8.8.8`/`8.8.4.4`); direct-DNS checks also hit `8.8.8.8`/`1.1.1.1`/`9.9.9.9` and arbitrary authoritative nameservers |
+| **25** | TCP | SMTP probing: banner/EHLO/STARTTLS, RCPT (postmaster@, abuse@), open-relay, IPv6 connectivity | Arbitrary MX hosts |
+| **443** | TCP | HTTPS: MTA-STS policy, BIMI logo + VMC, security.txt, Certificate Transparency (crt.sh), DoH (`dns.google`, `cloudflare-dns.com`) | `mta-sts.{domain}`, `{domain}`, `crt.sh`, BIMI/VMC hosts, `dns.google`, `cloudflare-dns.com` — or the `HTTPS_PROXY` host |
+
+### Secondary — conditional
+
+| Port | Protocol | Purpose | When |
+|------|----------|---------|------|
+| **587** | TCP | Submission-port reachability + STARTTLS detail | Submission-ports check (default with SMTP probes) |
+| **465** | TCP | SMTPS (implicit-TLS) port reachability | Submission-ports check (default with SMTP probes) |
+| **80** | TCP | HTTP — only when a **BIMI record publishes an `http://` logo (`l=`) or VMC (`a=`) URL** (fetched as-published, with a "should use HTTPS" warning), or when an HTTPS fetch redirects to `http://` | Domain has an http BIMI URL, or a redirect drops to http |
+
+> The BIMI logo (`l=`) and VMC (`a=`) are the only URLs taken verbatim from DNS data and
+> fetched as-is; every other HTTP request uses a hardcoded `https://` URL. DMARC/TLS-RPT
+> `https` report URIs are parsed and noted but never fetched.
+
+### Reducing the set
+
+The network-category toggles narrow egress: `--no-smtp` drops 25/587/465; `--no-http`
+drops 443/80; `--no-direct-dns` limits 53 to the configured resolver only; `--restricted`
+(no-smtp + no-http + no-dnsbl + no-direct-dns) leaves **only UDP/TCP 53 to the configured
+resolver**. A locked-down deployment can allow just 53 to its resolver plus 443 to
+`HTTPS_PROXY` so MTA-STS/BIMI/DoH still work.
+
 ## CI/CD
 
 **Configuration**: `.github/workflows/ci.yml`

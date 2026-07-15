@@ -155,7 +155,9 @@ real addresses.
 proxy resolution applies — set the env vars before the process starts and
 all HTTP/HTTPS lookups (MTA-STS, security.txt, BIMI, Certificate
 Transparency / `crt.sh`) route through the proxy automatically. **No code
-changes needed.**
+changes needed.** Only HTTP(S) egress uses the proxy; DNS and SMTP go direct —
+see [Deployment → Network egress](deployment.md#network-egress-outbound-ports)
+for the full outbound-port list.
 
 ### Linux / macOS / Docker
 
