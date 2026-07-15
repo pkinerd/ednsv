@@ -248,7 +248,11 @@ A single-page web application at `src/Ednsv.Web/wwwroot/index.html`:
 EDNSV validates third-party infrastructure, so it makes outbound connections to
 **arbitrary internet hosts** (both IPv4 and IPv6). IPv6-only probes self-skip when the
 host has no IPv6 route. If `HTTPS_PROXY` is set, all HTTPS (443) egress goes through the
-proxy while DNS and SMTP go direct (see [Configuration → proxy](configuration.md#httphttps-proxy)).
+proxy while raw DNS (UDP/TCP 53) and SMTP go direct. The one exception is **DoH**
+(`EnableDoh`): it carries DNS over HTTPS/443, so it uses the proxy like any other HTTPS
+fetch — which is its purpose, letting the propagation check work where raw UDP/53 egress
+is blocked but an HTTPS proxy is available (the auth-nameserver direct-DNS checks have no
+DoH path and still need raw 53). See [Configuration → proxy](configuration.md#httphttps-proxy).
 
 ### Core — needed for a full validation
 
