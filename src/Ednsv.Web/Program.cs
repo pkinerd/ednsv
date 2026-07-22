@@ -8,9 +8,13 @@ using Ednsv.Core;
 using Ednsv.Core.Checks;
 using Ednsv.Core.Models;
 using Ednsv.Core.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -68,6 +72,19 @@ var defaultEnableDoh        = builder.Configuration.GetValue<bool>("EnableDoh", 
 var authTokenHash = Environment.GetEnvironmentVariable("EDNSV_AUTH_TOKEN_HASH")
     ?? builder.Configuration.GetValue<string>("AuthTokenHash")
     ?? AuthService.DisabledMarker;
+
+// External-IdP auth (optional, off by default): interactive OIDC SSO for the
+// UI and IdP-issued JWT bearer tokens for service accounts. Both run alongside
+// token auth; any combination may be enabled. Invalid config fails startup.
+var oidcSettings = OidcSettings.Load(builder.Configuration);
+var jwtSettings = JwtBearerSettings.Load(builder.Configuration, oidcSettings);
+oidcSettings.Validate();
+jwtSettings.Validate();
+
+// Scheme names for the ASP.NET Core authentication handlers registered below.
+const string SessionScheme = "EdnsvSession"; // signed SSO session cookie
+const string OidcScheme = "Oidc";            // interactive OIDC challenge/callback
+const string EntraBearerScheme = "EntraBearer"; // IdP-issued JWT access tokens
 
 // ── Shared services (singletons — thread-safe via ConcurrentDictionary) ──
 // Use OS-configured resolvers by default; override with DnsServer env var.
@@ -164,6 +181,103 @@ var authService = new AuthService(authDir, authTokenHash);
 authService.Load();
 builder.Services.AddSingleton(authService);
 
+// True when at least one auth method protects the instance. Token-subsystem
+// endpoints keep keying off authService.Disabled ("token auth off"); the gate
+// middleware and the fail-closed startup guard key off this instead.
+var anyAuthEnabled = !authService.Disabled || oidcSettings.Enabled || jwtSettings.Enabled;
+var externalAuthEnabled = oidcSettings.Enabled || jwtSettings.Enabled;
+
+if (externalAuthEnabled)
+{
+    // SSO sessions are Data Protection tickets; persist the key ring under
+    // DataDir (alongside auth/ and cache/) so sessions survive restarts.
+    builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
+        .SetApplicationName("ednsv");
+
+    var authBuilder = builder.Services.AddAuthentication();
+
+    if (oidcSettings.Enabled)
+    {
+        authBuilder.AddCookie(SessionScheme, o =>
+        {
+            o.Cookie.Name = "ednsv-session";
+            o.Cookie.HttpOnly = true;
+            // Lax, not Strict: the sign-in landing after the cross-site IdP
+            // redirect must carry the cookie. Lax still withholds it on
+            // cross-site non-GET requests, preserving CSRF protection for all
+            // state-changing endpoints (parity with the Strict token cookie).
+            o.Cookie.SameSite = SameSiteMode.Lax;
+            o.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            o.Cookie.Path = "/";
+            o.ExpireTimeSpan = TimeSpan.FromHours(oidcSettings.SessionHours);
+            o.SlidingExpiration = true;
+            // The gate middleware owns the 302-vs-401 decision; the handler
+            // must never redirect on its own.
+            o.Events.OnRedirectToLogin = ctx => { ctx.Response.StatusCode = StatusCodes.Status401Unauthorized; return Task.CompletedTask; };
+            o.Events.OnRedirectToAccessDenied = ctx => { ctx.Response.StatusCode = StatusCodes.Status403Forbidden; return Task.CompletedTask; };
+        });
+
+        authBuilder.AddOpenIdConnect(OidcScheme, o =>
+        {
+            o.SignInScheme = SessionScheme;
+            o.Authority = oidcSettings.Authority;
+            o.ClientId = oidcSettings.ClientId;
+            o.ClientSecret = oidcSettings.ClientSecret;
+            o.ResponseType = OpenIdConnectResponseType.Code; // + PKCE (handler default)
+            o.CallbackPath = oidcSettings.CallbackPath;
+            o.SignedOutCallbackPath = oidcSettings.SignedOutCallbackPath;
+            o.SignedOutRedirectUri = "/login.html";
+            // Keep raw claim names (preferred_username, roles, …) instead of
+            // the legacy SOAP-era ClaimTypes remapping.
+            o.MapInboundClaims = false;
+            o.TokenValidationParameters.NameClaimType = oidcSettings.UsernameClaim;
+            o.TokenValidationParameters.RoleClaimType = oidcSettings.RoleClaim;
+            // Session cookie stays small: no IdP tokens are stored, identity is
+            // re-derived from the ticket's claims on each request.
+            o.SaveTokens = false;
+            o.Scope.Clear();
+            foreach (var s in oidcSettings.Scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                o.Scope.Add(s);
+            o.Events = new OpenIdConnectEvents
+            {
+                // Enforce RequiredRoles and the root-collision guard at sign-in
+                // so a rejected user never gets a session cookie at all.
+                OnTokenValidated = ctx =>
+                {
+                    var mapped = ExternalUserMapper.Map(
+                        ctx.Principal!,
+                        new[] { oidcSettings.UsernameClaim, "upn", "email", "sub" },
+                        oidcSettings.RoleClaim, oidcSettings.AdminRoles, oidcSettings.RequiredRoles);
+                    if (mapped.Status != ExternalUserMapper.MapStatus.Success)
+                        ctx.Fail($"SSO sign-in rejected: {mapped.Status}");
+                    return Task.CompletedTask;
+                },
+                // Covers IdP errors, correlation failures, and our own Fail()
+                // above — land back on the login page with a generic error.
+                OnRemoteFailure = ctx =>
+                {
+                    ctx.Response.Redirect("/login.html?error=sso_failed");
+                    ctx.HandleResponse();
+                    return Task.CompletedTask;
+                }
+            };
+        });
+    }
+
+    if (jwtSettings.Enabled)
+    {
+        authBuilder.AddJwtBearer(EntraBearerScheme, o =>
+        {
+            o.Authority = jwtSettings.Authority;
+            o.MapInboundClaims = false;
+            o.TokenValidationParameters.ValidAudiences = jwtSettings.Audiences;
+            o.TokenValidationParameters.NameClaimType = jwtSettings.NameClaim;
+            o.TokenValidationParameters.RoleClaimType = jwtSettings.RoleClaim;
+        });
+    }
+}
+
 // ── In-flight validation tracking ────────────────────────────────────────
 var validationTracker = new ValidationTracker();
 builder.Services.AddSingleton(validationTracker);
@@ -183,14 +297,19 @@ builder.Services.AddSwaggerGen(c =>
         Title = "ednsv API",
         Version = "v1",
         Description = "Email/DNS validation service. All endpoints require "
-            + "authentication when EDNSV_AUTH_TOKEN_HASH is set."
+            + "authentication when any auth method is enabled (token hash, OIDC "
+            + "SSO, or JWT bearer). A browser signed in via token or SSO is "
+            + "already authenticated here — its session cookie is sent with "
+            + "\"Try it out\" requests automatically."
     });
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
         Type = SecuritySchemeType.Http,
         Scheme = "bearer",
-        Description = "Token issued by /api/auth/login or /api/auth/users."
+        Description = "ednsv token issued via /api/auth/users, or an IdP-issued "
+            + "OAuth2 access token (e.g. Entra ID client credentials) when "
+            + "Auth:JwtBearer is enabled."
     });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
@@ -218,21 +337,32 @@ if (cacheResult != null)
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
 
-// Fail closed: an auth-disabled instance may only run when it is bound to
-// loopback addresses (localhost) — never when reachable from the network.
-if (authService.Disabled && !IsLoopbackOnlyBinding(builder))
+// Fail closed: an instance with NO auth method enabled (no token hash, no
+// OIDC SSO, no JWT bearer) may only run when it is bound to loopback
+// addresses (localhost) — never when reachable from the network.
+if (!anyAuthEnabled && !IsLoopbackOnlyBinding(builder))
 {
     app.Logger.LogCritical(
-        "Refusing to start: authentication is disabled (EDNSV_AUTH_TOKEN_HASH=none) but the server is bound to a non-loopback address. " +
-        "Set EDNSV_AUTH_TOKEN_HASH (or AuthTokenHash) to enable auth, or bind to localhost only (e.g. ASPNETCORE_URLS=http://127.0.0.1:5000).");
+        "Refusing to start: no authentication method is enabled (EDNSV_AUTH_TOKEN_HASH=none, Auth:Oidc and Auth:JwtBearer disabled) but the server is bound to a non-loopback address. " +
+        "Enable at least one auth method, or bind to localhost only (e.g. ASPNETCORE_URLS=http://127.0.0.1:5000).");
     throw new InvalidOperationException(
-        "Authentication is disabled but the server is network-exposed. Enable auth or bind to localhost only.");
+        "No authentication method is enabled but the server is network-exposed. Enable auth or bind to localhost only.");
 }
 
-if (authService.Disabled)
-    app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none) and the server is bound to localhost only. All endpoints are open to local callers.");
+if (!anyAuthEnabled)
+    app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none, no external IdP configured) and the server is bound to localhost only. All endpoints are open to local callers.");
 else
-    app.Logger.LogInformation("Authentication enabled. Root user: '{User}'. Auth data: {Path}", AuthService.RootUsername, authDir);
+    app.Logger.LogInformation(
+        "Authentication enabled — token auth: {Token}, OIDC SSO: {Oidc}, JWT bearer: {Jwt}. Auth data: {Path}",
+        authService.Disabled ? "off" : $"on (root user '{AuthService.RootUsername}')",
+        oidcSettings.Enabled ? $"on ({oidcSettings.Authority})" : "off",
+        jwtSettings.Enabled ? $"on ({jwtSettings.Authority})" : "off",
+        authDir);
+
+if (oidcSettings.Enabled)
+    app.Logger.LogInformation(
+        "OIDC SSO callback paths: {Callback}, {SignedOut}. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.",
+        oidcSettings.CallbackPath, oidcSettings.SignedOutCallbackPath);
 
 // Determines whether the configured Kestrel binding is loopback-only. Errs on the
 // side of "exposed" (returns false) whenever the binding can't be proven local, so
@@ -284,14 +414,26 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+// ── External auth handlers (OIDC callback + credential verification) ────
+// UseAuthentication runs the OIDC remote handler, which consumes its own
+// callback paths (/signin-oidc, /signout-callback-oidc) before the gate
+// below ever sees them. It performs no authorization — the gate middleware
+// remains the single enforcement point for every request.
+if (externalAuthEnabled)
+    app.UseAuthentication();
+
 // ── Auth middleware ──────────────────────────────────────────────────────
 // Runs before static files so the entire site requires credentials when enabled.
-// Auth resolution order: ednsv-auth cookie → Authorization: Bearer → Authorization: Basic.
-// Public paths (login page + login/logout endpoints) pass through without auth.
+// Auth resolution order: ednsv-auth cookie → Authorization: Bearer (ednsv token,
+// then IdP JWT) → Authorization: Basic → SSO session cookie.
+// Public paths (login page + auth bootstrap endpoints) pass through without auth.
 app.Use(async (ctx, next) =>
 {
-    if (authService.Disabled)
+    if (!anyAuthEnabled)
     {
+        // Marker read by RequireAdmin and /api/auth/me: a genuinely
+        // unauthenticated (localhost-only) instance treats callers as admin.
+        ctx.Items["AuthBypass"] = true;
         using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(auth-disabled)");
         await next();
         return;
@@ -300,7 +442,12 @@ app.Use(async (ctx, next) =>
     var path = ctx.Request.Path.Value ?? "";
     if (path.Equals("/login.html", StringComparison.OrdinalIgnoreCase) ||
         path.Equals("/api/auth/login", StringComparison.OrdinalIgnoreCase) ||
-        path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase))
+        path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/methods", StringComparison.OrdinalIgnoreCase) ||
+        path.Equals("/api/auth/oidc/login", StringComparison.OrdinalIgnoreCase) ||
+        (oidcSettings.Enabled &&
+         (path.Equals(oidcSettings.CallbackPath, StringComparison.OrdinalIgnoreCase) ||
+          path.Equals(oidcSettings.SignedOutCallbackPath, StringComparison.OrdinalIgnoreCase))))
     {
         using var anonScope = requestScopeLogger.BeginScope("Username={Username}", "(anonymous)");
         await next();
@@ -308,9 +455,14 @@ app.Use(async (ctx, next) =>
     }
 
     AuthService.User? user = null;
+    string? authMethod = null;
 
-    if (ctx.Request.Cookies.TryGetValue("ednsv-auth", out var cookieToken) && !string.IsNullOrEmpty(cookieToken))
+    if (!authService.Disabled &&
+        ctx.Request.Cookies.TryGetValue("ednsv-auth", out var cookieToken) && !string.IsNullOrEmpty(cookieToken))
+    {
         user = authService.AuthenticateBearer(cookieToken);
+        if (user != null) authMethod = "token";
+    }
 
     if (user == null)
     {
@@ -319,9 +471,33 @@ app.Use(async (ctx, next) =>
         {
             if (raw.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
-                user = authService.AuthenticateBearer(raw["Bearer ".Length..].Trim());
+                var bearer = raw["Bearer ".Length..].Trim();
+                // ednsv tokens are 43-char base64url (no dots) — the hash
+                // lookup cheaply rejects JWTs before the JWT handler runs.
+                if (!authService.Disabled)
+                {
+                    user = authService.AuthenticateBearer(bearer);
+                    if (user != null) authMethod = "token";
+                }
+                if (user == null && jwtSettings.Enabled)
+                {
+                    var jwtResult = await ctx.AuthenticateAsync(EntraBearerScheme);
+                    if (jwtResult.Succeeded)
+                    {
+                        var mapped = ExternalUserMapper.Map(
+                            jwtResult.Principal,
+                            new[] { jwtSettings.NameClaim, "appid" },
+                            jwtSettings.RoleClaim, jwtSettings.AdminRoles, jwtSettings.RequiredRoles,
+                            usernamePrefix: "app:");
+                        if (mapped.Status == ExternalUserMapper.MapStatus.Success)
+                        {
+                            user = mapped.User;
+                            authMethod = "jwt";
+                        }
+                    }
+                }
             }
-            else if (raw.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            else if (!authService.Disabled && raw.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
@@ -329,8 +505,29 @@ app.Use(async (ctx, next) =>
                     var idx = decoded.IndexOf(':');
                     if (idx >= 0)
                         user = authService.AuthenticateBasic(decoded[..idx], decoded[(idx + 1)..]);
+                    if (user != null) authMethod = "token";
                 }
                 catch (FormatException) { /* bad base64 → treat as unauth */ }
+            }
+        }
+    }
+
+    if (user == null && oidcSettings.Enabled)
+    {
+        var session = await ctx.AuthenticateAsync(SessionScheme);
+        if (session.Succeeded)
+        {
+            // Re-map claims on every request (rather than trusting values
+            // frozen into the ticket) so AdminRoles/RequiredRoles config
+            // changes take effect on restart without forcing re-login.
+            var mapped = ExternalUserMapper.Map(
+                session.Principal,
+                new[] { oidcSettings.UsernameClaim, "upn", "email", "sub" },
+                oidcSettings.RoleClaim, oidcSettings.AdminRoles, oidcSettings.RequiredRoles);
+            if (mapped.Status == ExternalUserMapper.MapStatus.Success)
+            {
+                user = mapped.User;
+                authMethod = "oidc";
             }
         }
     }
@@ -352,6 +549,7 @@ app.Use(async (ctx, next) =>
     }
 
     ctx.Items["AuthUser"] = user;
+    ctx.Items["AuthMethod"] = authMethod;
 
     using var userScope = requestScopeLogger.BeginScope(
         "Username={Username} IsAdmin={IsAdmin}",
@@ -621,7 +819,10 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
 static bool RequireAdmin(HttpContext ctx, AuthService auth, out IResult? error)
 {
     error = null;
-    if (auth.Disabled) return true; // auth disabled → all callers treated as admin
+    // Only a truly unauthenticated (localhost-only) instance treats all callers
+    // as admin. auth.Disabled alone is NOT sufficient: with token auth off but
+    // SSO/JWT on, callers are real authenticated users who must hold the role.
+    if (ctx.Items.ContainsKey("AuthBypass")) return true;
     var u = (AuthService.User?)ctx.Items["AuthUser"];
     if (u == null || !u.IsAdmin)
     {
@@ -675,9 +876,9 @@ app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string?
 {
     // This endpoint is a deliberate outbound-fetch diagnostic. It is only ever
     // available when authentication is enabled AND the caller is an admin — never
-    // when auth is disabled (where RequireAdmin would otherwise treat everyone as
-    // admin), so it can't become an open SSRF surface on an unauthenticated instance.
-    if (auth.Disabled) return Results.NotFound();
+    // on an auth-bypass instance (where RequireAdmin treats everyone as admin),
+    // so it can't become an open SSRF surface on an unauthenticated instance.
+    if (ctx.Items.ContainsKey("AuthBypass")) return Results.NotFound();
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
     if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
         return Results.BadRequest(new { error = "url must be an absolute URI, e.g. ?url=https://example.com/foo" });
@@ -795,13 +996,31 @@ app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string?
 
 // ── Auth endpoints ───────────────────────────────────────────────────────
 
-// GET /api/auth/me — current user info (or { disabled: true } if auth is off).
+// GET /api/auth/methods — which sign-in methods are available (public: the
+// login page needs this before the user has any credentials).
+app.MapGet("/api/auth/methods", (AuthService auth) =>
+    Results.Ok(new { tokenAuth = !auth.Disabled, sso = oidcSettings.Enabled }))
+.WithName("GetAuthMethods")
+.WithTags("Auth");
+
+// GET /api/auth/me — current user info (or { disabled: true } when no auth
+// method is enabled at all).
 app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.Ok(new { disabled = true, isAdmin = true, isRoot = false });
+    if (ctx.Items.ContainsKey("AuthBypass"))
+        return Results.Ok(new { disabled = true, isAdmin = true, isRoot = false, tokenAuthEnabled = false, authMethod = (string?)null, singleLogout = false });
     var u = (AuthService.User?)ctx.Items["AuthUser"];
     var isRoot = u?.Username.Equals(AuthService.RootUsername, StringComparison.OrdinalIgnoreCase) ?? false;
-    return Results.Ok(new { disabled = false, username = u?.Username, isAdmin = u?.IsAdmin ?? false, isRoot });
+    return Results.Ok(new
+    {
+        disabled = false,
+        username = u?.Username,
+        isAdmin = u?.IsAdmin ?? false,
+        isRoot,
+        tokenAuthEnabled = !auth.Disabled,
+        authMethod = ctx.Items["AuthMethod"] as string,
+        singleLogout = oidcSettings.Enabled && oidcSettings.SingleLogout
+    });
 })
 .WithName("GetCurrentUser")
 .WithTags("Auth");
@@ -809,7 +1028,7 @@ app.MapGet("/api/auth/me", (HttpContext ctx, AuthService auth) =>
 // POST /api/auth/login — exchange username + token for an HttpOnly session cookie.
 app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     if (string.IsNullOrEmpty(req.Username) || string.IsNullOrEmpty(req.Token))
         return Results.BadRequest(new { error = "username and token are required" });
 
@@ -832,13 +1051,39 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService a
 .WithName("Login")
 .WithTags("Auth");
 
-// POST /api/auth/logout — clears the session cookie.
-app.MapPost("/api/auth/logout", (HttpContext ctx) =>
+// POST /api/auth/logout — clears the token cookie and any SSO session.
+app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
 {
     ctx.Response.Cookies.Delete("ednsv-auth", new CookieOptions { Path = "/" });
+    if (oidcSettings.Enabled)
+        await ctx.SignOutAsync(SessionScheme);
     return Results.Ok(new { ok = true });
 })
 .WithName("Logout")
+.WithTags("Auth");
+
+// GET /api/auth/oidc/login — start the interactive SSO flow. Public; lands on
+// ?next= (same-origin path only) after the IdP round-trip.
+app.MapGet("/api/auth/oidc/login", (HttpContext ctx, string? next) =>
+{
+    if (!oidcSettings.Enabled) return Results.NotFound();
+    var target = next != null && next.StartsWith('/') && !next.StartsWith("//") ? next : "/";
+    return Results.Challenge(new AuthenticationProperties { RedirectUri = target }, new[] { OidcScheme });
+})
+.WithName("OidcLogin")
+.WithTags("Auth");
+
+// GET /api/auth/oidc/logout — single logout: end the local session AND the
+// IdP session via the front-channel end-session redirect. Only exposed when
+// Auth:Oidc:SingleLogout is enabled; the default logout is local-only.
+app.MapGet("/api/auth/oidc/logout", (HttpContext ctx) =>
+{
+    if (!oidcSettings.Enabled || !oidcSettings.SingleLogout) return Results.NotFound();
+    ctx.Response.Cookies.Delete("ednsv-auth", new CookieOptions { Path = "/" });
+    return Results.SignOut(new AuthenticationProperties { RedirectUri = "/login.html" },
+        new[] { SessionScheme, OidcScheme });
+})
+.WithName("OidcLogout")
 .WithTags("Auth");
 
 // GET /api/auth/users — list users visible to the caller (descendants; root sees all).
@@ -873,7 +1118,7 @@ app.MapGet("/api/auth/users", (HttpContext ctx, AuthService auth) =>
 // POST /api/auth/users — issue a new token. Returns the raw token exactly once.
 app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
     if (!u.IsAdmin) return Results.StatusCode(StatusCodes.Status403Forbidden);
 
@@ -907,7 +1152,7 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
 // POST /api/auth/users/{username}/revoke — cascade-revoke target and descendants.
 app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
     var result = auth.Revoke(username, u.Username);
     return result.Status switch
@@ -925,7 +1170,7 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
 // DELETE /api/auth/users/{username} — root-only permanent removal of a revoked user.
 app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, AuthService auth) =>
 {
-    if (auth.Disabled) return Results.BadRequest(new { error = "auth is disabled" });
+    if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
     var result = auth.Delete(username, u.Username);
     return result.Status switch

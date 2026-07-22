@@ -287,7 +287,9 @@ fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
   }
   if (d.isAdmin || d.disabled) {
     document.getElementById('adminConfigLink').style.display = '';
-    document.getElementById('tokensLink').style.display = '';
+    // The tokens page only applies when token auth is on (or auth is off entirely).
+    if (d.tokenAuthEnabled || d.disabled)
+      document.getElementById('tokensLink').style.display = '';
   }
 }).catch(() => {});
 
@@ -447,6 +449,11 @@ document.addEventListener('mousedown', e => {
 
 document.getElementById('signOut').addEventListener('click', async e => {
   e.preventDefault();
+  // SSO sessions with single logout configured also end the IdP session.
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.authMethod === 'oidc' && me.singleLogout) { location.href = '/api/auth/oidc/logout'; return; }
+  } catch {}
   try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
   location.href = '/login.html';
 });

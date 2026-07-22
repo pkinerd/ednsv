@@ -32,8 +32,29 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `Trace`                | bool     | `false`          | Emits per-check trace messages at `Debug` level. See **Trace logging** below. |
 | `MaskTrace`            | bool     | `true`           | Hashes domains/recipients in trace output for privacy. |
 | `MaskSalt`             | string   | random per-run   | Stable salt for `MaskTrace` hashes — set this to keep hashes consistent across runs. |
-| `AuthTokenHash`        | string   | `none`           | Token hash for the root `ednsv` user. `none` disables auth — **but an auth-disabled server refuses to start unless it is bound to loopback only** (see **Authentication** below). Overridden by `EDNSV_AUTH_TOKEN_HASH`. |
+| `AuthTokenHash`        | string   | `none`           | Token hash for the root `ednsv` user. `none` disables **token** auth — and a server with **no** auth method enabled (no token hash, no `Auth:Oidc`, no `Auth:JwtBearer`) refuses to start unless it is bound to loopback only (see **Authentication** below). Overridden by `EDNSV_AUTH_TOKEN_HASH`. |
 | `EDNSV_AUTH_TOKEN_HASH`| env only | —                | Highest-precedence source for the root token hash. See `appsettings.json` for the hash recipe and the minimum-entropy requirement. |
+| `Auth:Oidc:Enabled`    | bool     | `false`          | Interactive **single sign-on** via an external OIDC IdP (e.g. Entra ID). Adds a "single sign-on" button to the login page; SSO sessions get the same UI/API access (including Swagger) as token sessions. See **Authentication** below and [entra-setup.md](entra-setup.md). |
+| `Auth:Oidc:Authority`  | string   | —                | Issuer/authority URL. Entra ID: `https://login.microsoftonline.com/{tenantId}/v2.0`. Required when OIDC is enabled. |
+| `Auth:Oidc:ClientId`   | string   | —                | OIDC client (application) ID. Required when OIDC is enabled. |
+| `Auth:Oidc:ClientSecret` | string | —                | Confidential-client secret for the code exchange. Overridden by `EDNSV_OIDC_CLIENT_SECRET`. Optional only if the IdP app is a public client using PKCE. |
+| `Auth:Oidc:CallbackPath` | string | `/signin-oidc`   | Redirect URI path registered at the IdP (`https://<host>/signin-oidc`). |
+| `Auth:Oidc:SignedOutCallbackPath` | string | `/signout-callback-oidc` | Post-sign-out redirect path (single logout). |
+| `Auth:Oidc:Scopes`     | string   | `openid profile email` | Space-separated scopes requested at sign-in. |
+| `Auth:Oidc:UsernameClaim` | string | `preferred_username` | Claim used as the username; falls back to `upn` → `email` → `sub`. Prefer a claim containing `@` so SSO usernames can never collide with issued-token usernames (which forbid `@`). |
+| `Auth:Oidc:RoleClaim`  | string   | `roles`          | Claim holding role values. Set to `groups` to map Entra group object IDs instead of app roles. |
+| `Auth:Oidc:AdminRoles` | array    | `["Ednsv.Admin"]` | Role values (any match, case-insensitive) that grant admin. |
+| `Auth:Oidc:RequiredRoles` | array | `[]`             | When non-empty, sign-in is rejected unless the user holds at least one of these roles. Empty = any authenticated IdP user may sign in. |
+| `Auth:Oidc:SessionHours` | int    | `8`              | Sliding lifetime of the SSO session cookie (`ednsv-session`). |
+| `Auth:Oidc:SingleLogout` | bool   | `false`          | Sign out of the IdP too (front-channel end-session) when the user signs out. Default is local-only logout. |
+| `EDNSV_OIDC_CLIENT_SECRET` | env only | —            | Highest-precedence source for `Auth:Oidc:ClientSecret`. |
+| `Auth:JwtBearer:Enabled` | bool   | `false`          | Accept IdP-issued OAuth2 **JWT access tokens** on `Authorization: Bearer` — service-account API access via e.g. Entra client credentials. Runs alongside ednsv tokens on the same header. |
+| `Auth:JwtBearer:Authority` | string | `Auth:Oidc:Authority` | Token issuer/authority. Defaults to the OIDC authority. |
+| `Auth:JwtBearer:Audiences` | array | —               | Accepted `aud` values (e.g. `api://{clientId}`, `{clientId}`). **Required** when enabled. |
+| `Auth:JwtBearer:RoleClaim` | string | `Auth:Oidc:RoleClaim` | Claim holding role values in access tokens. |
+| `Auth:JwtBearer:AdminRoles` | array | `Auth:Oidc:AdminRoles` | Role values granting admin to service accounts. |
+| `Auth:JwtBearer:RequiredRoles` | array | `[]`        | When non-empty, tokens must carry at least one of these roles. Strongly recommended (e.g. `["Ednsv.Access"]`) so not every token minted for the audience is accepted. |
+| `Auth:JwtBearer:NameClaim` | string | `azp`          | Claim identifying the calling application (falls back to `appid` for v1 tokens). The username becomes `app:{value}`. |
 | `ValidateHttpsCertificates` | bool | `true`         | Validate TLS certificates on outbound HTTPS probes (MTA-STS policy, BIMI logo/VMC, DoH, security.txt, crt.sh). Keep `true` — RFC 8461 requires MTA-STS policies to be fetched over a validated connection, so disabling this makes those HTTPS verdicts untrustworthy. Set to `false` **only** behind a TLS-intercepting egress proxy whose CA is not in the host trust store. |
 
 `ASPNETCORE_HTTP_PORTS` (built-in ASP.NET Core variable) controls the HTTP
@@ -252,6 +273,57 @@ traversed.
 
 ## Authentication
 
+Three independent auth methods can protect an instance, in any combination:
+
+| Method | Config | Who it's for | How callers authenticate |
+|---|---|---|---|
+| **Token auth** | `AuthTokenHash` / `EDNSV_AUTH_TOKEN_HASH` | humans + scripts | `ednsv-auth` cookie (set by the login form), `Authorization: Bearer <token>`, or Basic auth |
+| **OIDC SSO** | `Auth:Oidc:*` | humans via an external IdP (Entra ID or any OIDC IdP) | "single sign-on" button → IdP redirect → signed `ednsv-session` cookie |
+| **JWT bearer** | `Auth:JwtBearer:*` | service accounts | `Authorization: Bearer <IdP access token>` (e.g. Entra client credentials) |
+
+Enable any subset: token-only (the pre-existing behavior), SSO-only
+(set `AuthTokenHash` to `none` and enable `Auth:Oidc`), or side-by-side.
+Disabling token auth disables the login form, token issuance, and the tokens
+page; SSO/JWT users are unaffected. All methods produce the same caller
+identity internally, so every endpoint — including the Swagger UI, whose
+"Try it out" requests carry the browser's session cookie automatically —
+works identically regardless of how the caller authenticated.
+
+**Roles.** ednsv has two roles: standard and admin. Token users carry an
+explicit admin flag set at issue time. SSO and JWT callers are mapped from
+claims on every request: any role in `AdminRoles` (default `Ednsv.Admin`,
+matched against `Auth:Oidc:RoleClaim` / `Auth:JwtBearer:RoleClaim`) grants
+admin. SSO users are **not** persisted to `users.json` — their identity and
+role come from the IdP each time, so revocation and role changes are managed
+in the IdP. SSO admins can still issue ednsv tokens (when token auth is on);
+tokens they issue record the SSO username as `issuedBy` and are visible/
+revocable by that user like any other issuance subtree. A username claim that
+would collide with the root user `ednsv` is rejected outright.
+
+**SSO session state.** SSO sessions are ASP.NET Core Data Protection tickets
+in the `ednsv-session` cookie. The key ring is persisted to `{DataDir}/keys`
+— keep it on the same persistent volume as the rest of `DataDir`, or every
+restart signs everyone out. The cookie is `SameSite=Lax` (required for the
+IdP redirect to land signed-in); state-changing cross-site requests still
+don't carry it, preserving CSRF protection.
+
+**Reverse proxies / HTTPS.** OIDC needs the externally visible scheme/host to
+build the redirect URI and mark cookies `Secure`. Terminate TLS in front of
+ednsv and set `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` so
+`X-Forwarded-Proto`/`X-Forwarded-Host` are honored. The IdP round-trip will
+not work over plain HTTP on a non-localhost host (correlation cookies are
+`Secure`).
+
+**Logout.** Sign-out clears the local cookies only, by default — the IdP
+session survives, so the next SSO click signs straight back in. Set
+`Auth:Oidc:SingleLogout=true` to also end the IdP session via the
+front-channel end-session redirect.
+
+For a step-by-step Entra ID (Azure AD) setup — app registration, admin app
+role, and service-account client-credentials — see [entra-setup.md](entra-setup.md).
+
+### Token auth
+
 `EDNSV_AUTH_TOKEN_HASH` takes precedence over `AuthTokenHash` in
 `appsettings.json`. Set either to the base64url-encoded SHA-256 hash of the
 root token:
@@ -273,11 +345,13 @@ makes a weak root token trivially brute-forceable offline if the hash or
 `users.json` ever leaks. (Tokens issued to non-root users are always generated
 this way automatically.)
 
-**Disabling auth is gated to localhost.** Setting either value to `none` (the
-default) disables authentication and opens every endpoint. To prevent an
-accidentally network-exposed open instance, the server **refuses to start**
-with auth disabled unless it is bound to loopback addresses only (e.g.
+**Disabling all auth is gated to localhost.** With `AuthTokenHash` set to
+`none` (the default) and no external IdP configured, authentication is off
+and every endpoint is open. To prevent an accidentally network-exposed open
+instance, the server **refuses to start** with no auth method enabled unless
+it is bound to loopback addresses only (e.g.
 `ASPNETCORE_URLS=http://127.0.0.1:5000`). Any non-loopback binding —
 including the Docker image's `ASPNETCORE_HTTP_PORTS=8080`, `0.0.0.0`, `*`, or a
-real IP/host — requires a configured root token hash. The `/api/debug/proxy`
-diagnostic is likewise unavailable whenever auth is disabled.
+real IP/host — requires at least one enabled auth method (token hash, OIDC
+SSO, or JWT bearer). The `/api/debug/proxy` diagnostic is likewise
+unavailable whenever no auth method is enabled.

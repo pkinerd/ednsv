@@ -300,6 +300,11 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 
 $('#signOut').addEventListener('click', async e => {
   e.preventDefault();
+  // SSO sessions with single logout configured also end the IdP session.
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.authMethod === 'oidc' && me.singleLogout) { location.href = '/api/auth/oidc/logout'; return; }
+  } catch {}
   try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
   location.href = '/login.html';
 });
@@ -314,7 +319,8 @@ $('#signOut').addEventListener('click', async e => {
     } else {
       $('#who').textContent = `Signed in as ${me.username}${me.isAdmin ? ' (admin)' : ''}`;
     }
-    if (me.isAdmin || me.disabled) $('#tokensLink').style.display = '';
+    // The tokens page only applies when token auth is on (or auth is off entirely).
+    if ((me.isAdmin && me.tokenAuthEnabled) || me.disabled) $('#tokensLink').style.display = '';
   } catch {}
   const cfg = await loadConfig();
   if (cfg) { current = cfg; fillForm(cfg); }
