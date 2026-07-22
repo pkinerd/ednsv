@@ -587,6 +587,11 @@ function fmtDuration(d) {
 
 let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
 
+// Categories whose detail lines (SPF mechanisms, DKIM selectors, DMARC tags,
+// raw TXT records) are never truncated — these are the records operators come
+// here to read in full.
+const NO_TRUNCATE_CATS = new Set(['SPF', 'DKIM', 'DMARC', 'TXT']);
+
 function renderReport(report, domain) {
   activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
   const r = report.results || report.Results || [];
@@ -635,18 +640,21 @@ function renderReport(report, domain) {
       html += `<div class="check" data-sev="${c.severity}">`;
       html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span></div>`;
       html += `<div class="check-summary">${esc(c.summary)}</div>`;
-      // Warnings and errors are the actionable findings — show them all, first and
-      // never truncated. Only the informational details are capped, so a check with
-      // many detail lines (e.g. DKIM, blocklists) can't hide its warnings/errors
-      // behind "...and N more".
+      // Warnings and errors are the actionable findings — always shown in full,
+      // first and never truncated. Informational details are capped, EXCEPT for
+      // the critical email-DNS categories (SPF/DKIM/DMARC/TXT), whose records
+      // must always be shown in full. And a cap only ever hides lines when it
+      // saves something meaningful: if fewer than 5 lines would be hidden we
+      // just show them all (no pointless "...and 1 more").
       const issues = [...(c.errors||[]), ...(c.warnings||[])];
       const info = (c.details||[]);
       if (issues.length || info.length) {
         html += '<ul class="details">';
         for (const d of issues) html += `<li class="issue">${esc(d)}</li>`;
         const cap = 20;
-        for (const d of info.slice(0, cap)) html += `<li>${esc(d)}</li>`;
-        if (info.length > cap) html += `<li>...and ${info.length - cap} more</li>`;
+        const shown = (NO_TRUNCATE_CATS.has(cat) || info.length - cap < 5) ? info.length : cap;
+        for (const d of info.slice(0, shown)) html += `<li>${esc(d)}</li>`;
+        if (info.length > shown) html += `<li>...and ${info.length - shown} more</li>`;
         html += '</ul>';
       }
       html += '</div>';
