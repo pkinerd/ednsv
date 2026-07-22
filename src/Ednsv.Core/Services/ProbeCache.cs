@@ -53,6 +53,14 @@ public class ProbeCache<TValue> where TValue : class
         _ttl = ttl;
     }
 
+    /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
+    public void Clear()
+    {
+        _cache.Clear();
+        _exportLog.Clear();
+        _inflight.Clear();
+    }
+
     /// <summary>Try to read a cached value. Returns false on miss or recheck bypass.</summary>
     public bool TryGet(string key, out TValue value, RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
@@ -252,6 +260,14 @@ public class ProbeCacheValue<TValue> where TValue : struct
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+    }
+
+    /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
+    public void Clear()
+    {
+        _cache.Clear();
+        _exportLog.Clear();
+        _inflight.Clear();
     }
 
     public bool TryGet(string key, out TValue value, RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)

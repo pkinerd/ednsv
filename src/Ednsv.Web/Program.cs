@@ -833,6 +833,20 @@ app.MapPost("/api/cache/flush", async (HttpContext ctx, CacheManager cache) =>
 .WithName("FlushCache")
 .WithTags("Cache");
 
+// POST /api/cache/clear — admin-only. Wipes ALL caches (in-memory DNS/SMTP/HTTP
+// probe caches + recheck summaries + on-disk cache files). Every probe is
+// re-fetched afterwards, so this degrades performance until caches re-warm.
+app.MapPost("/api/cache/clear", async (HttpContext ctx, AuthService auth, CacheManager cache) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    await cache.ClearAllAsync();
+    auditLogger.LogWarning("Cache CLEARED (memory + disk) by={User}",
+        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
+    return Results.Ok(new { cleared = true });
+})
+.WithName("ClearCache")
+.WithTags("Cache");
+
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories))
     .WithName("ListChecks")

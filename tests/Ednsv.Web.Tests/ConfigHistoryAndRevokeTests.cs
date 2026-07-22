@@ -89,6 +89,29 @@ public sealed class ConfigHistoryAndRevokeTests
         Assert.Equal("admin@contoso.com", revs[0].GetProperty("savedBy").GetString());
     }
 
+    // ── Cache clear (admin-only) ──────────────────────────────────────────
+
+    [Fact]
+    public async Task CacheClearIsAdminOnlyAndAudited()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        var res = await admin.PostAsync("/api/cache/clear", null);
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.True((await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("cleared").GetBoolean());
+        Assert.Contains(factory.LogSnapshot(),
+            l => l.Category == "Ednsv.Audit" && l.Message.Contains("Cache CLEARED"));
+
+        // A standard (non-admin) token is forbidden.
+        var issued = await (await admin.PostAsJsonAsync("/api/auth/users",
+            new { username = "std-clear", isAdmin = false })).Content.ReadFromJsonAsync<JsonElement>();
+        var user = factory.CreateClient();
+        user.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", issued.GetProperty("token").GetString());
+        Assert.Equal(HttpStatusCode.Forbidden, (await user.PostAsync("/api/cache/clear", null)).StatusCode);
+    }
+
     // ── Elevated revoke ───────────────────────────────────────────────────
 
     [Fact]

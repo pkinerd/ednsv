@@ -257,6 +257,18 @@ public class DnsResolverService
         QueryErrors = new ConcurrentBag<string>();
     }
 
+    /// <summary>Evicts all cached DNS data (query/PTR/server/AXFR) and forgets
+    /// unreachable-server state, so subsequent lookups re-query from scratch.</summary>
+    public void ClearCache()
+    {
+        _queryCache.Clear();
+        _ptrCache.Clear();
+        _serverQueryCache.Clear();
+        _axfrCache.Clear();
+        _axfrResponseCache.Clear();
+        _unreachableServerCounts.Clear();
+    }
+
     public async Task<IDnsQueryResponse> QueryAsync(string domain, QueryType type)
     {
         var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";

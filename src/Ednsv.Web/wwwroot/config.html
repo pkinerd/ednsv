@@ -153,6 +153,17 @@
       </div>
     </div>
   </div>
+
+  <div class="panel">
+    <h2>Maintenance</h2>
+    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk to speed up validations.</p>
+    <div class="msg warn" style="margin-bottom:0.75rem">
+      ⚠ Clearing wipes every cached probe (memory <strong>and</strong> disk). Validations will re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
+    </div>
+    <div class="actions">
+      <button class="danger" id="clearCacheBtn">Clear all caches (memory + disk)</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -337,6 +348,19 @@ document.querySelectorAll('.tabs button').forEach(btn => {
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'json') $('#rawJson').value = JSON.stringify(collectFormConfig(), null, 2);
   });
+});
+
+$('#clearCacheBtn').addEventListener('click', async () => {
+  if (!confirm('Clear ALL caches (memory and disk)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
+  const btn = $('#clearCacheBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/cache/clear', { method: 'POST', credentials: 'same-origin' });
+    if (res.ok) showMessage('All caches cleared. Validations will be slower until caches warm up again.', 'warn');
+    else if (res.status === 403) showMessage('Forbidden — admin only.');
+    else showMessage(`Clear failed: ${res.status}`);
+  } catch (e) { showMessage(e.message); }
+  finally { btn.disabled = false; }
 });
 
 $('#signOut').addEventListener('click', async e => {
