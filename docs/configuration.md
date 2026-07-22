@@ -296,9 +296,13 @@ matched against `Auth:Oidc:RoleClaim` / `Auth:JwtBearer:RoleClaim`) grants
 admin. SSO users are **not** persisted to `users.json` — their identity and
 role come from the IdP each time, so revocation and role changes are managed
 in the IdP. SSO admins can still issue ednsv tokens (when token auth is on);
-tokens they issue record the SSO username as `issuedBy` and are visible/
-revocable by that user like any other issuance subtree. A username claim that
-would collide with the root user `ednsv` is rejected outright.
+tokens they issue record the SSO username as `issuedBy`. Because external-IdP
+admins (SSO **and** JWT) sit outside the token issuance tree, they may
+**revoke any token**, not only ones in a subtree they issued — the sole
+exception is the config root user `ednsv`, which no one can revoke. Token
+admins keep the scoped behavior: they see and revoke only their own issuance
+subtree. A username claim that would collide with the root user `ednsv` is
+rejected outright.
 
 **SSO session state.** SSO sessions are ASP.NET Core Data Protection tickets
 in the `ednsv-session` cookie. The key ring is persisted to `{DataDir}/keys`
@@ -321,6 +325,24 @@ front-channel end-session redirect.
 
 For a step-by-step Entra ID (Azure AD) setup — app registration, admin app
 role, and service-account client-credentials — see [entra-setup.md](entra-setup.md).
+
+## Runtime config revision history
+
+Every save of the runtime config (`PUT /api/config`, i.e. the **Config** page's
+Save button) is backed up: the saved config is appended to
+`{DataDir}/config-history.json` along with **who** saved it (the caller's
+username, or `(auth-disabled)` on a localhost-only open instance) and **when**.
+The newest ~300 revisions are kept; older ones are trimmed. On first run a
+baseline revision (`(initial)`) captures the seeded config so even the first
+change is recoverable.
+
+The Config page shows a **Revision history** dropdown listing each revision as
+"date — user", newest first. Selecting one loads that config into both the form
+and JSON views without applying it — review it, then click **Save config** to
+apply it as a new revision (attributed to you). Keep `config-history.json` on
+the persistent volume alongside the rest of `DataDir` to retain history across
+restarts. The history endpoints (`GET /api/config/history` and
+`GET /api/config/history/{id}`) are admin-only, like the rest of the config API.
 
 ### Token auth
 

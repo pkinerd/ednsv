@@ -143,6 +143,42 @@ public sealed class AuthServiceTests : IDisposable
     }
 
     [Fact]
+    public void Revoke_Elevated_AllowsRevokingUnrelatedUserButNotRoot()
+    {
+        var auth = new AuthService(_dir, AuthService.Hash("root"));
+        auth.Issue("alice", true, "ednsv", null);
+        var bob = auth.Issue("bob", false, "alice", null); // issued by alice, not by the SSO admin
+
+        // Without elevation an unrelated caller cannot revoke bob…
+        Assert.Equal(AuthService.RevokeStatus.NotAllowed,
+            auth.Revoke("bob", "sso-admin@contoso.com").Status);
+
+        // …but an elevated (external-IdP admin) caller can, even though they
+        // never issued bob and have no place in the issuance tree.
+        var result = auth.Revoke("bob", "sso-admin@contoso.com", elevated: true);
+        Assert.Equal(AuthService.RevokeStatus.Success, result.Status);
+        Assert.Contains("bob", result.Affected!);
+        Assert.Null(auth.AuthenticateBearer(bob.Token!));
+
+        // Root remains unrevocable even with elevation.
+        Assert.Equal(AuthService.RevokeStatus.NotAllowed,
+            auth.Revoke("ednsv", "sso-admin@contoso.com", elevated: true).Status);
+    }
+
+    [Fact]
+    public void Revoke_Elevated_CascadesToDescendants()
+    {
+        var auth = new AuthService(_dir, AuthService.Hash("root"));
+        auth.Issue("alice", true, "ednsv", null);
+        auth.Issue("bob", false, "alice", null);
+
+        var result = auth.Revoke("alice", "sso-admin@contoso.com", elevated: true);
+        Assert.Equal(AuthService.RevokeStatus.Success, result.Status);
+        Assert.Contains("alice", result.Affected!);
+        Assert.Contains("bob", result.Affected!);
+    }
+
+    [Fact]
     public void Revoke_AncestorChain_AllowsIndirectAncestor()
     {
         var auth = new AuthService(_dir, AuthService.Hash("root"));

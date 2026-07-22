@@ -24,8 +24,8 @@
   label.cb { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; cursor: pointer; }
   label.cb input { accent-color: var(--accent); }
   label .desc { display: block; color: var(--muted); font-size: 0.75rem; margin-top: 0.15rem; font-weight: normal; }
-  input[type=text], textarea { width: 100%; padding: 0.5rem 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.85rem; outline: none; }
-  input[type=text]:focus, textarea:focus { border-color: var(--accent); }
+  input[type=text], textarea, select { width: 100%; padding: 0.5rem 0.7rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.85rem; outline: none; }
+  input[type=text]:focus, textarea:focus, select:focus { border-color: var(--accent); }
   textarea { resize: vertical; min-height: 6rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
   textarea.json { min-height: 18rem; tab-size: 2; white-space: pre; word-break: normal; overflow-wrap: normal; }
   button { padding: 0.5rem 1rem; background: var(--accent); color: var(--bg); border: none; border-radius: 4px; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
@@ -73,6 +73,15 @@
   </div>
 
   <div id="messages"></div>
+
+  <div class="panel" id="historyPanel" style="display:none">
+    <h2>Revision history</h2>
+    <p class="subtitle">Every saved change is backed up. Pick a previous revision to load it into the form and JSON views below — review it, then <strong>Save config</strong> to apply it as a new revision.</p>
+    <div class="field" style="margin-bottom:0">
+      <label for="revSelect">Load a previous revision</label>
+      <select id="revSelect"></select>
+    </div>
+  </div>
 
   <div class="tabs">
     <button data-tab="form" class="active">Form</button>
@@ -160,6 +169,38 @@ function showMessage(text, kind = 'error') {
 function parseList(s) {
   return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
 }
+
+function fmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  if (isNaN(d)) return s;
+  return d.toISOString().replace('T', ' ').replace(/\..+/, '') + ' UTC';
+}
+
+async function loadHistory() {
+  let revs;
+  try {
+    const res = await fetch('/api/config/history');
+    if (!res.ok) return; // non-admin or unsupported — leave the panel hidden
+    revs = await res.json();
+  } catch { return; }
+  const sel = $('#revSelect');
+  sel.innerHTML = '<option value="">— current (unsaved) —</option>' +
+    revs.map(r => `<option value="${r.id}">${esc(fmtDate(r.savedAt))} — ${esc(r.savedBy)}</option>`).join('');
+  $('#historyPanel').style.display = revs.length ? '' : 'none';
+}
+
+$('#revSelect')?.addEventListener('change', async e => {
+  const id = e.target.value;
+  if (!id) return;
+  const opt = e.target.options[e.target.selectedIndex];
+  const res = await fetch(`/api/config/history/${encodeURIComponent(id)}`);
+  if (!res.ok) { showMessage(`Could not load revision: ${res.status}`); return; }
+  const cfg = await res.json();
+  current = cfg;
+  fillForm(cfg);
+  showMessage(`Loaded revision (${opt.textContent}). Review and click Save config to apply.`, 'warn');
+});
 
 async function loadConfig() {
   const res = await fetch('/api/config');
@@ -262,7 +303,7 @@ $('#addDomainBtn').addEventListener('click', () => {
 $('#saveBtn').addEventListener('click', async () => {
   const payload = collectFormConfig();
   const result = await saveConfig(payload);
-  if (result) { current = result; fillForm(result); showMessage('Config saved.', 'ok'); }
+  if (result) { current = result; fillForm(result); await loadHistory(); showMessage('Config saved.', 'ok'); }
 });
 
 $('#reloadBtn').addEventListener('click', async () => {
@@ -275,7 +316,7 @@ $('#saveJsonBtn').addEventListener('click', async () => {
   try { parsed = JSON.parse($('#rawJson').value); }
   catch (e) { showMessage(`Invalid JSON: ${e.message}`); return; }
   const result = await saveConfig(parsed);
-  if (result) { current = result; fillForm(result); showMessage('Config saved.', 'ok'); }
+  if (result) { current = result; fillForm(result); await loadHistory(); showMessage('Config saved.', 'ok'); }
 });
 
 $('#reloadJsonBtn').addEventListener('click', async () => {
@@ -324,6 +365,7 @@ $('#signOut').addEventListener('click', async e => {
   } catch {}
   const cfg = await loadConfig();
   if (cfg) { current = cfg; fillForm(cfg); }
+  await loadHistory();
 })();
 </script>
 </body>

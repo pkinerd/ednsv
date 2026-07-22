@@ -855,10 +855,34 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
         return Results.BadRequest(new { error = $"invalid JSON: {ex.Message}" });
     }
     if (incoming == null) return Results.BadRequest(new { error = "body is required" });
-    cfgSvc.Replace(incoming);
+    // Attribute the change to the caller (or "(auth-disabled)" on a bypass
+    // instance) so each saved revision records who made it.
+    var savedBy = ctx.Items.ContainsKey("AuthBypass")
+        ? "(auth-disabled)"
+        : ((AuthService.User?)ctx.Items["AuthUser"])?.Username ?? "unknown";
+    cfgSvc.Replace(incoming, savedBy);
     return Results.Ok(cfgSvc.Snapshot());
 })
 .WithName("UpdateConfig")
+.WithTags("Config");
+
+// GET /api/config/history — revision metadata (id, savedAt, savedBy), newest first.
+app.MapGet("/api/config/history", (HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    return Results.Ok(cfgSvc.ListRevisions());
+})
+.WithName("GetConfigHistory")
+.WithTags("Config");
+
+// GET /api/config/history/{id} — the config saved in a specific revision.
+app.MapGet("/api/config/history/{id:int}", (int id, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    var cfg = cfgSvc.GetRevision(id);
+    return cfg == null ? Results.NotFound(new { error = "revision not found" }) : Results.Ok(cfg);
+})
+.WithName("GetConfigRevision")
 .WithTags("Config");
 
 // ── Debug / diagnostics (admin-only) ─────────────────────────────────────
@@ -1154,7 +1178,12 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
 {
     if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
-    var result = auth.Revoke(username, u.Username);
+    // External-IdP admins (SSO / JWT) sit outside the issuance tree and may
+    // revoke any token except the config root user; token admins stay scoped
+    // to their own issuance subtree.
+    var method = ctx.Items["AuthMethod"] as string;
+    var elevated = u.IsAdmin && (method == "oidc" || method == "jwt");
+    var result = auth.Revoke(username, u.Username, elevated);
     return result.Status switch
     {
         AuthService.RevokeStatus.Success => Results.Ok(new { revoked = result.Affected }),
