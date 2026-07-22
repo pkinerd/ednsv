@@ -116,8 +116,9 @@
       <button type="button" class="arrow-btn" id="domainArrow" title="Show all known domains" aria-label="Show all known domains">&#9662;</button>
       <div class="suggestions" id="domainSuggestions" role="listbox"></div>
     </div>
-    <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
+    <select id="recheck" title="Recheck: bypass cached probes. 'All' re-runs every check against fresh data; the severity options only clear caches for prior issues at or above that level.">
       <option value="">No recheck</option>
+      <option value="all">Recheck all (ignore cache)</option>
       <option value="Warning">Recheck warnings+</option>
       <option value="Error">Recheck errors+</option>
       <option value="Critical">Recheck critical</option>
@@ -470,7 +471,9 @@ form.addEventListener('submit', async e => {
 async function startValidation(domain, recheckSeverity) {
   btn.disabled = true;
   resultsEl.innerHTML = '';
-  const recheckLabel = recheckSeverity ? ` (recheck >= ${recheckSeverity})` : '';
+  const recheckLabel = recheckSeverity
+    ? (recheckSeverity === 'all' ? ' (recheck all)' : ` (recheck >= ${recheckSeverity})`)
+    : '';
   statusEl.textContent = `Starting validation for ${domain}${recheckLabel}...`;
 
   const body = { domain, options: currentOptions() };
@@ -663,12 +666,17 @@ function renderReport(report, domain) {
   }
 
   const hasIssues = (counts.Warning || 0) + (counts.Error || 0) + (counts.Critical || 0) > 0;
-  if (hasIssues && domain) {
+  if (domain) {
+    // "All" re-runs every check against fresh data and is always available;
+    // the severity-scoped rechecks only appear when there are issues to target.
     html += '<div style="margin-top:1rem;display:flex;gap:0.5rem;align-items:center">';
-    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck issues:</span>';
-    html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
-    html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
-    html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck:</span>';
+    html += '<button class="recheck-btn" data-sev="all">All</button>';
+    if (hasIssues) {
+      html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
+      html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
+      html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    }
     html += '</div>';
   }
 

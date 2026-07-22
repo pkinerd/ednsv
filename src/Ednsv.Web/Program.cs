@@ -618,8 +618,12 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
 
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
 
+    // "all" forces a full cache bypass (re-run every check against fresh data),
+    // regardless of prior issues; otherwise a severity scopes the recheck to the
+    // cache deps of prior issues at or above it.
+    var recheckAll = string.Equals(req.RecheckSeverity, "all", StringComparison.OrdinalIgnoreCase);
     CheckSeverity? recheckSeverity = null;
-    if (!string.IsNullOrEmpty(req.RecheckSeverity) &&
+    if (!recheckAll && !string.IsNullOrEmpty(req.RecheckSeverity) &&
         Enum.TryParse<CheckSeverity>(req.RecheckSeverity, ignoreCase: true, out var parsed))
         recheckSeverity = parsed;
 
@@ -637,12 +641,12 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
     if (options.PerDomainDkimSelectors.Count == 0)
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
 
-    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
+    var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username, recheckAll);
     logger.LogInformation(
         "Validation requested: job={JobId} domain={Domain} user={User} smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} doh={Doh} recheck={Recheck} dkimSelectors={DkimCount}",
         jobId, Disp(domain), Disp(username), options.EnableSmtpProbes, options.EnableHttpProbes,
         options.EnableDnsbl, options.EnableDirectDns, options.EnableDoh,
-        recheckSeverity?.ToString() ?? "none", options.AdditionalDkimSelectors.Count);
+        recheckAll ? "all" : (recheckSeverity?.ToString() ?? "none"), options.AdditionalDkimSelectors.Count);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 })
 .WithName("StartValidation")
@@ -743,7 +747,9 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         logger.LogDebug("{Trace}", msg);
     };
 
-    if (!string.IsNullOrEmpty(recheck) &&
+    if (string.Equals(recheck, "all", StringComparison.OrdinalIgnoreCase))
+        validator.RecheckDeps = RecheckHelper.CacheDep.All;   // full cache bypass
+    else if (!string.IsNullOrEmpty(recheck) &&
         Enum.TryParse<CheckSeverity>(recheck, ignoreCase: true, out var recheckSev))
         validator.RecheckDeps = cache.GetRecheckDeps(domain, recheckSev);
 
@@ -1375,7 +1381,7 @@ class ValidationTracker : IDisposable
         SmtpProbeService smtp, HttpProbeService http, ValidationOptions? options,
         CacheManager cache, ILogger logger, CheckSeverity? recheckSeverity = null,
         bool trace = false, TraceMasker? traceMasker = null,
-        string? username = null)
+        string? username = null, bool recheckAll = false)
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
@@ -1408,7 +1414,12 @@ class ValidationTracker : IDisposable
                 };
 
                 // Determine recheck deps (bypass MemoryCache without clearing shared entries)
-                if (recheckSeverity != null)
+                if (recheckAll)
+                {
+                    validator.RecheckDeps = RecheckHelper.CacheDep.All;
+                    logger.LogInformation("Recheck: bypassing entire cache (recheck all)");
+                }
+                else if (recheckSeverity != null)
                 {
                     var deps = cache.GetRecheckDeps(domain, recheckSeverity.Value);
                     if (deps != RecheckHelper.CacheDep.None)

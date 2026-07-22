@@ -59,6 +59,18 @@ public sealed class AuditLoggingTests
     }
 
     [Fact]
+    public async Task RecheckAllIsAcceptedAndLogged()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var res = await RootClient(factory).PostAsJsonAsync("/api/validate",
+            new { domain = Domain, recheckSeverity = "all" });
+        res.EnsureSuccessStatusCode();
+
+        Assert.Contains(factory.LogSnapshot(),
+            l => l.Message.Contains("Validation requested") && l.Message.Contains("recheck=all"));
+    }
+
+    [Fact]
     public async Task ConfigChangeIsAudited()
     {
         using var factory = EdnsvAppFactory.WithTokenAuth();
