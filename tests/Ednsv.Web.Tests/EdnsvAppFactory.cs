@@ -10,6 +10,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -32,6 +33,14 @@ public sealed class EdnsvAppFactory : WebApplicationFactory<Program>
 
     private readonly Dictionary<string, string?> _settings;
     public string DataDir { get; } = Path.Combine(Path.GetTempPath(), $"ednsv-web-test-{Guid.NewGuid():N}");
+
+    /// <summary>Captured log records (populated when a test reads them). Thread-safe via lock on the list.</summary>
+    public List<CapturedLog> Logs { get; } = new();
+
+    public IReadOnlyList<CapturedLog> LogSnapshot()
+    {
+        lock (Logs) return Logs.ToList();
+    }
 
     public EdnsvAppFactory(Dictionary<string, string?>? settings = null)
     {
@@ -65,6 +74,8 @@ public sealed class EdnsvAppFactory : WebApplicationFactory<Program>
         builder.UseSetting("DataDir", DataDir);
         foreach (var kv in _settings)
             builder.UseSetting(kv.Key, kv.Value);
+
+        builder.ConfigureLogging(lb => lb.AddProvider(new ListLoggerProvider(Logs)));
 
         builder.ConfigureTestServices(services =>
         {

@@ -80,9 +80,9 @@ inherits the structured scope set by the middleware:
 |---|---|---|
 | `RequestId` | ASP.NET Core `TraceIdentifier` | one per HTTP request |
 | `Method`, `Path` | request line | unmasked |
-| `Username` | resolved auth user (or `(anonymous)` / `(auth-disabled)`) | unmasked — this is an identifier, not PII |
-| `IsAdmin` | resolved auth user | only present when authenticated |
-| `JobId` | the 12-char validation job id | unmasked, present for the async POST `/api/validate` job |
+| `Username` | resolved auth user (or `(anonymous)` / `(auth-disabled)`) | **masked** when `MaskTrace=true` (default), raw otherwise |
+| `IsAdmin` | resolved auth user | only present when authenticated; unmasked |
+| `JobId` | the 12-char validation job id | unmasked — an opaque per-request identifier |
 | `Endpoint` | `validateDomainSync` or `validateDomainAsync` | which validation entry point |
 | `Domain` | the validation target | **masked** when `MaskTrace=true` (default), raw otherwise |
 | `Phase` | `PREFETCH` / `FOUNDATION` / `CONCURRENT` | populated by `DomainValidator` while inside that phase |
@@ -98,15 +98,45 @@ docker logs ednsv | jq 'select(.Scopes[].JobId == "abc123def456")'
 # Just the prefetch traces from any validation
 docker logs ednsv | jq 'select(.Scopes[].Phase == "PREFETCH" and .LogLevel == "Debug")'
 
-# Errors from a specific user
-docker logs ednsv | jq 'select(.Scopes[].Username == "alice" and .LogLevel == "Error")'
+# Errors from a specific user (Username is masked when MaskTrace=true —
+# use the masked value, which is stable for a given MaskSalt)
+docker logs ednsv | jq 'select(.Scopes[].Username == "h:8fK2xQ" and .LogLevel == "Error")'
 ```
 
 In Simple mode the same fields appear in the prefixed scope block:
 
 ```
-2026-05-01 12:34:56.789 dbug: Program[0] => RequestId:0HABC Username:alice JobId:abc123 Domain:h:nwAVisfCYL Phase:PREFETCH
+2026-05-01 12:34:56.789 dbug: Program[0] => RequestId:0HABC Username:h:8fK2xQpL JobId:abc123 Domain:h:nwAVisfCYL Phase:PREFETCH
       [      0ms] [PHASE] PREFETCH START for h:nwAVisfCYL
+```
+
+## Audit &amp; operational logging
+
+Security-sensitive operations and every non-trivial API call emit an
+`Information` log entry recording the actor and the key details. Simple
+read-only UI calls (`/api/auth/me`, `/api/defaults`, `/api/checks`,
+`/api/status/{jobId}` job polling, config reads) are intentionally not logged
+to keep the stream signal-dense.
+
+| Event | Category | Recorded details |
+|---|---|---|
+| Sign-in (token) | `Ednsv.Audit` | user, admin flag; failures log the attempted user + client IP at `Warning` |
+| Sign-in (SSO) | `Ednsv.Audit` | user, admin flag (on the IdP callback); rejected sign-ins log the reason |
+| Token issued | `Ednsv.Audit` | new user, admin flag, issuer, client IP |
+| Token revoked | `Ednsv.Audit` | affected count + targets, actor, whether elevated (external-IdP admin) |
+| Token deleted | `Ednsv.Audit` | affected count + targets, actor |
+| Config updated | `Ednsv.Audit` | actor (a revision is also saved — see revision history) |
+| Proxy diagnostic | `Ednsv.Audit` | target host, actor |
+| Cache flushed | `Ednsv.Audit` | actor |
+| Validation requested | `Program` | job id, domain, user, input flags (smtp/http/dnsbl/directDns/doh), recheck, DKIM-selector count |
+| Validation completed | `Program` | duration, check count, severity breakdown, **DNS cache hits/misses** for the job |
+
+All usernames and domains in these entries obey `MaskTrace`: masked (hashed,
+correlatable) when it is `true` (the default), raw when `false`. Filter the
+audit stream with the dedicated category:
+
+```sh
+docker logs ednsv | jq 'select(.Category == "Ednsv.Audit")'
 ```
 
 ## Trace logging without leaky ASP.NET Core logs

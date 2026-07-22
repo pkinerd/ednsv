@@ -124,6 +124,12 @@ var traceMasker = maskTrace
     ? (!string.IsNullOrEmpty(maskSalt) ? new TraceMasker(maskSalt) : new TraceMasker())
     : null;
 
+// Mask a single identifier (username, domain, …) for log output when trace
+// masking is enabled; returns it unchanged otherwise. Null-safe. The hash is
+// deterministic for a given salt so masked values still correlate across lines.
+string? Disp(string? value) =>
+    string.IsNullOrEmpty(value) ? value : (traceMasker != null ? traceMasker.Hash(value) : value);
+
 // ── App config (persisted to {dataDir}/config.json) ──────────────────────
 // On first run, seed from env vars + DkimSelectorsCheck.CommonSelectors so an
 // out-of-the-box install matches built-in behavior. After that the file is the
@@ -245,12 +251,22 @@ if (externalAuthEnabled)
                 // so a rejected user never gets a session cookie at all.
                 OnTokenValidated = ctx =>
                 {
+                    var log = ctx.HttpContext.RequestServices
+                        .GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Audit");
                     var mapped = ExternalUserMapper.Map(
                         ctx.Principal!,
                         new[] { oidcSettings.UsernameClaim, "upn", "email", "sub" },
                         oidcSettings.RoleClaim, oidcSettings.AdminRoles, oidcSettings.RequiredRoles);
                     if (mapped.Status != ExternalUserMapper.MapStatus.Success)
+                    {
+                        log.LogWarning("SSO sign-in rejected: reason={Reason}", mapped.Status);
                         ctx.Fail($"SSO sign-in rejected: {mapped.Status}");
+                    }
+                    else
+                    {
+                        log.LogInformation("SSO sign-in: user={User} admin={IsAdmin}",
+                            Disp(mapped.User!.Username), mapped.User.IsAdmin);
+                    }
                     return Task.CompletedTask;
                 },
                 // Covers IdP errors, correlation failures, and our own Fail()
@@ -406,6 +422,11 @@ static bool IsLoopbackOnlyBinding(WebApplicationBuilder b)
 // resolved. Validation endpoints layer JobId / Domain / Phase / Check
 // inside that. With JSON logs, every line is grep-able by any of these.
 var requestScopeLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Request");
+// Dedicated category for security-sensitive audit events (sign-in, token
+// issue/revoke/delete, config changes, diagnostics) so they can be filtered
+// or routed separately. Entries inherit the per-request scope (RequestId,
+// masked Username) and also name the actor/target explicitly.
+var auditLogger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ednsv.Audit");
 app.Use(async (ctx, next) =>
 {
     using var scope = requestScopeLogger.BeginScope(
@@ -551,9 +572,11 @@ app.Use(async (ctx, next) =>
     ctx.Items["AuthUser"] = user;
     ctx.Items["AuthMethod"] = authMethod;
 
+    // Username is masked in the scope (and therefore in every log line for
+    // this request) when trace masking is enabled; IsAdmin is not sensitive.
     using var userScope = requestScopeLogger.BeginScope(
         "Username={Username} IsAdmin={IsAdmin}",
-        user.Username, user.IsAdmin);
+        Disp(user.Username), user.IsAdmin);
 
     // Admin-only static pages: gate /config.html before static files serve it.
     var pathLower = (ctx.Request.Path.Value ?? "").ToLowerInvariant();
@@ -615,6 +638,11 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username);
+    logger.LogInformation(
+        "Validation requested: job={JobId} domain={Domain} user={User} smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} doh={Doh} recheck={Recheck} dkimSelectors={DkimCount}",
+        jobId, Disp(domain), Disp(username), options.EnableSmtpProbes, options.EnableHttpProbes,
+        options.EnableDnsbl, options.EnableDirectDns, options.EnableDoh,
+        recheckSeverity?.ToString() ?? "none", options.AdditionalDkimSelectors.Count);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 })
 .WithName("StartValidation")
@@ -698,11 +726,12 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
 
     var requestId = httpCtx.TraceIdentifier;
     var username = (httpCtx.Items["AuthUser"] as AuthService.User)?.Username;
-    var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+    var displayDomain = Disp(domain);
+    var displayUser = Disp(username);
 
     using var requestScope = logger.BeginScope(
         "RequestId={RequestId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
-        requestId, username, "validateDomainSync", displayDomain);
+        requestId, displayUser, "validateDomainSync", displayDomain);
 
     var validator = new DomainValidator(dnsSvc, smtpSvc, httpSvc);
     if (traceMasker != null) validator.TraceMask = traceMasker;
@@ -750,9 +779,18 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
     cts.CancelAfter(TimeSpan.FromMinutes(3));
 
+    // Scope already carries the masked Username / Domain for this request.
+    logger.LogInformation(
+        "Validation requested: domain={Domain} user={User} endpoint=sync smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} doh={Doh} dkimSelectors={DkimCount}",
+        displayDomain, displayUser, options.EnableSmtpProbes, options.EnableHttpProbes,
+        options.EnableDnsbl, options.EnableDirectDns, options.EnableDoh, options.AdditionalDkimSelectors.Count);
+
     try
     {
         var report = await validator.ValidateAsync(domain, options);
+        logger.LogInformation(
+            "Validation completed: endpoint=sync durationSec={Duration:F2} pass={Pass} warning={Warning} error={Error} critical={Critical}",
+            report.Duration.TotalSeconds, report.PassCount, report.WarningCount, report.ErrorCount, report.CriticalCount);
         _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
         cache.RequestFlush();
         return Results.Ok(report);
@@ -779,9 +817,11 @@ app.MapGet("/api/cache/stats", (DnsResolverService dnsSvc) =>
 .WithTags("Cache");
 
 // POST /api/cache/flush
-app.MapPost("/api/cache/flush", async (CacheManager cache) =>
+app.MapPost("/api/cache/flush", async (HttpContext ctx, CacheManager cache) =>
 {
     await cache.FlushAsync();
+    auditLogger.LogInformation("Cache flushed by={User}",
+        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
     return Results.Ok(new { flushed = true });
 })
 .WithName("FlushCache")
@@ -861,6 +901,8 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
         ? "(auth-disabled)"
         : ((AuthService.User?)ctx.Items["AuthUser"])?.Username ?? "unknown";
     cfgSvc.Replace(incoming, savedBy);
+    auditLogger.LogInformation("Config updated by={User} (revision saved)",
+        ctx.Items.ContainsKey("AuthBypass") ? savedBy : Disp(savedBy));
     return Results.Ok(cfgSvc.Snapshot());
 })
 .WithName("UpdateConfig")
@@ -906,6 +948,11 @@ app.MapGet("/api/debug/proxy", async (HttpContext ctx, AuthService auth, string?
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
     if (string.IsNullOrEmpty(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
         return Results.BadRequest(new { error = "url must be an absolute URI, e.g. ?url=https://example.com/foo" });
+
+    // Outbound-fetch diagnostic — audit who probed what (host masked when on).
+    var proxyActor = (AuthService.User?)ctx.Items["AuthUser"];
+    auditLogger.LogInformation("Proxy diagnostic: host={Host} by={User}",
+        Disp(u.Host), Disp(proxyActor?.Username));
 
     Uri? proxyUri = null;
     bool bypassed = false;
@@ -1059,6 +1106,8 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService a
     var user = auth.AuthenticateBasic(req.Username, req.Token);
     if (user == null)
     {
+        auditLogger.LogWarning("Sign-in failed: user={User} via=token ip={Ip}",
+            Disp(req.Username), ctx.Connection.RemoteIpAddress?.ToString());
         return Results.Json(new { error = "invalid credentials" }, statusCode: StatusCodes.Status401Unauthorized);
     }
 
@@ -1070,6 +1119,8 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext ctx, AuthService a
         Path = "/",
         MaxAge = TimeSpan.FromDays(30)
     });
+    auditLogger.LogInformation("Sign-in: user={User} admin={IsAdmin} via=token",
+        Disp(user.Username), user.IsAdmin);
     return Results.Ok(new { username = user.Username, isAdmin = user.IsAdmin });
 })
 .WithName("Login")
@@ -1148,6 +1199,9 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
 
     var ip = ctx.Connection.RemoteIpAddress?.ToString();
     var result = auth.Issue(req.Username ?? "", req.IsAdmin, u.Username, ip);
+    if (result.Status == AuthService.IssueStatus.Success)
+        auditLogger.LogInformation("Token issued: user={NewUser} admin={IsAdmin} by={Issuer} ip={Ip}",
+            Disp(result.User!.Username), result.User.IsAdmin, Disp(u.Username), ip);
     return result.Status switch
     {
         AuthService.IssueStatus.Success => Results.Ok(new
@@ -1184,6 +1238,9 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
     var method = ctx.Items["AuthMethod"] as string;
     var elevated = u.IsAdmin && (method == "oidc" || method == "jwt");
     var result = auth.Revoke(username, u.Username, elevated);
+    if (result.Status == AuthService.RevokeStatus.Success)
+        auditLogger.LogInformation("Token revoked: count={Count} targets={Targets} by={User} elevated={Elevated}",
+            result.Affected!.Count, string.Join(",", result.Affected!.Select(Disp)), Disp(u.Username), elevated);
     return result.Status switch
     {
         AuthService.RevokeStatus.Success => Results.Ok(new { revoked = result.Affected }),
@@ -1202,6 +1259,9 @@ app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, A
     if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
     var result = auth.Delete(username, u.Username);
+    if (result.Status == AuthService.DeleteStatus.Success)
+        auditLogger.LogInformation("Token deleted: count={Count} targets={Targets} by={User}",
+            result.Affected!.Count, string.Join(",", result.Affected!.Select(Disp)), Disp(u.Username));
     return result.Status switch
     {
         AuthService.DeleteStatus.Success => Results.Ok(new { deleted = result.Affected }),
@@ -1321,10 +1381,10 @@ class ValidationTracker : IDisposable
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
         _jobs[jobId] = job;
 
-        // Domain in logs/scopes is masked when masking is enabled. JobId and
-        // Username are deliberately NOT masked (they're identifiers, not PII
-        // like the validated target).
+        // Domain and Username in logs/scopes are masked when masking is enabled;
+        // JobId is an opaque per-request identifier and is never masked.
         var displayDomain = traceMasker != null ? traceMasker.Hash(domain) : domain;
+        var displayUser = username != null && traceMasker != null ? traceMasker.Hash(username) : username;
 
         _ = Task.Run(async () =>
         {
@@ -1333,7 +1393,7 @@ class ValidationTracker : IDisposable
             // services via AsyncLocal) carries these structured fields.
             using var jobScope = logger.BeginScope(
                 "JobId={JobId} Username={Username} Endpoint={Endpoint} Domain={Domain}",
-                jobId, username, "validateDomainAsync", displayDomain);
+                jobId, displayUser, "validateDomainAsync", displayDomain);
 
             try
             {
@@ -1380,6 +1440,17 @@ class ValidationTracker : IDisposable
                 job.Report = report;
                 job.CurrentCheck = null;
                 job.Status = JobStatus.Completed;
+
+                // Performance summary: duration, DNS cache efficiency (deltas
+                // over this job) and severity breakdown. Scope already carries
+                // JobId / masked Username / masked Domain.
+                var dnsHits = job.Dns != null ? job.Dns.CacheHits - job.DnsHitsBaseline : 0;
+                var dnsMisses = job.Dns != null ? job.Dns.CacheMisses - job.DnsMissesBaseline : 0;
+                logger.LogInformation(
+                    "Validation completed: job={JobId} durationSec={Duration:F2} checks={Checks} pass={Pass} info={Info} warning={Warning} error={Error} critical={Critical} dnsCacheHits={DnsHits} dnsCacheMisses={DnsMisses}",
+                    jobId, report.Duration.TotalSeconds, job.CompletedChecks,
+                    job.PassCount, job.InfoCount, job.WarningCount, job.ErrorCount, job.CriticalCount,
+                    dnsHits, dnsMisses);
 
                 _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
                 cache.RequestFlush();
