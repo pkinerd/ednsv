@@ -2,13 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #143 (attempt 1) |
-| **Run ID** | 24561153103 |
+| **Run** | #194 (attempt 1) |
+| **Run ID** | 29965950840 |
 | **Result** | pass |
-| **Commit** | e28382a8514549e2f2d49de8ba94cf481ac916aa |
-| **Ref** | refs/heads/main |
-| **Event** | push |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 3e3768c4e55cb59751682a19445fe9d87001eb1c |
+| **Ref** | refs/pull/23/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #23: Add external IdP authentication (OIDC SSO and JWT bearer) |
+| **Branch** | claude/external-idp-entra-auth-31ftjw |
 
 ## Artifacts
 ```
@@ -28,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
