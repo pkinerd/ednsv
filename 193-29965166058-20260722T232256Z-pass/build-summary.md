@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #142 (attempt 1) |
-| **Run ID** | 24223525168 |
+| **Run** | #193 (attempt 1) |
+| **Run ID** | 29965166058 |
 | **Result** | pass |
-| **Commit** | 720e355c45b166b2a336941133d580003e14535e |
-| **Ref** | refs/pull/7/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 07e4618475800d7bc5892dbfd2fb6093430ec8aa |
+| **Ref** | refs/pull/23/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #7: Fix multi-threading safety, caching, and rate limiting issues |
-| **Branch** | claude/code-safety-review-lq36h |
+| **PR** | #23: Add external IdP authentication (OIDC SSO and JWT bearer) |
+| **Branch** | claude/external-idp-entra-auth-31ftjw |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
