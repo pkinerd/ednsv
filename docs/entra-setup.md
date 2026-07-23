@@ -18,31 +18,54 @@ way — substitute its issuer URL for the Entra authority.
 
 ## 2. Interactive SSO for users
 
+The default sign-in flow is **secret-less** (`ResponseType=id_token`): Entra
+returns a signed ID token directly from the authorization endpoint and ednsv
+validates it against Entra's published signing keys. **No client secret or
+certificate is created, so there is nothing to expire or rotate.**
+
 1. In the app registration, **Authentication → Add a platform → Web**:
    - Redirect URI: `https://<your-host>/signin-oidc`
    - Front-channel logout URL (only needed for `SingleLogout`):
      `https://<your-host>/signout-callback-oidc`
-2. **Certificates & secrets → New client secret.** Note the secret *value*.
-3. **App roles → Create app role** for admins:
+   - Under **Implicit grant and hybrid flows**, tick **ID tokens (used for
+     implicit and hybrid flows)** — required for the secret-less flow. (Only
+     the ID token is ever issued; ednsv rejects access-token-bearing response
+     types at startup, which is the risk the implicit-flow warnings are about.)
+2. **App roles → Create app role** for admins:
    - Display name / value: `Ednsv.Admin`, allowed member types: **Users/Groups**.
    - Optionally a second role (e.g. `Ednsv.User`) if you want to restrict
      sign-in to assigned users via `RequiredRoles`.
-4. Assign the role(s): **Enterprise applications → ednsv → Users and groups →
+3. Assign the role(s): **Enterprise applications → ednsv → Users and groups →
    Add user/group.** To require assignment for *any* sign-in, also enable
    *Properties → Assignment required* and list the allowed roles in
    `Auth:Oidc:RequiredRoles`.
-5. Configure ednsv:
+4. Configure ednsv:
 
 ```sh
 export Auth__Oidc__Enabled=true
 export Auth__Oidc__Authority="https://login.microsoftonline.com/{tenantId}/v2.0"
 export Auth__Oidc__ClientId="{clientId}"
-export EDNSV_OIDC_CLIENT_SECRET="{clientSecretValue}"
 # optional:
 # export Auth__Oidc__AdminRoles__0=Ednsv.Admin        # default
 # export Auth__Oidc__RequiredRoles__0=Ednsv.User      # restrict sign-in
 # export Auth__Oidc__SingleLogout=true                # sign out of Entra too
 ```
+
+<details>
+<summary>Alternative: authorization-code flow (requires a client secret)</summary>
+
+If your policy requires the code flow instead, create a secret under
+**Certificates & secrets → New client secret** and configure:
+
+```sh
+export Auth__Oidc__ResponseType=code
+export EDNSV_OIDC_CLIENT_SECRET="{clientSecretValue}"
+```
+
+The "ID tokens" checkbox is not needed for the code flow. Remember the secret
+expires (max 24 months) and must be rotated; the default `id_token` flow
+avoids that entirely.
+</details>
 
 The login page now shows a **Sign in with single sign-on** button. Users
 holding the `Ednsv.Admin` app role get the admin UI (config page, token

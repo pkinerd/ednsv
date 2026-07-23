@@ -23,7 +23,7 @@ public sealed class OidcFlowTests : IClassFixture<OidcFlowTests.Fixture>
     private HttpClient Client() => _factory.CreateClient(new() { AllowAutoRedirect = false });
 
     [Fact]
-    public async Task OidcLoginChallengesToAuthority()
+    public async Task OidcLoginChallengesToAuthority_SecretlessIdTokenFlowByDefault()
     {
         var res = await Client().GetAsync("/api/auth/oidc/login?next=%2Ftokens.html");
         Assert.Equal(HttpStatusCode.Redirect, res.StatusCode);
@@ -33,13 +33,31 @@ public sealed class OidcFlowTests : IClassFixture<OidcFlowTests.Fixture>
 
         var query = HttpUtility.ParseQueryString(res.Headers.Location!.Query);
         Assert.Equal(EdnsvAppFactory.TestClientId, query["client_id"]);
-        Assert.Equal("code", query["response_type"]);
-        Assert.NotNull(query["code_challenge"]); // PKCE
+        // Default flow is the secret-less ID-token flow: signed id_token via
+        // form_post, nonce-bound — no token-endpoint call, no client secret.
+        Assert.Equal("id_token", query["response_type"]);
+        Assert.Equal("form_post", query["response_mode"]);
+        Assert.NotNull(query["nonce"]);
         Assert.EndsWith("/signin-oidc", query["redirect_uri"]);
         Assert.Contains("openid", query["scope"]);
 
         // The handler's correlation/nonce cookies must be present for the callback.
         Assert.Contains(res.Headers.GetValues("Set-Cookie"), v => v.Contains("OpenIdConnect"));
+    }
+
+    [Fact]
+    public async Task OidcCodeFlowStillAvailableWhenConfigured()
+    {
+        var settings = EdnsvAppFactory.OidcSettings();
+        settings["Auth:Oidc:ResponseType"] = "code";
+        using var factory = EdnsvAppFactory.WithTokenAuth(settings);
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        var res = await client.GetAsync("/api/auth/oidc/login");
+        Assert.Equal(HttpStatusCode.Redirect, res.StatusCode);
+        var query = HttpUtility.ParseQueryString(res.Headers.Location!.Query);
+        Assert.Equal("code", query["response_type"]);
+        Assert.NotNull(query["code_challenge"]); // PKCE
     }
 
     [Fact]

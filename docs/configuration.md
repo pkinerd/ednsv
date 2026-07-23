@@ -37,7 +37,9 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `Auth:Oidc:Enabled`    | bool     | `false`          | Interactive **single sign-on** via an external OIDC IdP (e.g. Entra ID). Adds a "single sign-on" button to the login page; SSO sessions get the same UI/API access (including Swagger) as token sessions. See **Authentication** below and [entra-setup.md](entra-setup.md). |
 | `Auth:Oidc:Authority`  | string   | —                | Issuer/authority URL. Entra ID: `https://login.microsoftonline.com/{tenantId}/v2.0`. Required when OIDC is enabled. |
 | `Auth:Oidc:ClientId`   | string   | —                | OIDC client (application) ID. Required when OIDC is enabled. |
-| `Auth:Oidc:ClientSecret` | string | —                | Confidential-client secret for the code exchange. Overridden by `EDNSV_OIDC_CLIENT_SECRET`. Optional only if the IdP app is a public client using PKCE. |
+| `Auth:Oidc:ResponseType` | string | `id_token`       | Sign-in flow. The default `id_token` flow is **secret-less**: the signed ID token comes straight from the authorization endpoint (via `form_post`) and is validated against the IdP's published keys — no token-endpoint call, so no client secret or certificate to manage/rotate. Set `code` (or `code id_token`) for the authorization-code flow. |
+| `Auth:Oidc:ResponseMode` | string | `form_post`      | How the IdP returns the response to `CallbackPath`. Leave as `form_post` for the `id_token` flow. |
+| `Auth:Oidc:ClientSecret` | string | —                | **Only needed when `ResponseType` includes `code`** (the token-endpoint exchange; required by Entra ID unless using a certificate/federated credential — public clients with PKCE work on IdPs that allow them). The default `id_token` flow needs no secret. Overridden by `EDNSV_OIDC_CLIENT_SECRET`. |
 | `Auth:Oidc:CallbackPath` | string | `/signin-oidc`   | Redirect URI path registered at the IdP (`https://<host>/signin-oidc`). |
 | `Auth:Oidc:SignedOutCallbackPath` | string | `/signout-callback-oidc` | Post-sign-out redirect path (single logout). |
 | `Auth:Oidc:Scopes`     | string   | `openid profile email` | Space-separated scopes requested at sign-in. |
@@ -318,6 +320,19 @@ page; SSO/JWT users are unaffected. All methods produce the same caller
 identity internally, so every endpoint — including the Swagger UI, whose
 "Try it out" requests carry the browser's session cookie automatically —
 works identically regardless of how the caller authenticated.
+
+**Sign-in flow & client secret.** By default SSO uses the **secret-less
+ID-token flow** (`Auth:Oidc:ResponseType=id_token` via `form_post`): the IdP
+returns a signed, nonce-bound ID token directly from the authorization
+endpoint, which ednsv validates against the IdP's published (auto-rotating)
+signing keys. There is no token-endpoint call, so **no client secret or
+certificate exists to expire or rotate**. ednsv only authenticates users —
+it never calls downstream APIs on their behalf — so it has no need for access
+or refresh tokens. Deployments that prefer the authorization-code flow can set
+`ResponseType=code`; on Entra ID that requires a `ClientSecret` (or
+certificate/federated credential), while IdPs that support public clients can
+run code+PKCE without one. Access-token-bearing response types are rejected at
+startup.
 
 **Roles.** ednsv has two roles: standard and admin. Token users carry an
 explicit admin flag set at issue time. SSO and JWT callers are mapped from

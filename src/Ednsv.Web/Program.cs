@@ -14,7 +14,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -230,7 +229,14 @@ if (externalAuthEnabled)
             o.Authority = oidcSettings.Authority;
             o.ClientId = oidcSettings.ClientId;
             o.ClientSecret = oidcSettings.ClientSecret;
-            o.ResponseType = OpenIdConnectResponseType.Code; // + PKCE (handler default)
+            // Default "id_token" + form_post: the signed ID token arrives
+            // directly from the authorization endpoint and is validated against
+            // the IdP's published keys — no token-endpoint call, so no client
+            // secret/certificate to manage. "code" (+ PKCE, handler default)
+            // remains available via Auth:Oidc:ResponseType for deployments that
+            // prefer the code flow.
+            o.ResponseType = oidcSettings.ResponseType;
+            o.ResponseMode = oidcSettings.ResponseMode;
             o.CallbackPath = oidcSettings.CallbackPath;
             o.SignedOutCallbackPath = oidcSettings.SignedOutCallbackPath;
             o.SignedOutRedirectUri = "/login.html";

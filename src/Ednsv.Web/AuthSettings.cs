@@ -14,6 +14,17 @@ public sealed class OidcSettings
     public string? Authority { get; set; }
     public string? ClientId { get; set; }
     public string? ClientSecret { get; set; }
+    /// <summary>
+    /// OIDC response type. Default "id_token": the signed ID token is returned
+    /// straight from the authorization endpoint (via form_post), so sign-in
+    /// needs NO client secret or certificate — nothing to expire or rotate.
+    /// ednsv only authenticates users (it never calls downstream APIs on their
+    /// behalf), so it has no need for the token endpoint. Set "code" for the
+    /// authorization-code flow (requires ClientSecret on Entra ID, or a public
+    /// client with PKCE on IdPs that allow one).
+    /// </summary>
+    public string ResponseType { get; set; } = "id_token";
+    public string ResponseMode { get; set; } = "form_post";
     public string CallbackPath { get; set; } = "/signin-oidc";
     public string SignedOutCallbackPath { get; set; } = "/signout-callback-oidc";
     public string Scopes { get; set; } = "openid profile email";
@@ -46,6 +57,13 @@ public sealed class OidcSettings
             throw new InvalidOperationException("Auth:Oidc:CallbackPath and Auth:Oidc:SignedOutCallbackPath must start with '/'.");
         if (SessionHours <= 0)
             throw new InvalidOperationException("Auth:Oidc:SessionHours must be positive.");
+        // Never allow response types that put ACCESS tokens in the front
+        // channel; only the ID token (validated, nonce-bound, form_post) or the
+        // code flow are supported.
+        var rt = ResponseType.Trim();
+        if (rt != "id_token" && rt != "code" && rt != "code id_token")
+            throw new InvalidOperationException(
+                "Auth:Oidc:ResponseType must be 'id_token' (default, no client secret needed), 'code', or 'code id_token'.");
     }
 }
 
