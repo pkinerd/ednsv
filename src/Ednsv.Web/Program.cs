@@ -236,7 +236,7 @@ var DomainPattern = new Regex(
 bool IsPlausibleDomain(string d) => !string.IsNullOrEmpty(d) && DomainPattern.IsMatch(d);
 
 // ── Cache manager ────────────────────────────────────────────────────────
-var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
+var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http, redis);
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────

@@ -37,22 +37,24 @@
   button.danger { background: transparent; color: var(--error); border: 1px solid var(--error); }
   button.danger:hover { background: var(--error); color: var(--bg); }
   .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
-  /* Toast messages: fixed overlay so showing/hiding never reflows the page
-     (no more "jumpy" layout shift), with a manual dismiss control. */
-  #messages { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%);
-    z-index: 1000; width: min(680px, calc(100% - 2rem)); pointer-events: none; }
-  .msg { pointer-events: auto; display: flex; align-items: flex-start; gap: 0.75rem;
-    padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem;
-    background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
-    animation: msgIn 0.18s ease-out; }
-  .msg + .msg { margin-top: 0.5rem; }
-  .msg .msg-text { flex: 1; }
-  .msg .msg-close { flex: none; background: transparent; border: none; color: inherit;
-    font-size: 1.1rem; line-height: 1; padding: 0 0.2rem; cursor: pointer; opacity: 0.7; font-weight: 700; }
-  .msg .msg-close:hover { opacity: 1; }
+  /* Base message box (also used for the static Maintenance warning, which stays
+     a normal inline-flowing block). */
+  .msg { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.45; }
   .msg.error { background: #2a1414; border: 1px solid var(--error); color: var(--error); }
   .msg.ok { background: #12241a; border: 1px solid var(--pass); color: var(--pass); }
   .msg.warn { background: #2a2110; border: 1px solid var(--warn); color: var(--warn); }
+  /* Toast overlay: fixed so showing/hiding never reflows the page (no "jumpy"
+     shift), with a manual dismiss control. Scoped to #messages so the static
+     Maintenance warning does NOT become a flex row. */
+  #messages { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%);
+    z-index: 1000; width: min(680px, calc(100% - 2rem)); pointer-events: none; }
+  #messages .msg { pointer-events: auto; display: flex; align-items: flex-start; gap: 0.75rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45); animation: msgIn 0.18s ease-out; }
+  #messages .msg + .msg { margin-top: 0.5rem; }
+  #messages .msg-text { flex: 1; }
+  #messages .msg-close { flex: none; background: transparent; border: none; color: inherit;
+    font-size: 1.1rem; line-height: 1; padding: 0 0.2rem; cursor: pointer; opacity: 0.7; font-weight: 700; }
+  #messages .msg-close:hover { opacity: 1; }
   @keyframes msgIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
   /* Breathing room below the form/JSON action buttons before the Maintenance panel. */
   .tab-pane > .actions { margin-bottom: 1.5rem; }
@@ -293,12 +295,12 @@
 
   <div class="panel">
     <h2>Maintenance</h2>
-    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk to speed up validations.</p>
+    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk — and, when Redis is configured, in a shared Redis cache — to speed up validations.</p>
     <div class="msg warn" style="margin-bottom:0.75rem">
-      ⚠ Clearing wipes every cached probe (memory <strong>and</strong> disk). Validations will re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
+      ⚠ Clearing wipes every cached probe: this instance's in-memory cache, the on-disk cache, and the shared Redis cache when configured. Other replicas' in-memory copies expire on their own TTL. Validations then re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
     </div>
     <div class="actions">
-      <button class="danger" id="clearCacheBtn">Clear all caches (memory + disk)</button>
+      <button class="danger" id="clearCacheBtn">Clear all caches</button>
     </div>
   </div>
 </div>
@@ -536,7 +538,7 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 });
 
 $('#clearCacheBtn').addEventListener('click', async () => {
-  if (!confirm('Clear ALL caches (memory and disk)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
+  if (!confirm('Clear ALL caches (memory, disk, and shared Redis when configured)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
   const btn = $('#clearCacheBtn');
   btn.disabled = true;
   try {

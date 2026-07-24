@@ -16,6 +16,7 @@ public sealed class CacheManager : IAsyncDisposable
     private readonly DnsResolverService _dns;
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
+    private readonly RedisConnection? _redis;
 
     private BackgroundCacheFlusher? _flusher;
     private ConcurrentDictionary<string, DomainResultSummary> _previousResults = new();
@@ -26,13 +27,15 @@ public sealed class CacheManager : IAsyncDisposable
         TimeSpan ttl,
         DnsResolverService dns,
         SmtpProbeService smtp,
-        HttpProbeService http)
+        HttpProbeService http,
+        RedisConnection? redis = null)
     {
         _cacheDir = cacheDir;
         _ttl = ttl;
         _dns = dns;
         _smtp = smtp;
         _http = http;
+        _redis = redis != null && redis.Enabled ? redis : null;
     }
 
     /// <summary>
@@ -72,19 +75,25 @@ public sealed class CacheManager : IAsyncDisposable
 
     /// <summary>
     /// Wipes every cache — the in-memory DNS/SMTP/HTTP probe caches, the
-    /// in-memory recheck summaries, and all on-disk cache files. Subsequent
-    /// validations re-fetch everything from scratch (slower until re-warmed).
-    /// In-memory is cleared before disk so a concurrent flush can only ever
-    /// re-persist an already-empty cache.
+    /// in-memory recheck summaries, all on-disk cache files, and (in distributed
+    /// mode) the shared Redis probe-cache L2. Subsequent validations re-fetch
+    /// everything from scratch (slower until re-warmed). In-memory is cleared
+    /// before disk so a concurrent flush can only ever re-persist an already-empty
+    /// cache. Other replicas' in-memory L1 is not cleared remotely; those copies
+    /// expire on their own TTL.
     /// </summary>
-    public Task ClearAllAsync()
+    public async Task ClearAllAsync()
     {
         _dns.ClearCache();
         _smtp.ClearCache();
         _http.ClearCache();
         _previousResults.Clear();
         DiskCacheService.Clear(_cacheDir);
-        return Task.CompletedTask;
+        // In distributed mode also wipe the shared probe-cache L2, otherwise the
+        // just-cleared local memory refills from stale Redis entries immediately.
+        // Jobs and coordination beacons use different prefixes and are left intact.
+        if (_redis != null)
+            await _redis.DeleteKeysByPrefixAsync("cache:");
     }
 
     /// <summary>

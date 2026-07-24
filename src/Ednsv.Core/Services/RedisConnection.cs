@@ -71,6 +71,48 @@ public sealed class RedisConnection : IDisposable
     }
 
     /// <summary>
+    /// Deletes every key matching "{InstanceName}:{suffixPrefix}*" across all
+    /// primary endpoints, returning how many were removed. Used to wipe the shared
+    /// probe-cache L2 ("cache:") on an admin cache-clear so a cleared pod does not
+    /// immediately refill its memory from stale L2 entries. Uses SCAN (no admin
+    /// mode required) and never FLUSHDB, so jobs and coordination beacons survive.
+    /// Best-effort: returns 0 when Redis is unconfigured or unreachable.
+    /// </summary>
+    public async Task<long> DeleteKeysByPrefixAsync(string suffixPrefix)
+    {
+        if (_lazy == null) return 0;
+        long deleted = 0;
+        try
+        {
+            var mux = _lazy.Value;
+            var db = mux.GetDatabase();
+            var pattern = new RedisValue(Key(suffixPrefix) + "*");
+            foreach (var ep in mux.GetEndPoints())
+            {
+                IServer server;
+                try { server = mux.GetServer(ep); }
+                catch { continue; }
+                if (!server.IsConnected || server.IsReplica) continue;
+
+                var batch = new List<RedisKey>(512);
+                await foreach (var key in server.KeysAsync(pattern: pattern, pageSize: 512))
+                {
+                    batch.Add(key);
+                    if (batch.Count >= 512)
+                    {
+                        deleted += await db.KeyDeleteAsync(batch.ToArray());
+                        batch.Clear();
+                    }
+                }
+                if (batch.Count > 0)
+                    deleted += await db.KeyDeleteAsync(batch.ToArray());
+            }
+        }
+        catch { /* best effort */ }
+        return deleted;
+    }
+
+    /// <summary>
     /// Readiness check: true when Redis is either not configured (single-instance
     /// mode is always ready) or configured and currently reachable. Used by the
     /// /health/ready probe so k8s stops routing to a pod that has lost Redis in
