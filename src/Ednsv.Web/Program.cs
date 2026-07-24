@@ -262,9 +262,23 @@ if (externalAuthEnabled)
 
     if (dpKeySecret != null)
     {
+        // A secret is configured, so the ring must be encrypted at rest. DP only
+        // encrypts newly generated keys — it never re-encrypts an existing
+        // plaintext key — so drop any unencrypted key files now (before DP reads
+        // the ring). The next key request then writes a fresh, encrypted key
+        // instead of leaving a plaintext key on the shared mount until it expires.
+        var removed = DataProtectionKeyring.RemoveUnencryptedKeys(keysPath, Console.Error.WriteLine);
+        if (removed > 0)
+            Console.Error.WriteLine(
+                $"DataProtection key-ring: removed {removed} unencrypted key file(s); "
+                + "a new encrypted key will be generated (active OIDC sessions are invalidated).");
+
         // Register the derived secret so the DI-activated decryptor can resolve
-        // it, and set the AES-GCM encryptor for the key-management ring.
+        // it, publish it as the ambient secret for the times DataProtection
+        // activates the decryptor without the DI container, and set the AES-GCM
+        // encryptor for the key-management ring.
         builder.Services.AddSingleton(dpKeySecret);
+        DataProtectionSecret.UseAsAmbient(dpKeySecret);
         builder.Services.Configure<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(
             o => o.XmlEncryptor = new SecretXmlEncryptor(dpKeySecret));
     }
