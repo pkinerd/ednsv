@@ -236,7 +236,7 @@ var DomainPattern = new Regex(
 bool IsPlausibleDomain(string d) => !string.IsNullOrEmpty(d) && DomainPattern.IsMatch(d);
 
 // ── Cache manager ────────────────────────────────────────────────────────
-var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
+var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http, redis);
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────
@@ -260,11 +260,41 @@ if (externalAuthEnabled)
         .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
         .SetApplicationName("ednsv");
 
+    // Housekeeping: DataProtection never removes expired keys, so on a long-lived
+    // (shared) mount they accumulate. Drop keys expired longer ago than the
+    // retention window. Floor the window at the max OIDC session lifetime (+1 day
+    // slack) so a key that could still unprotect a live session cookie is never
+    // deleted, regardless of the configured value. Runs before the provider reads
+    // the ring, so DP never references a removed key.
+    var configuredRetentionDays = Math.Max(1,
+        builder.Configuration.GetValue<int>("DataProtection:KeyRetentionDays", 30));
+    var minRetentionDays = (int)Math.Ceiling(Math.Max(0, oidcSettings.SessionHours) / 24.0) + 1;
+    var keyRetention = TimeSpan.FromDays(Math.Max(configuredRetentionDays, minRetentionDays));
+    var staleRemoved = DataProtectionKeyring.RemoveStaleKeys(keysPath, keyRetention, Console.Error.WriteLine);
+    if (staleRemoved > 0)
+        Console.Error.WriteLine(
+            $"DataProtection key-ring: removed {staleRemoved} expired key file(s) "
+            + $"older than {keyRetention.TotalDays:F0} days.");
+
     if (dpKeySecret != null)
     {
+        // A secret is configured, so the ring must be encrypted at rest. DP only
+        // encrypts newly generated keys — it never re-encrypts an existing
+        // plaintext key — so drop any unencrypted key files now (before DP reads
+        // the ring). The next key request then writes a fresh, encrypted key
+        // instead of leaving a plaintext key on the shared mount until it expires.
+        var removed = DataProtectionKeyring.RemoveUnencryptedKeys(keysPath, Console.Error.WriteLine);
+        if (removed > 0)
+            Console.Error.WriteLine(
+                $"DataProtection key-ring: removed {removed} unencrypted key file(s); "
+                + "a new encrypted key will be generated (active OIDC sessions are invalidated).");
+
         // Register the derived secret so the DI-activated decryptor can resolve
-        // it, and set the AES-GCM encryptor for the key-management ring.
+        // it, publish it as the ambient secret for the times DataProtection
+        // activates the decryptor without the DI container, and set the AES-GCM
+        // encryptor for the key-management ring.
         builder.Services.AddSingleton(dpKeySecret);
+        DataProtectionSecret.UseAsAmbient(dpKeySecret);
         builder.Services.Configure<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(
             o => o.XmlEncryptor = new SecretXmlEncryptor(dpKeySecret));
     }

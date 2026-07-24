@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
@@ -27,6 +28,20 @@ public sealed class DataProtectionSecret
     private readonly byte[] _key; // 32 bytes
 
     private DataProtectionSecret(byte[] key) => _key = key;
+
+    // Ambient secret used by the DataProtection-activated decryptor. DP constructs
+    // the IXmlDecryptor named in each encrypted key via its own activator, which in
+    // some hosting paths runs WITHOUT the DI container (it calls the parameterless
+    // constructor). The ambient instance lets that path recover the key without
+    // constructor injection. Set once at startup when the secret is configured.
+    private static DataProtectionSecret? _ambient;
+
+    /// <summary>The process-wide secret for the DP-activated decryptor, or null when unset.</summary>
+    public static DataProtectionSecret? Ambient => _ambient;
+
+    /// <summary>Registers <paramref name="secret"/> as the ambient decryptor secret.</summary>
+    public static void UseAsAmbient(DataProtectionSecret secret) =>
+        _ambient = secret ?? throw new ArgumentNullException(nameof(secret));
 
     /// <summary>
     /// Builds the derived key from the configured secret, or returns null when no
@@ -92,7 +107,21 @@ public sealed class SecretXmlEncryptor : IXmlEncryptor
 public sealed class SecretXmlDecryptor : IXmlDecryptor
 {
     private readonly DataProtectionSecret _secret;
+
     public SecretXmlDecryptor(DataProtectionSecret secret) => _secret = secret;
+
+    /// <summary>
+    /// Parameterless constructor for the DataProtection activator, which
+    /// instantiates the decryptor named in each encrypted key and may do so
+    /// without the DI container. Falls back to the ambient secret configured at
+    /// startup; throws a clear error if none is set (e.g. the encrypted key-ring
+    /// is present but DataProtection:KeyEncryptionSecret is missing).
+    /// </summary>
+    public SecretXmlDecryptor()
+        : this(DataProtectionSecret.Ambient ?? throw new InvalidOperationException(
+            "The data-protection key-ring is encrypted but no DataProtection:KeyEncryptionSecret "
+            + "is configured, so it cannot be decrypted. Set the same secret used to encrypt it."))
+    { }
 
     public XElement Decrypt(XElement encryptedElement)
     {
@@ -127,5 +156,140 @@ public sealed class SecretXmlDecryptor : IXmlDecryptor
             CryptographicOperations.ZeroMemory(key);
             CryptographicOperations.ZeroMemory(plaintext);
         }
+    }
+}
+
+/// <summary>
+/// Startup maintenance for the data-protection key-ring on disk.
+/// </summary>
+public static class DataProtectionKeyring
+{
+    /// <summary>
+    /// When a key-encryption secret is configured, delete any key-ring files that
+    /// are still stored unencrypted so the next key request writes a fresh,
+    /// encrypted key. ASP.NET Data Protection applies the <c>XmlEncryptor</c> only
+    /// to newly generated keys — it never re-encrypts an existing plaintext key —
+    /// so without this a plaintext key would persist on the (shared) mount until it
+    /// expires. Preserving keys is intentionally sacrificed: dropping them only
+    /// invalidates active OIDC session cookies (users re-authenticate); the token
+    /// cookie is not data-protected.
+    /// </summary>
+    /// <returns>The number of unencrypted key files removed.</returns>
+    public static int RemoveUnencryptedKeys(string keysPath, Action<string>? warn = null)
+    {
+        DirectoryInfo dir;
+        try
+        {
+            dir = new DirectoryInfo(keysPath);
+            if (!dir.Exists) return 0;
+        }
+        catch
+        {
+            return 0;
+        }
+
+        var removed = 0;
+        foreach (var file in dir.EnumerateFiles("key-*.xml"))
+        {
+            bool unencrypted;
+            try { unencrypted = IsUnencryptedKeyFile(file.FullName); }
+            catch { continue; } // unreadable/not XML — leave it for DP to deal with
+            if (!unencrypted) continue;
+            try
+            {
+                file.Delete();
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                warn?.Invoke($"Could not remove unencrypted data-protection key file {file.Name}: {ex.Message}");
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>
+    /// True when the file is a data-protection key stored in plaintext. DP marks
+    /// the master-key element <c>requiresEncryption="true"</c> only while it is
+    /// still unencrypted; once encrypted that element is replaced by an
+    /// &lt;encryptedSecret&gt; wrapper and the attribute is gone.
+    /// </summary>
+    private static bool IsUnencryptedKeyFile(string path)
+    {
+        var root = XDocument.Load(path).Root;
+        if (root == null || !string.Equals(root.Name.LocalName, "key", StringComparison.Ordinal))
+            return false; // not a key-ring key file — don't touch it
+
+        foreach (var el in root.Descendants())
+            foreach (var attr in el.Attributes())
+                if (string.Equals(attr.Name.LocalName, "requiresEncryption", StringComparison.Ordinal)
+                    && string.Equals(attr.Value, "true", StringComparison.OrdinalIgnoreCase))
+                    return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Deletes key-ring files whose expiration is further in the past than
+    /// <paramref name="retention"/>. DataProtection never removes expired keys
+    /// itself, so on a long-lived (shared) mount they accumulate. A key can still be
+    /// needed to unprotect a payload until that payload's own lifetime elapses, so
+    /// the caller must pass a retention window comfortably larger than the longest
+    /// protected-payload lifetime (here the OIDC session cookie). Keys that expire
+    /// in the future (including the active key), expire within the retention window,
+    /// or have no parseable expiration are always kept. Run before the provider
+    /// reads the ring so DP never references a removed key.
+    /// </summary>
+    /// <returns>The number of expired key files removed.</returns>
+    public static int RemoveStaleKeys(string keysPath, TimeSpan retention, Action<string>? warn = null)
+    {
+        DirectoryInfo dir;
+        try
+        {
+            dir = new DirectoryInfo(keysPath);
+            if (!dir.Exists) return 0;
+        }
+        catch
+        {
+            return 0;
+        }
+
+        var cutoff = DateTimeOffset.UtcNow - retention;
+        var removed = 0;
+        foreach (var file in dir.EnumerateFiles("key-*.xml"))
+        {
+            DateTimeOffset? expiry;
+            try { expiry = ReadKeyExpiration(file.FullName); }
+            catch { continue; } // unreadable/not a key — leave it
+            // Keep: no expiry, still valid, or expired but within the retention window.
+            if (expiry == null || expiry.Value >= cutoff) continue;
+            try
+            {
+                file.Delete();
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                warn?.Invoke($"Could not remove expired data-protection key file {file.Name}: {ex.Message}");
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>Reads a key file's &lt;expirationDate&gt;, or null when the file is
+    /// not a key-ring key or has no parseable expiration.</summary>
+    private static DateTimeOffset? ReadKeyExpiration(string path)
+    {
+        var root = XDocument.Load(path).Root;
+        if (root == null || !string.Equals(root.Name.LocalName, "key", StringComparison.Ordinal))
+            return null;
+
+        foreach (var el in root.Elements())
+        {
+            if (!string.Equals(el.Name.LocalName, "expirationDate", StringComparison.Ordinal)) continue;
+            return DateTimeOffset.TryParse(el.Value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var dto)
+                ? dto : null;
+        }
+        return null;
     }
 }

@@ -389,7 +389,15 @@ public sealed class ConfigService
         EnsureFresh();
         lock (_lock)
         {
-            return _history.AsEnumerable().Reverse().ToList();
+            // Only surface revisions whose body file actually exists. Revisions saved
+            // before the history-storage split embedded their config inline in
+            // config-history.json; that inline body was dropped the first time the
+            // index was rewritten body-less, leaving metadata with no loadable body.
+            // Filtering them keeps the picker to revisions that load instead of 404.
+            return _history
+                .Where(r => File.Exists(RevisionPath(r.Id)))
+                .Reverse()
+                .ToList();
         }
     }
 

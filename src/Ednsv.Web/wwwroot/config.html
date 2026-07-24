@@ -18,6 +18,7 @@
   .nav .current { color: var(--text); font-weight: 600; }
   .nav .who { color: var(--muted); margin-left: auto; }
   .nav .signout { color: var(--muted); }
+  .nav a .ext { font-size: 0.9em; margin-left: 0.05rem; display: inline-block; transform: translateY(-1px); }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
   .panel h2 { margin-top: 0; }
   label { display: block; font-size: 0.85rem; color: var(--text); margin-bottom: 0.4rem; }
@@ -36,10 +37,36 @@
   button.danger { background: transparent; color: var(--error); border: 1px solid var(--error); }
   button.danger:hover { background: var(--error); color: var(--bg); }
   .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
-  .msg { padding: 0.7rem 1rem; border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; }
-  .msg.error { background: #7f1d1d33; border: 1px solid var(--error); color: var(--error); }
-  .msg.ok { background: #16653433; border: 1px solid var(--pass); color: var(--pass); }
-  .msg.warn { background: #71401233; border: 1px solid var(--warn); color: var(--warn); }
+  /* Base message box (also used for the static Maintenance warning, which stays
+     a normal inline-flowing block). */
+  .msg { padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.45; }
+  .msg.error { background: #2a1414; border: 1px solid var(--error); color: var(--error); }
+  .msg.ok { background: #12241a; border: 1px solid var(--pass); color: var(--pass); }
+  .msg.warn { background: #2a2110; border: 1px solid var(--warn); color: var(--warn); }
+  /* Toast overlay: fixed so showing/hiding never reflows the page (no "jumpy"
+     shift), with a manual dismiss control. Scoped to #messages so the static
+     Maintenance warning does NOT become a flex row. */
+  #messages { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%);
+    z-index: 1000; width: min(680px, calc(100% - 2rem)); pointer-events: none; }
+  #messages .msg { pointer-events: auto; display: flex; align-items: flex-start; gap: 0.75rem;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45); animation: msgIn 0.18s ease-out; }
+  #messages .msg + .msg { margin-top: 0.5rem; }
+  #messages .msg-text { flex: 1; }
+  #messages .msg-close { flex: none; background: transparent; border: none; color: inherit;
+    font-size: 1.1rem; line-height: 1; padding: 0 0.2rem; cursor: pointer; opacity: 0.7; font-weight: 700; }
+  #messages .msg-close:hover { opacity: 1; }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  /* Breathing room below the form/JSON action buttons before the Maintenance panel. */
+  .tab-pane > .actions { margin-bottom: 1.5rem; }
+  /* Floating scroll controls for the long config page. */
+  .scrollnav { position: fixed; right: 1rem; bottom: 1rem; z-index: 900;
+    display: flex; flex-direction: column; gap: 0.4rem; }
+  .scrollnav button { width: 2.5rem; height: 2.5rem; padding: 0; border-radius: 50%;
+    background: var(--surface); color: var(--accent); border: 1px solid var(--border);
+    font-size: 1rem; line-height: 1; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center; }
+  .scrollnav button:hover { border-color: var(--accent); opacity: 1; }
+  @media (max-width: 640px) { .scrollnav { right: 0.6rem; bottom: 0.6rem; } }
   .field { margin-bottom: 0.9rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -77,9 +104,9 @@
 
   <div class="nav">
     <a href="/">Validator</a>
-    <a href="/tokens.html" id="tokensLink" style="display:none">Tokens</a>
+    <a href="/tokens.html" id="tokensLink" style="display:none">Access Tokens</a>
     <span class="current">Config</span>
-    <a href="/swagger" target="_blank" rel="noopener">API docs</a>
+    <a href="/swagger" target="_blank" rel="noopener" title="Opens in a new tab">API<span class="ext" aria-hidden="true">↗</span></a>
     <span class="who" id="who"></span>
     <a href="#" id="signOut" class="signout">Sign out</a>
   </div>
@@ -133,19 +160,21 @@
       <textarea id="cfgKnownDomains" placeholder="example.com, gmail.com, your-customer.org"></textarea>
     </div>
 
-    <div class="panel">
-      <h2>Per-domain DKIM selectors</h2>
-      <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
-      <table id="domTable">
-        <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
-        <tbody id="domTableBody"></tbody>
-      </table>
-      <div class="add-row">
-        <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
-        <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
-        <div><button class="secondary" id="addDomainBtn">Add</button></div>
+    <details class="panel collapsible" open>
+      <summary>Per-domain DKIM selectors <span class="hint" id="domCountHint"></span></summary>
+      <div class="details-body">
+        <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
+        <table id="domTable">
+          <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
+          <tbody id="domTableBody"></tbody>
+        </table>
+        <div class="add-row">
+          <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
+          <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
+          <div><button class="secondary" id="addDomainBtn">Add</button></div>
+        </div>
       </div>
-    </div>
+    </details>
 
     <div class="section-head">
       <h2>Advanced — probe data lists</h2>
@@ -266,14 +295,19 @@
 
   <div class="panel">
     <h2>Maintenance</h2>
-    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk to speed up validations.</p>
+    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk — and, when Redis is configured, in a shared Redis cache — to speed up validations.</p>
     <div class="msg warn" style="margin-bottom:0.75rem">
-      ⚠ Clearing wipes every cached probe (memory <strong>and</strong> disk). Validations will re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
+      ⚠ Clearing wipes every cached probe: this instance's in-memory cache, the on-disk cache, and the shared Redis cache when configured. Other replicas' in-memory copies expire on their own TTL. Validations then re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
     </div>
     <div class="actions">
-      <button class="danger" id="clearCacheBtn">Clear all caches (memory + disk)</button>
+      <button class="danger" id="clearCacheBtn">Clear all caches</button>
     </div>
   </div>
+</div>
+
+<div class="scrollnav" aria-hidden="true">
+  <button type="button" id="scrollTopBtn" title="Scroll to top">↑</button>
+  <button type="button" id="scrollBottomBtn" title="Scroll to bottom">↓</button>
 </div>
 
 <script>
@@ -283,8 +317,15 @@ let current = null;  // last server snapshot
 
 function showMessage(text, kind = 'error') {
   const m = $('#messages');
-  m.innerHTML = `<div class="msg ${kind}">${esc(text)}</div>`;
-  setTimeout(() => { if (m.firstChild?.textContent === text) m.innerHTML = ''; }, 5000);
+  m.innerHTML =
+    `<div class="msg ${kind}"><span class="msg-text">${esc(text)}</span>` +
+    `<button class="msg-close" type="button" aria-label="Dismiss">&times;</button></div>`;
+  const node = m.firstElementChild;
+  node.querySelector('.msg-close').addEventListener('click', () => node.remove());
+  // Success toasts are transient; warnings/errors stay until dismissed or
+  // replaced so they never vanish mid-read (the old fixed 5s auto-clear made
+  // the message area feel unpredictable).
+  if (kind === 'ok') setTimeout(() => node.remove(), 4000);
 }
 
 function parseList(s) {
@@ -365,6 +406,8 @@ function fillForm(cfg) {
 function renderDomTable(map) {
   const tbody = $('#domTableBody');
   const keys = Object.keys(map);
+  const hint = $('#domCountHint');
+  if (hint) hint.textContent = keys.length ? `${keys.length} domain${keys.length === 1 ? '' : 's'}` : 'none yet';
   if (keys.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
     return;
@@ -495,7 +538,7 @@ document.querySelectorAll('.tabs button').forEach(btn => {
 });
 
 $('#clearCacheBtn').addEventListener('click', async () => {
-  if (!confirm('Clear ALL caches (memory and disk)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
+  if (!confirm('Clear ALL caches (memory, disk, and shared Redis when configured)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
   const btn = $('#clearCacheBtn');
   btn.disabled = true;
   try {
@@ -506,6 +549,9 @@ $('#clearCacheBtn').addEventListener('click', async () => {
   } catch (e) { showMessage(e.message); }
   finally { btn.disabled = false; }
 });
+
+$('#scrollTopBtn')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+$('#scrollBottomBtn')?.addEventListener('click', () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }));
 
 $('#signOut').addEventListener('click', async e => {
   e.preventDefault();

@@ -102,6 +102,19 @@ encrypted at rest with a secret you inject via configuration:
 
 Rotate the secret only when you can tolerate existing sessions being invalidated.
 
+### Key-ring housekeeping
+
+DataProtection generates a new key roughly every 90 days but **never deletes
+expired ones**, so on a long-lived shared mount old `key-*.xml` files accumulate.
+At startup EDNSV removes keys whose expiration is older than
+`DataProtection:KeyRetentionDays` (default **30**). The window is floored at the
+maximum OIDC session lifetime (`Auth:Oidc:SessionHours`) plus a day, so a key that
+could still unprotect a live session cookie is never deleted regardless of the
+configured value. Cleanup runs before the provider reads the ring, so DP never
+references a removed key. Two related startup actions also touch the ring: when a
+`KeyEncryptionSecret` is (newly) configured, any still-unencrypted key files are
+dropped so a fresh encrypted key is generated.
+
 ## Async job registry
 
 In distributed mode the async validation registry moves from an in-process
@@ -201,6 +214,7 @@ settings have no effect unless `Redis:ConnectionString` is set.
 | `JobRetentionMinutes` | `5` | Minutes a completed/failed async job is retained in Redis before expiry. |
 | `DataProtection:KeysPath` | `<DataDir>/keys` | Directory for the data-protection keyring. Point at the shared RWX mount for multi-pod OIDC. |
 | `DataProtection:KeyEncryptionSecret` | *(unset)* | ≥32-char opaque secret used to encrypt the keyring at rest (AES-GCM via HKDF). Unset → keyring written unencrypted (warning logged). |
+| `DataProtection:KeyRetentionDays` | `30` | Expired key-ring files older than this are removed at startup. Floored at `Auth:Oidc:SessionHours` + 1 day so a key that could still unprotect a live session is never deleted. |
 
 ### Example: distributed deployment
 

@@ -98,4 +98,33 @@ public sealed class ConfigServiceTests : IDisposable
         // Oldest (including the baseline) were trimmed; newest is retained.
         Assert.Equal($"user{ConfigService.MaxRevisions + 24}", revs[0].SavedBy);
     }
+
+    // Regression: revisions saved BEFORE the history-storage split embedded their
+    // body inline in config-history.json. Once the index was rewritten body-less
+    // that inline body was gone, leaving metadata with no loadable body file — the
+    // picker offered those revisions and loading them 404'd. ListRevisions now
+    // filters to revisions whose body file actually exists.
+    [Fact]
+    public void RevisionsWithoutABodyFileAreNotListed()
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());                                          // rev 1 (baseline)
+        svc.Replace(new AppConfig { EnableDnsbl = false }, "alice");     // rev 2
+        svc.Replace(new AppConfig { EnableHttpProbes = false }, "bob");  // rev 3
+
+        var all = svc.ListRevisions();
+        Assert.Equal(3, all.Count);
+
+        // Orphan the oldest revision the way the pre-split → split upgrade did to
+        // every legacy revision: metadata stays, body file is gone.
+        var orphanId = all.Min(r => r.Id);
+        File.Delete(Path.Combine(_dir, "config-history", $"config-rev-{orphanId}.json"));
+
+        var listed = svc.ListRevisions();
+        Assert.Equal(2, listed.Count);
+        Assert.DoesNotContain(listed, r => r.Id == orphanId);
+        // Every revision still listed has a body that loads (no 404 from the picker).
+        foreach (var r in listed)
+            Assert.NotNull(svc.GetRevision(r.Id));
+    }
 }
