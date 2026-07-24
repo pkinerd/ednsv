@@ -122,6 +122,68 @@
     </div>
 
     <div class="panel">
+      <h2>Probe data lists</h2>
+      <p class="subtitle">Advanced. One entry per line. Labelled entries use <code>value|label</code> (the label is shown in reports). Leave a list empty to fall back to the built-in defaults.</p>
+
+      <div class="field">
+        <label>Propagation resolvers (direct DNS)<span class="desc">Public resolvers queried for the propagation-consistency check. <code>ip|label</code>.</span></label>
+        <textarea id="cfgPropagationResolvers" placeholder="8.8.8.8|Google&#10;1.1.1.1|Cloudflare"></textarea>
+      </div>
+      <div class="field">
+        <label>Propagation resolvers (DoH JSON endpoints)<span class="desc">Used instead of raw DNS when DoH is enabled. <code>url|label</code>.</span></label>
+        <textarea id="cfgPropagationDohResolvers" placeholder="https://dns.google/resolve|Google (DoH)"></textarea>
+      </div>
+      <div class="field">
+        <label>IP blocklists — public resolvers<span class="desc">DNSBL zones that answer reliably over public DNS.</span></label>
+        <textarea id="cfgIpBlocklistsPublic" placeholder="bl.spamcop.net"></textarea>
+      </div>
+      <div class="field">
+        <label>IP blocklists — private resolver only<span class="desc">DNSBL zones that need a registered/private resolver.</span></label>
+        <textarea id="cfgIpBlocklistsPrivate" placeholder="zen.spamhaus.org&#10;b.barracudacentral.org"></textarea>
+      </div>
+      <div class="field">
+        <label>Extended IP blocklists — public<span class="desc">Additional DNSBL zones for the extended check. <code>zone|label</code>.</span></label>
+        <textarea id="cfgExtendedIpBlocklistsPublic" placeholder="all.s5h.net|S5H"></textarea>
+      </div>
+      <div class="field">
+        <label>Extended IP blocklists — private<span class="desc">Extended DNSBL zones needing a private resolver. <code>zone|label</code>.</span></label>
+        <textarea id="cfgExtendedIpBlocklistsPrivate" placeholder="cbl.abuseat.org|CBL"></textarea>
+      </div>
+      <div class="field">
+        <label>Domain blocklists (RHSBL)<span class="desc">Domain/URI blocklist zones for MX-hostname and domain checks.</span></label>
+        <textarea id="cfgDomainBlocklists" placeholder="dbl.spamhaus.org&#10;multi.surbl.org"></textarea>
+      </div>
+      <div class="field">
+        <label>ARC selectors<span class="desc">Selectors probed for ARC signing records.</span></label>
+        <textarea id="cfgArcSelectors" placeholder="arc&#10;s1&#10;google"></textarea>
+      </div>
+      <div class="field">
+        <label>DMARC discovery subdomains<span class="desc">Subdomains checked for weaker DMARC overrides.</span></label>
+        <textarea id="cfgDmarcDiscoverySubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
+      </div>
+      <div class="field">
+        <label>Mail survey subdomains<span class="desc">Subdomains probed by the mail-subdomain survey.</span></label>
+        <textarea id="cfgMailSurveySubdomains" placeholder="mail&#10;smtp&#10;webmail"></textarea>
+      </div>
+      <div class="field">
+        <label>SPF coverage subdomains<span class="desc">Mail-sending subdomains checked for SPF coverage.</span></label>
+        <textarea id="cfgSpfSubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
+      </div>
+      <div class="field">
+        <label>SRV service names<span class="desc">SRV prefixes queried for mail services.</span></label>
+        <textarea id="cfgSrvServiceNames" placeholder="_submission._tcp&#10;_imaps._tcp"></textarea>
+      </div>
+      <div class="field">
+        <label>Recognised VMC issuers<span class="desc">Certificate-authority names treated as recognised VMC CAs.</span></label>
+        <textarea id="cfgVmcIssuers" placeholder="DigiCert&#10;Entrust&#10;GlobalSign"></textarea>
+      </div>
+      <div class="field">
+        <label>crt.sh base URL<span class="desc">Base URL for Certificate Transparency lookups. Leave blank for the default.</span></label>
+        <input type="text" id="cfgCrtShBaseUrl" placeholder="https://crt.sh/">
+      </div>
+    </div>
+
+    <div class="panel">
       <h2>Per-domain DKIM selectors</h2>
       <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
       <table id="domTable">
@@ -181,6 +243,12 @@ function parseList(s) {
   return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
 }
 
+// Newline-only parser for labelled lists ("value|label") where labels may
+// contain spaces/commas. One entry per line.
+function parseLines(s) {
+  return (s || '').split(/\r?\n/).map(x => x.trim()).filter(x => x.length > 0);
+}
+
 function fmtDate(s) {
   if (!s) return '';
   const d = new Date(s);
@@ -228,6 +296,20 @@ function fillForm(cfg) {
   $('#cfgDoh').checked = !!cfg.enableDoh;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
   $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');
+  $('#cfgPropagationResolvers').value = (cfg.propagationResolvers || []).join('\n');
+  $('#cfgPropagationDohResolvers').value = (cfg.propagationDohResolvers || []).join('\n');
+  $('#cfgIpBlocklistsPublic').value = (cfg.ipBlocklistsPublic || []).join('\n');
+  $('#cfgIpBlocklistsPrivate').value = (cfg.ipBlocklistsPrivate || []).join('\n');
+  $('#cfgExtendedIpBlocklistsPublic').value = (cfg.extendedIpBlocklistsPublic || []).join('\n');
+  $('#cfgExtendedIpBlocklistsPrivate').value = (cfg.extendedIpBlocklistsPrivate || []).join('\n');
+  $('#cfgDomainBlocklists').value = (cfg.domainBlocklists || []).join('\n');
+  $('#cfgArcSelectors').value = (cfg.arcSelectors || []).join('\n');
+  $('#cfgDmarcDiscoverySubdomains').value = (cfg.dmarcDiscoverySubdomains || []).join('\n');
+  $('#cfgMailSurveySubdomains').value = (cfg.mailSurveySubdomains || []).join('\n');
+  $('#cfgSpfSubdomains').value = (cfg.spfSubdomains || []).join('\n');
+  $('#cfgSrvServiceNames').value = (cfg.srvServiceNames || []).join('\n');
+  $('#cfgVmcIssuers').value = (cfg.vmcIssuers || []).join('\n');
+  $('#cfgCrtShBaseUrl').value = cfg.crtShBaseUrl || '';
   renderDomTable(cfg.dkimSelectors || {});
   $('#rawJson').value = JSON.stringify(cfg, null, 2);
 }
@@ -278,7 +360,21 @@ function collectFormConfig() {
     enableDoh:        $('#cfgDoh').checked,
     defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
     dkimSelectors: dkim,
-    knownDomains: parseList($('#cfgKnownDomains').value)
+    knownDomains: parseList($('#cfgKnownDomains').value),
+    propagationResolvers: parseLines($('#cfgPropagationResolvers').value),
+    propagationDohResolvers: parseLines($('#cfgPropagationDohResolvers').value),
+    ipBlocklistsPublic: parseLines($('#cfgIpBlocklistsPublic').value),
+    ipBlocklistsPrivate: parseLines($('#cfgIpBlocklistsPrivate').value),
+    extendedIpBlocklistsPublic: parseLines($('#cfgExtendedIpBlocklistsPublic').value),
+    extendedIpBlocklistsPrivate: parseLines($('#cfgExtendedIpBlocklistsPrivate').value),
+    domainBlocklists: parseLines($('#cfgDomainBlocklists').value),
+    arcSelectors: parseLines($('#cfgArcSelectors').value),
+    dmarcDiscoverySubdomains: parseLines($('#cfgDmarcDiscoverySubdomains').value),
+    mailSurveySubdomains: parseLines($('#cfgMailSurveySubdomains').value),
+    spfSubdomains: parseLines($('#cfgSpfSubdomains').value),
+    srvServiceNames: parseLines($('#cfgSrvServiceNames').value),
+    vmcIssuers: parseLines($('#cfgVmcIssuers').value),
+    crtShBaseUrl: ($('#cfgCrtShBaseUrl').value || '').trim()
   };
 }
 

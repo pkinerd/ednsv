@@ -65,6 +65,53 @@ public sealed class AppConfig
     /// </summary>
     [JsonPropertyName("knownDomains")]
     public List<string> KnownDomains { get; set; } = new();
+
+    // ── Configurable probe data lists (admin-editable) ───────────────────
+    // Each defaults to the built-in list from ProbeDefaults so behaviour is
+    // unchanged out of the box. Labeled entries use "value|label"; clearing a
+    // list reverts the affected check to its built-in default.
+
+    [JsonPropertyName("propagationResolvers")]
+    public List<string> PropagationResolvers { get; set; } = new(Checks.ProbeDefaults.PropagationResolvers);
+
+    [JsonPropertyName("propagationDohResolvers")]
+    public List<string> PropagationDohResolvers { get; set; } = new(Checks.ProbeDefaults.PropagationDohResolvers);
+
+    [JsonPropertyName("ipBlocklistsPublic")]
+    public List<string> IpBlocklistsPublic { get; set; } = new(Checks.ProbeDefaults.IpBlocklistsPublic);
+
+    [JsonPropertyName("ipBlocklistsPrivate")]
+    public List<string> IpBlocklistsPrivate { get; set; } = new(Checks.ProbeDefaults.IpBlocklistsPrivate);
+
+    [JsonPropertyName("extendedIpBlocklistsPublic")]
+    public List<string> ExtendedIpBlocklistsPublic { get; set; } = new(Checks.ProbeDefaults.ExtendedIpBlocklistsPublic);
+
+    [JsonPropertyName("extendedIpBlocklistsPrivate")]
+    public List<string> ExtendedIpBlocklistsPrivate { get; set; } = new(Checks.ProbeDefaults.ExtendedIpBlocklistsPrivate);
+
+    [JsonPropertyName("domainBlocklists")]
+    public List<string> DomainBlocklists { get; set; } = new(Checks.ProbeDefaults.DomainBlocklists);
+
+    [JsonPropertyName("arcSelectors")]
+    public List<string> ArcSelectors { get; set; } = new(Checks.ProbeDefaults.ArcSelectors);
+
+    [JsonPropertyName("dmarcDiscoverySubdomains")]
+    public List<string> DmarcDiscoverySubdomains { get; set; } = new(Checks.ProbeDefaults.DmarcDiscoverySubdomains);
+
+    [JsonPropertyName("mailSurveySubdomains")]
+    public List<string> MailSurveySubdomains { get; set; } = new(Checks.ProbeDefaults.MailSurveySubdomains);
+
+    [JsonPropertyName("spfSubdomains")]
+    public List<string> SpfSubdomains { get; set; } = new(Checks.ProbeDefaults.SpfSubdomains);
+
+    [JsonPropertyName("srvServiceNames")]
+    public List<string> SrvServiceNames { get; set; } = new(Checks.ProbeDefaults.SrvServiceNames);
+
+    [JsonPropertyName("vmcIssuers")]
+    public List<string> VmcIssuers { get; set; } = new(Checks.ProbeDefaults.VmcIssuers);
+
+    [JsonPropertyName("crtShBaseUrl")]
+    public string CrtShBaseUrl { get; set; } = Checks.ProbeDefaults.CrtShBaseUrl;
 }
 
 /// <summary>One saved version of <see cref="AppConfig"/> with who saved it and when.</summary>
@@ -185,6 +232,23 @@ public sealed class ConfigService
         incoming.DefaultDkimSelectors ??= new List<string>();
         incoming.DkimSelectors = NormalizeKeys(incoming.DkimSelectors ?? new Dictionary<string, List<string>>());
         incoming.KnownDomains = NormalizeDomainList(incoming.KnownDomains ?? new List<string>());
+        // Trim/compact the probe data lists; null (field omitted) reverts to the
+        // built-in default so a caller can't accidentally wipe a list to null.
+        incoming.PropagationResolvers = NormalizeLines(incoming.PropagationResolvers, Checks.ProbeDefaults.PropagationResolvers);
+        incoming.PropagationDohResolvers = NormalizeLines(incoming.PropagationDohResolvers, Checks.ProbeDefaults.PropagationDohResolvers);
+        incoming.IpBlocklistsPublic = NormalizeLines(incoming.IpBlocklistsPublic, Checks.ProbeDefaults.IpBlocklistsPublic);
+        incoming.IpBlocklistsPrivate = NormalizeLines(incoming.IpBlocklistsPrivate, Checks.ProbeDefaults.IpBlocklistsPrivate);
+        incoming.ExtendedIpBlocklistsPublic = NormalizeLines(incoming.ExtendedIpBlocklistsPublic, Checks.ProbeDefaults.ExtendedIpBlocklistsPublic);
+        incoming.ExtendedIpBlocklistsPrivate = NormalizeLines(incoming.ExtendedIpBlocklistsPrivate, Checks.ProbeDefaults.ExtendedIpBlocklistsPrivate);
+        incoming.DomainBlocklists = NormalizeLines(incoming.DomainBlocklists, Checks.ProbeDefaults.DomainBlocklists);
+        incoming.ArcSelectors = NormalizeLines(incoming.ArcSelectors, Checks.ProbeDefaults.ArcSelectors);
+        incoming.DmarcDiscoverySubdomains = NormalizeLines(incoming.DmarcDiscoverySubdomains, Checks.ProbeDefaults.DmarcDiscoverySubdomains);
+        incoming.MailSurveySubdomains = NormalizeLines(incoming.MailSurveySubdomains, Checks.ProbeDefaults.MailSurveySubdomains);
+        incoming.SpfSubdomains = NormalizeLines(incoming.SpfSubdomains, Checks.ProbeDefaults.SpfSubdomains);
+        incoming.SrvServiceNames = NormalizeLines(incoming.SrvServiceNames, Checks.ProbeDefaults.SrvServiceNames);
+        incoming.VmcIssuers = NormalizeLines(incoming.VmcIssuers, Checks.ProbeDefaults.VmcIssuers);
+        incoming.CrtShBaseUrl = string.IsNullOrWhiteSpace(incoming.CrtShBaseUrl)
+            ? Checks.ProbeDefaults.CrtShBaseUrl : incoming.CrtShBaseUrl.Trim();
         lock (_lock)
         {
             _current = incoming;
@@ -313,7 +377,21 @@ public sealed class ConfigService
             c.DkimSelectors.Select(kv =>
                 new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
             StringComparer.OrdinalIgnoreCase),
-        KnownDomains = new List<string>(c.KnownDomains)
+        KnownDomains = new List<string>(c.KnownDomains),
+        PropagationResolvers = new List<string>(c.PropagationResolvers ?? new()),
+        PropagationDohResolvers = new List<string>(c.PropagationDohResolvers ?? new()),
+        IpBlocklistsPublic = new List<string>(c.IpBlocklistsPublic ?? new()),
+        IpBlocklistsPrivate = new List<string>(c.IpBlocklistsPrivate ?? new()),
+        ExtendedIpBlocklistsPublic = new List<string>(c.ExtendedIpBlocklistsPublic ?? new()),
+        ExtendedIpBlocklistsPrivate = new List<string>(c.ExtendedIpBlocklistsPrivate ?? new()),
+        DomainBlocklists = new List<string>(c.DomainBlocklists ?? new()),
+        ArcSelectors = new List<string>(c.ArcSelectors ?? new()),
+        DmarcDiscoverySubdomains = new List<string>(c.DmarcDiscoverySubdomains ?? new()),
+        MailSurveySubdomains = new List<string>(c.MailSurveySubdomains ?? new()),
+        SpfSubdomains = new List<string>(c.SpfSubdomains ?? new()),
+        SrvServiceNames = new List<string>(c.SrvServiceNames ?? new()),
+        VmcIssuers = new List<string>(c.VmcIssuers ?? new()),
+        CrtShBaseUrl = string.IsNullOrWhiteSpace(c.CrtShBaseUrl) ? Checks.ProbeDefaults.CrtShBaseUrl : c.CrtShBaseUrl,
     };
 
     private static Dictionary<string, List<string>> NormalizeKeys(Dictionary<string, List<string>> src)
@@ -340,4 +418,17 @@ public sealed class ConfigService
             .Where(d => d.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    // Trim entries and drop blanks/dupes for a probe data list. A null list
+    // (JSON field explicitly null) reverts to the built-in default; an empty
+    // list is preserved (the check falls back to its default at runtime).
+    private static List<string> NormalizeLines(List<string>? src, IReadOnlyList<string> fallback)
+    {
+        if (src == null) return new List<string>(fallback);
+        return src
+            .Select(s => (s ?? "").Trim())
+            .Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 }

@@ -171,4 +171,176 @@ public class ValidationOptions
     /// when configured. The other direct-DNS checks have no DoH equivalent.
     /// </summary>
     public bool EnableDoh { get; set; } = false;
+
+    // ── Configurable probe data lists (web-admin editable) ───────────────
+    // Each defaults to an empty list; checks fall back to their built-in
+    // defaults when empty, so an unset option preserves original behaviour.
+    // Labeled entries use the "value|label" convention (e.g. "8.8.8.8|Google");
+    // the label is the display name used in report output. Plain lists carry
+    // just the value on each line.
+
+    /// <summary>Public resolvers compared by the propagation check ("ip|label").</summary>
+    public List<string> PropagationResolvers { get; set; } = new();
+    /// <summary>DoH JSON endpoints for the propagation check ("url|label").</summary>
+    public List<string> PropagationDohResolvers { get; set; } = new();
+    /// <summary>Basic IP DNSBL zones queryable via public resolvers ("zone|label").</summary>
+    public List<string> IpBlocklistsPublic { get; set; } = new();
+    /// <summary>Basic IP DNSBL zones needing a private resolver ("zone|label").</summary>
+    public List<string> IpBlocklistsPrivate { get; set; } = new();
+    /// <summary>Extended IP DNSBL zones queryable via public resolvers ("zone|label").</summary>
+    public List<string> ExtendedIpBlocklistsPublic { get; set; } = new();
+    /// <summary>Extended IP DNSBL zones needing a private resolver ("zone|label").</summary>
+    public List<string> ExtendedIpBlocklistsPrivate { get; set; } = new();
+    /// <summary>RHSBL/domain blocklist zones (private resolver required).</summary>
+    public List<string> DomainBlocklists { get; set; } = new();
+    /// <summary>Selector names probed for ARC/DKIM keys.</summary>
+    public List<string> ArcSelectors { get; set; } = new();
+    /// <summary>Subdomains probed for their own DMARC records.</summary>
+    public List<string> DmarcDiscoverySubdomains { get; set; } = new();
+    /// <summary>Subdomains surveyed for mail-related DNS records.</summary>
+    public List<string> MailSurveySubdomains { get; set; } = new();
+    /// <summary>Mail-sending subdomains checked for SPF coverage gaps.</summary>
+    public List<string> SpfSubdomains { get; set; } = new();
+    /// <summary>SRV service labels probed for mail service discovery.</summary>
+    public List<string> SrvServiceNames { get; set; } = new();
+    /// <summary>CA names recognised as authorised BIMI VMC issuers.</summary>
+    public List<string> VmcIssuers { get; set; } = new();
+    /// <summary>Base URL of the Certificate Transparency (crt.sh) endpoint.</summary>
+    public string? CrtShBaseUrl { get; set; }
+}
+
+/// <summary>
+/// Helpers for resolving a configurable probe list against a built-in default.
+/// An empty/absent configured list falls back to the default, so unset options
+/// preserve original behaviour.
+/// </summary>
+public static class ProbeList
+{
+    /// <summary>
+    /// Parse "value|label" lines into tuples. Lines without a '|' use the value
+    /// as its own label. Falls back to <paramref name="fallback"/> when the
+    /// configured list is empty or contains no usable entries.
+    /// </summary>
+    public static List<(string value, string label)> Labeled(
+        IReadOnlyList<string>? configured, IReadOnlyList<string> fallback)
+    {
+        var parsed = ParseLabeled(configured);
+        return parsed.Count > 0 ? parsed : ParseLabeled(fallback);
+    }
+
+    private static List<(string value, string label)> ParseLabeled(IReadOnlyList<string>? src)
+    {
+        var list = new List<(string value, string label)>();
+        if (src == null) return list;
+        foreach (var line in src)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            var idx = line.IndexOf('|');
+            var value = (idx < 0 ? line : line[..idx]).Trim();
+            var label = (idx < 0 ? line : line[(idx + 1)..]).Trim();
+            if (value.Length == 0) continue;
+            list.Add((value, label.Length == 0 ? value : label));
+        }
+        return list;
+    }
+
+    /// <summary>Return the configured plain list, or the fallback when empty.</summary>
+    public static IReadOnlyList<string> OrDefault(IReadOnlyList<string>? configured, IReadOnlyList<string> fallback)
+        => configured != null && configured.Count > 0 ? configured : fallback;
+
+    /// <summary>Normalise a configured crt.sh base URL (fallback when blank, always trailing '/').</summary>
+    public static string CrtShBase(string? configured)
+    {
+        var b = string.IsNullOrWhiteSpace(configured) ? ProbeDefaults.CrtShBaseUrl : configured.Trim();
+        return b.EndsWith('/') ? b : b + "/";
+    }
+}
+
+/// <summary>
+/// Built-in default probe data lists — the single source of truth shared by the
+/// checks (as the fallback when an option is unset) and by the web
+/// <c>AppConfig</c> seed (so the admin UI shows the real defaults). Labeled
+/// lists use the "value|label" convention.
+/// </summary>
+public static class ProbeDefaults
+{
+    public static readonly IReadOnlyList<string> PropagationResolvers = new[]
+        { "8.8.8.8|Google", "1.1.1.1|Cloudflare", "9.9.9.9|Quad9" };
+
+    public static readonly IReadOnlyList<string> PropagationDohResolvers = new[]
+        { "https://dns.google/resolve|Google (DoH)", "https://cloudflare-dns.com/dns-query|Cloudflare (DoH)" };
+
+    public static readonly IReadOnlyList<string> IpBlocklistsPublic = new[] { "bl.spamcop.net" };
+
+    public static readonly IReadOnlyList<string> IpBlocklistsPrivate = new[]
+        { "zen.spamhaus.org", "b.barracudacentral.org" };
+
+    public static readonly IReadOnlyList<string> ExtendedIpBlocklistsPublic = new[]
+    {
+        "all.s5h.net|S5H",
+        "dnsbl.sorbs.net|SORBS Combined",
+        "spam.dnsbl.sorbs.net|SORBS Spam",
+        "bl.mailspike.net|Mailspike",
+        "dnsbl-1.uceprotect.net|UCEProtect L1",
+        "dnsbl-2.uceprotect.net|UCEProtect L2",
+        "dnsbl-3.uceprotect.net|UCEProtect L3",
+        "psbl.surriel.com|PSBL",
+        "dyna.spamrats.com|SpamRATS Dyna",
+        "noptr.spamrats.com|SpamRATS NoPtr",
+        "spam.spamrats.com|SpamRATS Spam",
+        "dnsbl.dronebl.org|DroneBL",
+        "rbl.interserver.net|InterServer",
+        "bogons.cymru.com|Cymru Bogons",
+        "bl.blocklist.de|Blocklist.de",
+        "bl.nordspam.com|NordSpam BL",
+        "dnsbl.inps.de|INPS",
+        "ix.dnsbl.manitu.net|NiX Spam",
+        "truncate.gbudb.net|Truncate/GBUdb",
+        "z.mailspike.net|Mailspike Z",
+        "spambot.bls.digibase.ca|Digibase SpamBot",
+    };
+
+    public static readonly IReadOnlyList<string> ExtendedIpBlocklistsPrivate = new[]
+    {
+        "cbl.abuseat.org|CBL",
+        "db.wpbl.info|WPBL",
+        "bl.spamcannibal.org|SpamCannibal",
+        "access.redhawk.org|Redhawk",
+        "combined.abuse.ch|abuse.ch Combined",
+        "rbl.abuse.net|abuse.net",
+        "singular.ttk.pte.hu|Singular",
+        "uribl.swinog.ch|SwiNOG URIBL",
+        "bl.fmb.la|FMB",
+        "dnsbl.rv-soft.info|RV-Soft",
+    };
+
+    public static readonly IReadOnlyList<string> DomainBlocklists = new[]
+        { "dbl.spamhaus.org", "multi.surbl.org", "black.uribl.com" };
+
+    public static readonly IReadOnlyList<string> ArcSelectors = new[]
+        { "arc", "s1", "s2", "google", "selector1", "selector2", "default" };
+
+    public static readonly IReadOnlyList<string> DmarcDiscoverySubdomains = new[]
+        { "mail", "smtp", "email", "www", "newsletter", "marketing", "bounce", "send", "outbound" };
+
+    public static readonly IReadOnlyList<string> MailSurveySubdomains = new[]
+    {
+        "mail", "smtp", "pop", "pop3", "imap", "webmail", "email",
+        "mx", "mx1", "mx2", "mta", "relay", "outbound", "inbound",
+        "bounce", "return", "send", "newsletter", "marketing"
+    };
+
+    public static readonly IReadOnlyList<string> SpfSubdomains = new[]
+    {
+        "mail", "smtp", "email", "newsletter", "marketing",
+        "bounce", "send", "outbound", "notifications", "transactional"
+    };
+
+    public static readonly IReadOnlyList<string> SrvServiceNames = new[]
+        { "_submission._tcp", "_imap._tcp", "_imaps._tcp", "_pop3s._tcp", "_jmap._tcp" };
+
+    public static readonly IReadOnlyList<string> VmcIssuers = new[]
+        { "DigiCert", "Entrust", "GlobalSign" };
+
+    public const string CrtShBaseUrl = "https://crt.sh/";
 }

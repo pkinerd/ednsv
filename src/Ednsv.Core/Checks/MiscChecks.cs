@@ -9,15 +9,6 @@ public class SrvRecordsCheck : ICheck
     public string Name => "Mail Service SRV Records";
     public CheckCategory Category => CheckCategory.SRV;
 
-    private static readonly string[] SrvNames =
-    {
-        "_submission._tcp",
-        "_imap._tcp",
-        "_imaps._tcp",
-        "_pop3s._tcp",
-        "_jmap._tcp"
-    };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
@@ -25,7 +16,8 @@ public class SrvRecordsCheck : ICheck
 
         try
         {
-            foreach (var srv in SrvNames)
+            var srvNames = ProbeList.OrDefault(ctx.Options.SrvServiceNames, ProbeDefaults.SrvServiceNames);
+            foreach (var srv in srvNames)
             {
                 var srvDomain = $"{srv}.{domain}";
                 var resp = await ctx.Dns.QuerySpeculativeAsync(srvDomain, QueryType.SRV);

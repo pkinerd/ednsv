@@ -172,26 +172,14 @@ public class DnsPropagationCheck : ICheck
     public string Name => "DNS Propagation Consistency";
     public CheckCategory Category => CheckCategory.NS;
 
-    private static readonly (string ip, string name)[] PublicResolvers =
-    {
-        ("8.8.8.8", "Google"),
-        ("1.1.1.1", "Cloudflare"),
-        ("9.9.9.9", "Quad9"),
-    };
-
-    // DoH JSON endpoints. Quad9 doesn't ship a JSON DoH API (only wire format),
-    // so we cover the other two when EnableDoh is set.
-    private static readonly (string baseUrl, string name)[] DohResolvers =
-    {
-        ("https://dns.google/resolve",           "Google (DoH)"),
-        ("https://cloudflare-dns.com/dns-query", "Cloudflare (DoH)"),
-    };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var useDoh = ctx.Options.EnableDoh;
         if (!useDoh && !ctx.Options.EnableDirectDns)
             return CheckContext.SkippedResult(this, "Skipped: direct DNS to public resolvers disabled (and DoH off)");
+
+        var publicResolvers = ProbeList.Labeled(ctx.Options.PropagationResolvers, ProbeDefaults.PropagationResolvers);
+        var dohResolvers = ProbeList.Labeled(ctx.Options.PropagationDohResolvers, ProbeDefaults.PropagationDohResolvers);
 
         var result = new CheckResult { CheckName = Name, Category = Category };
 
@@ -201,7 +189,7 @@ public class DnsPropagationCheck : ICheck
         if (useDoh)
         {
             int dohReached = 0;
-            foreach (var (baseUrl, name) in DohResolvers)
+            foreach (var (baseUrl, name) in dohResolvers)
             {
                 var (aRecords, aOk) = await DohQueryAsync(baseUrl, domain, "A", ctx);
                 var (mxAnswers, mxOk) = await DohQueryAsync(baseUrl, domain, "MX", ctx);
@@ -227,14 +215,14 @@ public class DnsPropagationCheck : ICheck
                 result.Warnings.Add("All configured DoH endpoints failed — check HTTPS_PROXY / outbound HTTPS connectivity");
                 return new List<CheckResult> { result };
             }
-            if (dohReached < DohResolvers.Length)
+            if (dohReached < dohResolvers.Count)
             {
-                result.Warnings.Add($"Only {dohReached}/{DohResolvers.Length} DoH endpoints responded — propagation comparison is partial");
+                result.Warnings.Add($"Only {dohReached}/{dohResolvers.Count} DoH endpoints responded — propagation comparison is partial");
             }
         }
         else
         {
-            foreach (var (ip, name) in PublicResolvers)
+            foreach (var (ip, name) in publicResolvers)
             {
                 var addr = IPAddress.Parse(ip);
 
@@ -334,14 +322,13 @@ public class ArcCheck : ICheck
     public string Name => "ARC Selector Records";
     public CheckCategory Category => CheckCategory.DKIM;
 
-    private static readonly string[] ArcSelectors = { "arc", "s1", "s2", "google", "selector1", "selector2", "default" };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
         int found = 0;
 
-        foreach (var selector in ArcSelectors)
+        var arcSelectors = ProbeList.OrDefault(ctx.Options.ArcSelectors, ProbeDefaults.ArcSelectors);
+        foreach (var selector in arcSelectors)
         {
             var arcDomain = $"{selector}._domainkey.{domain}";
             var txts = await ctx.Dns.GetTxtRecordsAsync(arcDomain);
@@ -570,19 +557,14 @@ public class MailSubdomainSurveyCheck : ICheck
     public string Name => "Mail Subdomain Survey";
     public CheckCategory Category => CheckCategory.MX;
 
-    private static readonly string[] MailSubdomains =
-    {
-        "mail", "smtp", "pop", "pop3", "imap", "webmail", "email",
-        "mx", "mx1", "mx2", "mta", "relay", "outbound", "inbound",
-        "bounce", "return", "send", "newsletter", "marketing"
-    };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
 
+        var mailSubdomains = ProbeList.OrDefault(ctx.Options.MailSurveySubdomains, ProbeDefaults.MailSurveySubdomains);
+
         // Query all subdomains in parallel to avoid sequential timeouts
-        var tasks = MailSubdomains.Select(async sub =>
+        var tasks = mailSubdomains.Select(async sub =>
         {
             var fqdn = $"{sub}.{domain}";
 
@@ -611,7 +593,7 @@ public class MailSubdomainSurveyCheck : ICheck
         }
 
         result.Severity = CheckSeverity.Info;
-        result.Summary = $"{found}/{MailSubdomains.Length} common mail subdomains resolve";
+        result.Summary = $"{found}/{mailSubdomains.Count} common mail subdomains resolve";
 
         return new List<CheckResult> { result };
     }
@@ -634,7 +616,7 @@ public class CertificateTransparencyCheck : ICheck
 
         try
         {
-            var url = $"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json";
+            var url = $"{ProbeList.CrtShBase(ctx.Options.CrtShBaseUrl)}?q={Uri.EscapeDataString(domain)}&output=json";
             var (success, content, statusCode) = await ctx.Http.GetAsync(url, maxRetries: 1);
 
             if (success && content.Length > 10)
@@ -930,15 +912,11 @@ public class SubdomainSpfGapCheck : ICheck
     public string Name => "Subdomain SPF Coverage";
     public CheckCategory Category => CheckCategory.SPF;
 
-    private static readonly string[] MailSendingSubdomains =
-    {
-        "mail", "smtp", "email", "newsletter", "marketing",
-        "bounce", "send", "outbound", "notifications", "transactional"
-    };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
+
+        var mailSendingSubdomains = ProbeList.OrDefault(ctx.Options.SpfSubdomains, ProbeDefaults.SpfSubdomains);
 
         try
         {
@@ -975,7 +953,7 @@ public class SubdomainSpfGapCheck : ICheck
             var dmarcPolicyDesc = dmarcSpInherited ? "DMARC p=reject (inherited by subdomains)" : "DMARC sp=reject";
 
             // Rate limiting is handled globally by DnsResolverService.
-            var tasks = MailSendingSubdomains.Select(sub => Task.Run(async () =>
+            var tasks = mailSendingSubdomains.Select(sub => Task.Run(async () =>
             {
                 var subDomain = $"{sub}.{domain}";
                 var aRecs = await ctx.Dns.ResolveAAsync(subDomain);

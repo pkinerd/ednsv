@@ -8,6 +8,28 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace Ednsv.Core.Services;
 
+/// <summary>
+/// Optional performance/robustness tuning for <see cref="DnsResolverService"/>.
+/// All values default to the built-in behaviour, so passing null (or omitting
+/// the argument) preserves the original settings. Applied at construction —
+/// the DNS service is a startup singleton, so changes require a restart.
+/// </summary>
+public sealed record DnsTuning
+{
+    /// <summary>Sustained query rate (token bucket). Default 40/sec.</summary>
+    public int TokensPerSecond { get; init; } = 40;
+    /// <summary>Cap on simultaneous in-flight queries. Default 50.</summary>
+    public int MaxConcurrency { get; init; } = 50;
+    /// <summary>Per-query timeout for the main/direct/per-server clients. Default 15s.</summary>
+    public double QueryTimeoutSeconds { get; init; } = 15;
+    /// <summary>Per-query retries (DnsClient-level) for those clients. Default 2.</summary>
+    public int QueryRetries { get; init; } = 2;
+    /// <summary>Application-level retry count for failed queries. Default 3.</summary>
+    public int MaxRetries { get; init; } = 3;
+    /// <summary>Window after which an unreachable server is retried. Default 5 min.</summary>
+    public double UnreachableDecayMinutes { get; init; } = 5;
+}
+
 public class DnsResolverService
 {
     private readonly LookupClient _client;
@@ -15,6 +37,15 @@ public class DnsResolverService
     private readonly LookupClient _dnsblClient;
     private readonly LookupClient _speculativeClient;
     private static volatile int MaxRetries = 3;
+    /// <summary>Sets the application-level retry count (shared across all instances).</summary>
+    public static void SetMaxRetries(int value) => MaxRetries = value;
+
+    // Per-query timeout / retries for the authoritative + recursive lookup clients
+    // (main, direct and per-server). Configurable so operators on slow or
+    // aggressively-throttled links can tune them. The short-timeout speculative
+    // and DNSBL clients keep their own fixed "skip if slow" budgets.
+    private readonly TimeSpan _queryTimeout;
+    private readonly int _queryRetries;
 
     // ── Rate limiting ───────────────────────────────────────────────────
     // Token bucket: limits sustained query rate independent of response times.
@@ -47,7 +78,7 @@ public class DnsResolverService
     // Once a server fails MaxRetries times within the decay window, skip it.
     // Entries older than _unreachableDecay are ignored, allowing recovery.
     private readonly ConcurrentDictionary<string, (int count, DateTime lastFailure)> _unreachableServerCounts = new();
-    private static readonly TimeSpan _unreachableDecay = TimeSpan.FromMinutes(5);
+    private readonly TimeSpan _unreachableDecay;
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
@@ -66,8 +97,8 @@ public class DnsResolverService
             var opts = new LookupClientOptions(new IPEndPoint(server, 53))
             {
                 UseCache = false,
-                Timeout = TimeSpan.FromSeconds(15),
-                Retries = 2,
+                Timeout = _queryTimeout,
+                Retries = _queryRetries,
                 ThrowDnsErrors = false
             };
             return new LookupClient(opts);
@@ -79,23 +110,22 @@ public class DnsResolverService
     /// Creates a resolver using the specified DNS server(s).
     /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null)
-        : this(nameservers, tokensPerSecond: 40, maxConcurrency: 50, cacheTtl) { }
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null)
+        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning) { }
 
     /// <summary>
     /// Creates a resolver that uses the OS-configured DNS resolvers.
     /// </summary>
-    public static DnsResolverService CreateWithSystemResolvers(int tokensPerSecond = 40, int maxConcurrency = 50, TimeSpan? cacheTtl = null)
-        => new(useSystemResolvers: true, nameservers: null, tokensPerSecond, maxConcurrency, cacheTtl);
+    public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null)
+        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning);
 
-    /// <summary>
-    /// Creates a resolver with custom rate limiting parameters.
-    /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency, TimeSpan? cacheTtl = null)
-        : this(useSystemResolvers: false, nameservers, tokensPerSecond, maxConcurrency, cacheTtl) { }
-
-    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, int tokensPerSecond, int maxConcurrency, TimeSpan? cacheTtl)
+    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl, DnsTuning? tuning)
     {
+        var t = tuning ?? new DnsTuning();
+        _queryTimeout = TimeSpan.FromSeconds(t.QueryTimeoutSeconds);
+        _queryRetries = t.QueryRetries;
+        _unreachableDecay = TimeSpan.FromMinutes(t.UnreachableDecayMinutes);
+
         IPEndPoint[]? endpoints = null;
         if (nameservers?.Count > 0)
             endpoints = nameservers.Select(ip => new IPEndPoint(ip, 53)).ToArray();
@@ -107,8 +137,8 @@ public class DnsResolverService
             ? new LookupClientOptions(endpoints)
             : new LookupClientOptions();
         options.UseCache = true;
-        options.Timeout = TimeSpan.FromSeconds(15);
-        options.Retries = 2;
+        options.Timeout = _queryTimeout;
+        options.Retries = _queryRetries;
         options.ThrowDnsErrors = false;
         _client = new LookupClient(options);
 
@@ -137,16 +167,16 @@ public class DnsResolverService
 
         var directOptions = new LookupClientOptions();
         directOptions.UseCache = false;
-        directOptions.Timeout = TimeSpan.FromSeconds(15);
-        directOptions.Retries = 2;
+        directOptions.Timeout = _queryTimeout;
+        directOptions.Retries = _queryRetries;
         directOptions.ThrowDnsErrors = false;
         _directClient = new LookupClient(directOptions);
 
         // Rate limiting
-        _tokensPerSecond = tokensPerSecond;
-        _maxTokens = tokensPerSecond;
-        _rateLimiter = new SemaphoreSlim(tokensPerSecond, tokensPerSecond);
-        _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+        _tokensPerSecond = t.TokensPerSecond;
+        _maxTokens = t.TokensPerSecond;
+        _rateLimiter = new SemaphoreSlim(t.TokensPerSecond, t.TokensPerSecond);
+        _concurrencyLimiter = new SemaphoreSlim(t.MaxConcurrency, t.MaxConcurrency);
         _refillTimer = new Timer(_ => RefillTokens(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
         // In-memory caches with optional TTL
