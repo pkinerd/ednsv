@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #160 (attempt 1) |
-| **Run ID** | 25166364155 |
+| **Run** | #210 (attempt 1) |
+| **Run ID** | 30098528017 |
 | **Result** | pass |
-| **Commit** | 479b911dcfbdefdc1be8bf9089bfb9d906a037b7 |
-| **Ref** | refs/pull/14/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 45b406a43f5b567b1e41b793cf4c7fafc2075b3e |
+| **Ref** | refs/pull/27/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #14: Add domain history, improve auth UI, and implement user deletion |
-| **Branch** | claude/ui-enhancements-TqNuk |
+| **PR** | #27: Improve UI/UX: toast messages, scroll nav, collapsible sections, and history migration |
+| **Branch** | claude/redis-caching-verify-45k9yk |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
