@@ -54,6 +54,25 @@ var cacheDir = Path.Combine(dataDir, "cache");
 var authDir = Path.Combine(dataDir, "auth");
 var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
+
+// ── Distributed mode (opt-in) ─────────────────────────────────────────────
+// Redis is OPT-IN: unset connection string keeps the single-instance behaviour
+// (in-memory jobs, disk cache, in-process config lock). Set it to run multiple
+// replicas horizontally (shared job registry, probe-cache L2, config beacons).
+// See docs/horizontal-scaling.md.
+var redisConnString = builder.Configuration.GetValue<string>("Redis:ConnectionString");
+var redisInstanceName = builder.Configuration.GetValue<string>("Redis:InstanceName") ?? "ednsv";
+var redisAccessKey = builder.Configuration.GetValue<string>("Redis:AccessKey");
+var jobRetentionMinutes = builder.Configuration.GetValue<int>("JobRetentionMinutes", 5);
+var redis = new RedisConnection(redisConnString, redisInstanceName, redisAccessKey);
+builder.Services.AddSingleton(redis);
+
+// Data-protection key-ring location (shared RWX mount for multi-pod OIDC) and
+// optional at-rest encryption secret.
+var keysPath = builder.Configuration.GetValue<string>("DataProtection:KeysPath")
+    ?? Path.Combine(dataDir, "keys");
+var dpKeySecret = DataProtectionSecret.FromConfig(
+    builder.Configuration.GetValue<string>("DataProtection:KeyEncryptionSecret"));
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
 
@@ -123,19 +142,19 @@ if (!string.IsNullOrEmpty(dnsServerStr))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
     dns = dnsServers.Count > 0
-        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning)
-        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning);
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning);
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
 }
-var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds);
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis);
 // HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
 // BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
 // isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
 var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis);
 if (!validateHttpsCerts)
     Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
@@ -158,7 +177,7 @@ string? Disp(string? value) =>
 // On first run, seed from env vars + DkimSelectorsCheck.CommonSelectors so an
 // out-of-the-box install matches built-in behavior. After that the file is the
 // source of truth and admins edit it via the web UI.
-var configService = new ConfigService(dataDir);
+var configService = new ConfigService(dataDir, redis);
 var seedConfig = new AppConfig
 {
     EnableSmtpProbes = defaultEnableSmtpProbes,
@@ -221,7 +240,7 @@ var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours),
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────
-var authService = new AuthService(authDir, authTokenHash);
+var authService = new AuthService(authDir, authTokenHash, redis);
 authService.Load();
 builder.Services.AddSingleton(authService);
 
@@ -234,10 +253,27 @@ var externalAuthEnabled = oidcSettings.Enabled || jwtSettings.Enabled;
 if (externalAuthEnabled)
 {
     // SSO sessions are Data Protection tickets; persist the key ring under
-    // DataDir (alongside auth/ and cache/) so sessions survive restarts.
-    builder.Services.AddDataProtection()
-        .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
+    // DataProtection:KeysPath (default {DataDir}/keys). Point this at the shared
+    // RWX mount so all pods share one ring and can validate each other's session
+    // cookies. Optionally encrypt the ring at rest with a config secret.
+    var dpBuilder = builder.Services.AddDataProtection()
+        .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
         .SetApplicationName("ednsv");
+
+    if (dpKeySecret != null)
+    {
+        // Register the derived secret so the DI-activated decryptor can resolve
+        // it, and set the AES-GCM encryptor for the key-management ring.
+        builder.Services.AddSingleton(dpKeySecret);
+        builder.Services.Configure<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>(
+            o => o.XmlEncryptor = new SecretXmlEncryptor(dpKeySecret));
+    }
+    else
+    {
+        Console.Error.WriteLine(
+            "WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). "
+            + "Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.");
+    }
 
     var authBuilder = builder.Services.AddAuthentication();
 
@@ -340,7 +376,10 @@ if (externalAuthEnabled)
 }
 
 // ── In-flight validation tracking ────────────────────────────────────────
-var validationTracker = new ValidationTracker();
+// In distributed mode (Redis configured) job snapshots are mirrored to Redis so
+// any pod can serve status polls; otherwise this is a purely in-memory tracker.
+var jobStore = new RedisJobStore(redis, TimeSpan.FromMinutes(jobRetentionMinutes));
+var validationTracker = new ValidationTracker(jobStore);
 builder.Services.AddSingleton(validationTracker);
 
 builder.Services.ConfigureHttpJsonOptions(opts =>
@@ -720,45 +759,45 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
 // Returns the current status and results (if complete) for a validation job.
 app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
 {
-    if (!tracker.TryGetJob(jobId, out var job))
+    if (!tracker.TryGetState(jobId, out var s) || s == null)
         return Results.NotFound(new { error = "Job not found" });
 
     return Results.Ok(new
     {
         jobId,
-        job!.Domain,
-        status = job.Status.ToString().ToLowerInvariant(),
-        currentCheck = job.CurrentCheck,
-        completedChecks = job.CompletedChecks,
+        s.Domain,
+        status = s.Status,
+        currentCheck = s.CurrentCheck,
+        completedChecks = s.CompletedChecks,
         results = new
         {
-            pass = job.PassCount,
-            info = job.InfoCount,
-            warning = job.WarningCount,
-            error = job.ErrorCount,
-            critical = job.CriticalCount
+            pass = s.Pass,
+            info = s.Info,
+            warning = s.Warning,
+            error = s.Error,
+            critical = s.Critical
         },
-        dns = job.Dns != null ? new
+        dns = s.Dns != null ? new
         {
-            queries = (job.Dns.CacheHits - job.DnsHitsBaseline) + (job.Dns.CacheMisses - job.DnsMissesBaseline),
-            cacheHits = job.Dns.CacheHits - job.DnsHitsBaseline,
-            sent = job.Dns.CacheMisses - job.DnsMissesBaseline,
-            received = job.Dns.ResponsesReceived - job.DnsResponsesBaseline,
-            totalCacheHits = job.Dns.CacheHits,
-            totalCacheMisses = job.Dns.CacheMisses,
-            totalCacheSize = job.Dns.CacheSize
+            queries = s.Dns.Queries,
+            cacheHits = s.Dns.CacheHits,
+            sent = s.Dns.Sent,
+            received = s.Dns.Received,
+            totalCacheHits = s.Dns.TotalCacheHits,
+            totalCacheMisses = s.Dns.TotalCacheMisses,
+            totalCacheSize = s.Dns.TotalCacheSize
         } : null,
-        smtp = job.Smtp != null ? new
+        smtp = s.Smtp != null ? new
         {
-            probesStarted = job.Smtp.ProbesStarted - job.SmtpProbesStartedBaseline,
-            probesDone = job.Smtp.ProbesCompleted - job.SmtpProbesCompletedBaseline,
-            portsStarted = job.Smtp.PortsStarted - job.PortsStartedBaseline,
-            portsDone = job.Smtp.PortsCompleted - job.PortsCompletedBaseline
+            probesStarted = s.Smtp.ProbesStarted,
+            probesDone = s.Smtp.ProbesDone,
+            portsStarted = s.Smtp.PortsStarted,
+            portsDone = s.Smtp.PortsDone
         } : null,
-        elapsed = (DateTime.UtcNow - job.StartedAt).TotalSeconds,
-        duration = job.Report?.Duration.TotalSeconds,
-        report = job.Report,
-        error = job.Error
+        elapsed = (DateTime.UtcNow - s.StartedAt).TotalSeconds,
+        duration = s.DurationSeconds,
+        report = s.Report,
+        error = s.ErrorMessage
     });
 })
 .WithName("GetValidationStatus")
@@ -970,11 +1009,27 @@ static bool RequireAdmin(HttpContext ctx, AuthService auth, out IResult? error)
     return true;
 }
 
+// Parse an If-Match header value into the bare head GUID (strips quotes and any
+// weak-validator prefix). Returns null when absent so the write falls back to
+// the pod's freshly-read head.
+static string? ParseIfMatch(Microsoft.Extensions.Primitives.StringValues ifMatch)
+{
+    var raw = ifMatch.ToString();
+    if (string.IsNullOrWhiteSpace(raw) || raw == "*") return null;
+    raw = raw.Trim();
+    if (raw.StartsWith("W/", StringComparison.OrdinalIgnoreCase)) raw = raw[2..].Trim();
+    return raw.Trim('"');
+}
+
 // GET /api/config — return the current persisted config.
 app.MapGet("/api/config", (HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
 {
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
-    return Results.Ok(cfgSvc.Snapshot());
+    var snapshot = cfgSvc.Snapshot();
+    // Expose the head-revision GUID as an ETag so the client can send it back as
+    // If-Match on save, letting the server reject a concurrent overwrite (409).
+    ctx.Response.Headers.ETag = $"\"{cfgSvc.Head}\"";
+    return Results.Ok(snapshot);
 })
 .WithName("GetConfig")
 .WithTags("Config");
@@ -998,9 +1053,23 @@ app.MapPut("/api/config", async (HttpContext ctx, AuthService auth, ConfigServic
     var savedBy = ctx.Items.ContainsKey("AuthBypass")
         ? "(auth-disabled)"
         : ((AuthService.User?)ctx.Items["AuthUser"])?.Username ?? "unknown";
-    cfgSvc.Replace(incoming, savedBy);
+    // Optional optimistic-concurrency token (the ETag returned by GET /api/config).
+    var expectedHead = ParseIfMatch(ctx.Request.Headers.IfMatch);
+    try
+    {
+        cfgSvc.Replace(incoming, savedBy, expectedHead);
+    }
+    catch (RevisionConflictException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status409Conflict);
+    }
+    catch (StoreUnavailableException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
     auditLogger.LogInformation("Config updated by={User} (revision saved)",
         ctx.Items.ContainsKey("AuthBypass") ? savedBy : Disp(savedBy));
+    ctx.Response.Headers.ETag = $"\"{cfgSvc.Head}\"";
     return Results.Ok(cfgSvc.Snapshot());
 })
 .WithName("UpdateConfig")
@@ -1296,7 +1365,9 @@ app.MapPost("/api/auth/users", (IssueTokenRequest req, HttpContext ctx, AuthServ
     if (!u.IsAdmin) return Results.StatusCode(StatusCodes.Status403Forbidden);
 
     var ip = ctx.Connection.RemoteIpAddress?.ToString();
-    var result = auth.Issue(req.Username ?? "", req.IsAdmin, u.Username, ip);
+    AuthService.IssueResult result;
+    try { result = auth.Issue(req.Username ?? "", req.IsAdmin, u.Username, ip); }
+    catch (StoreUnavailableException ex) { return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
     if (result.Status == AuthService.IssueStatus.Success)
         auditLogger.LogInformation("Token issued: user={NewUser} admin={IsAdmin} by={Issuer} ip={Ip}",
             Disp(result.User!.Username), result.User.IsAdmin, Disp(u.Username), ip);
@@ -1335,7 +1406,9 @@ app.MapPost("/api/auth/users/{username}/revoke", (string username, HttpContext c
     // to their own issuance subtree.
     var method = ctx.Items["AuthMethod"] as string;
     var elevated = u.IsAdmin && (method == "oidc" || method == "jwt");
-    var result = auth.Revoke(username, u.Username, elevated);
+    AuthService.RevokeResult result;
+    try { result = auth.Revoke(username, u.Username, elevated); }
+    catch (StoreUnavailableException ex) { return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
     if (result.Status == AuthService.RevokeStatus.Success)
         auditLogger.LogInformation("Token revoked: count={Count} targets={Targets} by={User} elevated={Elevated}",
             result.Affected!.Count, string.Join(",", result.Affected!.Select(Disp)), Disp(u.Username), elevated);
@@ -1356,7 +1429,9 @@ app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, A
 {
     if (auth.Disabled) return Results.BadRequest(new { error = "token auth is disabled" });
     var u = (AuthService.User)ctx.Items["AuthUser"]!;
-    var result = auth.Delete(username, u.Username);
+    AuthService.DeleteResult result;
+    try { result = auth.Delete(username, u.Username); }
+    catch (StoreUnavailableException ex) { return Results.Json(new { error = ex.Message }, statusCode: StatusCodes.Status503ServiceUnavailable); }
     if (result.Status == AuthService.DeleteStatus.Success)
         auditLogger.LogInformation("Token deleted: count={Count} targets={Targets} by={User}",
             result.Affected!.Count, string.Join(",", result.Affected!.Select(Disp)), Disp(u.Username));
@@ -1371,6 +1446,25 @@ app.MapDelete("/api/auth/users/{username}", (string username, HttpContext ctx, A
 })
 .WithName("DeleteUser")
 .WithTags("Auth");
+
+// ── Health probes ────────────────────────────────────────────────────────
+
+// Liveness: the process is up and serving. Never depends on Redis so a Redis
+// outage doesn't trigger pod restarts (the app degrades, it isn't dead).
+app.MapGet("/health/live", () => Results.Ok(new { status = "live" }))
+    .WithName("HealthLive")
+    .WithTags("Health");
+
+// Readiness: in distributed mode, report not-ready when Redis is configured but
+// unreachable so k8s stops routing new requests to a pod that can't coordinate
+// jobs/config. In single-instance mode (Redis unset) this is always ready.
+app.MapGet("/health/ready", async (RedisConnection redis) =>
+    await redis.IsHealthyAsync()
+        ? Results.Ok(new { status = "ready" })
+        : Results.Json(new { status = "not-ready", reason = "redis unreachable" },
+            statusCode: StatusCodes.Status503ServiceUnavailable))
+    .WithName("HealthReady")
+    .WithTags("Health");
 
 app.Run();
 
@@ -1433,20 +1527,68 @@ class ValidationJob
             PortsCompletedBaseline = Smtp.PortsCompleted;
         }
     }
+
+    /// <summary>
+    /// Builds a serializable snapshot, computing DNS/SMTP deltas from the live
+    /// per-process counters against this job's baselines. Produced on the
+    /// executing pod so remote pods can render status from stored values.
+    /// </summary>
+    public JobState ToState(string jobId)
+    {
+        JobDnsStats? dnsStats = Dns != null ? new JobDnsStats(
+            Queries: (Dns.CacheHits - DnsHitsBaseline) + (Dns.CacheMisses - DnsMissesBaseline),
+            CacheHits: Dns.CacheHits - DnsHitsBaseline,
+            Sent: Dns.CacheMisses - DnsMissesBaseline,
+            Received: Dns.ResponsesReceived - DnsResponsesBaseline,
+            TotalCacheHits: Dns.CacheHits,
+            TotalCacheMisses: Dns.CacheMisses,
+            TotalCacheSize: Dns.CacheSize) : null;
+
+        JobSmtpStats? smtpStats = Smtp != null ? new JobSmtpStats(
+            ProbesStarted: Smtp.ProbesStarted - SmtpProbesStartedBaseline,
+            ProbesDone: Smtp.ProbesCompleted - SmtpProbesCompletedBaseline,
+            PortsStarted: Smtp.PortsStarted - PortsStartedBaseline,
+            PortsDone: Smtp.PortsCompleted - PortsCompletedBaseline) : null;
+
+        return new JobState
+        {
+            JobId = jobId,
+            Domain = Domain,
+            Status = Status.ToString().ToLowerInvariant(),
+            CurrentCheck = CurrentCheck,
+            CompletedChecks = CompletedChecks,
+            Pass = PassCount,
+            Info = InfoCount,
+            Warning = WarningCount,
+            Error = ErrorCount,
+            Critical = CriticalCount,
+            Dns = dnsStats,
+            Smtp = smtpStats,
+            StartedAt = StartedAt,
+            DurationSeconds = Report?.Duration.TotalSeconds,
+            Report = Report,
+            ErrorMessage = Error
+        };
+    }
 }
 
 class ValidationTracker : IDisposable
 {
     private readonly ConcurrentDictionary<string, ValidationJob> _jobs = new();
     private readonly Timer _cleanupTimer;
+    private readonly RedisJobStore? _jobStore;
     private static readonly TimeSpan _jobRetention = TimeSpan.FromHours(1);
     // Hard cap for jobs still marked Running. A validation is bounded by its own
     // check timeouts (45s + 30s retry) and the caller's request lifetime, so a job
     // that is still "running" well past this is stuck/abandoned and must not leak.
     private static readonly TimeSpan _runningJobMaxAge = TimeSpan.FromHours(2);
 
-    public ValidationTracker()
+    // In distributed mode (Redis configured) job snapshots are mirrored to Redis
+    // so any pod can serve GET /api/status/{id}. The local dictionary is still
+    // used by the executing pod for live same-pod polls.
+    public ValidationTracker(RedisJobStore? jobStore = null)
     {
+        _jobStore = jobStore is { Enabled: true } ? jobStore : null;
         _cleanupTimer = new Timer(_ => Cleanup(), null,
             TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(5));
     }
@@ -1477,7 +1619,13 @@ class ValidationTracker : IDisposable
     {
         var jobId = Guid.NewGuid().ToString("N")[..12];
         var job = new ValidationJob { Domain = domain, Dns = dns, Smtp = smtp };
+        // Baseline the per-process counters now — they are unchanged until
+        // ValidateAsync runs — so the first snapshot's deltas start at zero.
+        job.SnapshotBaselines();
         _jobs[jobId] = job;
+        // Publish an initial snapshot so a status poll routed to another pod finds
+        // the job immediately after the 202 response (distributed mode only).
+        _jobStore?.Save(job.ToState(jobId), terminal: false);
 
         // Domain and Username in logs/scopes are masked when masking is enabled;
         // JobId is an opaque per-request identifier and is never masked.
@@ -1521,10 +1669,6 @@ class ValidationTracker : IDisposable
                     }
                 }
 
-                // Snapshot baselines AFTER validator is created but BEFORE ValidateAsync
-                // runs (which calls ResetErrors and starts incrementing counters).
-                job.SnapshotBaselines();
-
                 validator.OnCheckStarted += name => job.CurrentCheck = name;
                 validator.OnCheckCompleted += (_, result) =>
                 {
@@ -1537,12 +1681,15 @@ class ValidationTracker : IDisposable
                         case CheckSeverity.Error: Interlocked.Increment(ref job.ErrorCount); break;
                         case CheckSeverity.Critical: Interlocked.Increment(ref job.CriticalCount); break;
                     }
+                    // Mirror progress to Redis so remote pods see fresh status.
+                    _jobStore?.Save(job.ToState(jobId), terminal: false);
                 };
 
                 var report = await validator.ValidateAsync(domain, options);
                 job.Report = report;
                 job.CurrentCheck = null;
                 job.Status = JobStatus.Completed;
+                _jobStore?.Save(job.ToState(jobId), terminal: true);
 
                 // Performance summary: duration, DNS cache efficiency (deltas
                 // over this job) and severity breakdown. Scope already carries
@@ -1563,6 +1710,7 @@ class ValidationTracker : IDisposable
                 logger.LogError(ex, "Validation failed");
                 job.Error = ex.Message;
                 job.Status = JobStatus.Failed;
+                _jobStore?.Save(job.ToState(jobId), terminal: true);
             }
         });
 
@@ -1570,6 +1718,22 @@ class ValidationTracker : IDisposable
     }
 
     public bool TryGetJob(string jobId, out ValidationJob? job) => _jobs.TryGetValue(jobId, out job);
+
+    /// <summary>
+    /// Resolve a job's renderable snapshot. Prefers the live local job (same-pod,
+    /// live counters); in distributed mode falls back to the Redis snapshot so a
+    /// poll routed to a different pod than the one running the job still resolves.
+    /// </summary>
+    public bool TryGetState(string jobId, out JobState? state)
+    {
+        if (_jobs.TryGetValue(jobId, out var job))
+        {
+            state = job.ToState(jobId);
+            return true;
+        }
+        state = _jobStore?.Get(jobId);
+        return state != null;
+    }
 
     public static DomainResultSummary BuildSummary(ValidationReport report)
     {

@@ -273,6 +273,9 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 - Implements `IDisposable`. A 5-minute `Timer` evicts completed/failed jobs older than 1 hour from the dictionary so long-running web servers don't accumulate every job they ever ran in memory
 - The whole `Task.Run` body runs inside a structured logger scope (`JobId`, `Username`, `Endpoint`, `Domain`) so trace lines emitted from the singleton DNS/SMTP/HTTP services — captured via `TraceContext` AsyncLocal — automatically carry the right job identifier even though the services are shared
 
+> In **distributed mode** (`Redis:ConnectionString` set) the same job snapshots are also written to Redis under `job:{id}` with a `JobRetentionMinutes` TTL, so `GET /api/status/{id}` can be served by any replica. See [horizontal-scaling.md](horizontal-scaling.md).
+
+
 ### Web UI
 
 Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
@@ -301,6 +304,10 @@ CI publishes images to GitHub Container Registry (`ghcr.io/<owner>/ednsv`): `lat
 ```bash
 docker run --rm -p 8080:8080 ghcr.io/<owner>/ednsv:latest
 ```
+
+### Scaling across multiple replicas
+
+A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, and a Kubernetes-style example.
 
 ## Network egress (outbound ports)
 

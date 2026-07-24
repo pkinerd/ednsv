@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text;
+using System.Text.Json;
 
 namespace Ednsv.Core.Services;
 
@@ -43,11 +44,21 @@ public class SmtpProbeService
 
     /// <param name="timeoutSeconds">SMTP command/connect timeout. Default 10s.</param>
     /// <param name="portTimeoutSeconds">TCP port-open probe timeout. Default 5s.</param>
-    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5)
+    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5, RedisConnection? redis = null)
     {
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
-        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl);
+        ProbeCacheL2<SmtpProbeResult>? probeL2 =
+            redis != null && redis.Enabled
+                ? new ProbeCacheL2<SmtpProbeResult>(redis, "smtp", cacheTtl,
+                    r => JsonSerializer.Serialize(ToCacheEntry(r)),
+                    json =>
+                    {
+                        var e = JsonSerializer.Deserialize<SmtpProbeCacheEntry>(json);
+                        return e == null ? null : FromCacheEntry(e);
+                    })
+                : null;
+        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2);
         _portCache = new ProbeCacheValue<bool>(cacheTtl);
     }
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
@@ -519,26 +530,66 @@ public class SmtpProbeService
 
     // ── Cache export/import for disk persistence ─────────────────────────
 
+    /// <summary>Convert a probe result to its serialisable DTO (certs → base64).
+    /// Shared by disk persistence and the Redis L2.</summary>
+    internal static SmtpProbeCacheEntry ToCacheEntry(SmtpProbeResult r) => new()
+    {
+        Connected = r.Connected, Banner = r.Banner,
+        SupportsStartTls = r.SupportsStartTls, EhloCapabilities = r.EhloCapabilities,
+        CertSubject = r.CertSubject, CertIssuer = r.CertIssuer,
+        CertExpiry = r.CertExpiry, CertSans = r.CertSans,
+        CertRawBase64 = r.Certificate != null ? Convert.ToBase64String(r.Certificate.RawData) : null,
+        CertChainIntermediatesBase64 = r.CertChainIntermediates?.Select(c => Convert.ToBase64String(c.RawData)).ToList(),
+        TlsProtocol = r.TlsProtocol.ToString(), TlsCipherSuite = r.TlsCipherSuite,
+        SmtpMaxSize = r.SmtpMaxSize, SupportsRequireTls = r.SupportsRequireTls,
+        ConnectTimeMs = r.ConnectTimeMs, BannerTimeMs = r.BannerTimeMs,
+        EhloTimeMs = r.EhloTimeMs, TlsTimeMs = r.TlsTimeMs,
+        Error = r.Error
+    };
+
+    /// <summary>Rebuild a probe result from its serialisable DTO (base64 → certs).
+    /// Shared by disk persistence and the Redis L2. Corrupt cert data is ignored.</summary>
+    internal static SmtpProbeResult FromCacheEntry(SmtpProbeCacheEntry e)
+    {
+        Enum.TryParse<System.Security.Authentication.SslProtocols>(e.TlsProtocol, out var proto);
+        X509Certificate2? cert = null;
+        if (e.CertRawBase64 != null)
+        {
+            try { cert = new X509Certificate2(Convert.FromBase64String(e.CertRawBase64)); }
+            catch { /* ignore corrupt cached cert data */ }
+        }
+        List<X509Certificate2>? intermediates = null;
+        if (e.CertChainIntermediatesBase64?.Count > 0)
+        {
+            intermediates = new List<X509Certificate2>();
+            foreach (var b64 in e.CertChainIntermediatesBase64)
+            {
+                try { intermediates.Add(new X509Certificate2(Convert.FromBase64String(b64))); }
+                catch { /* ignore corrupt cached cert data */ }
+            }
+        }
+        return new SmtpProbeResult
+        {
+            Connected = e.Connected, Banner = e.Banner,
+            SupportsStartTls = e.SupportsStartTls, EhloCapabilities = e.EhloCapabilities,
+            Certificate = cert, CertChainIntermediates = intermediates,
+            CertSubject = e.CertSubject, CertIssuer = e.CertIssuer,
+            CertExpiry = e.CertExpiry, CertSans = e.CertSans,
+            TlsProtocol = proto, TlsCipherSuite = e.TlsCipherSuite,
+            SmtpMaxSize = e.SmtpMaxSize, SupportsRequireTls = e.SupportsRequireTls,
+            ConnectTimeMs = e.ConnectTimeMs, BannerTimeMs = e.BannerTimeMs,
+            EhloTimeMs = e.EhloTimeMs, TlsTimeMs = e.TlsTimeMs,
+            Error = e.Error
+        };
+    }
+
     public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
     {
         var result = new Dictionary<string, SmtpProbeCacheEntry>();
         foreach (var kvp in _probeCache.Export())
         {
             var diskKey = kvp.Key.StartsWith("smtp:") ? kvp.Key[5..] : kvp.Key;
-            result[diskKey] = new SmtpProbeCacheEntry
-            {
-                Connected = kvp.Value.Connected, Banner = kvp.Value.Banner,
-                SupportsStartTls = kvp.Value.SupportsStartTls, EhloCapabilities = kvp.Value.EhloCapabilities,
-                CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
-                CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
-                CertRawBase64 = kvp.Value.Certificate != null ? Convert.ToBase64String(kvp.Value.Certificate.RawData) : null,
-                CertChainIntermediatesBase64 = kvp.Value.CertChainIntermediates?.Select(c => Convert.ToBase64String(c.RawData)).ToList(),
-                TlsProtocol = kvp.Value.TlsProtocol.ToString(), TlsCipherSuite = kvp.Value.TlsCipherSuite,
-                SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,
-                ConnectTimeMs = kvp.Value.ConnectTimeMs, BannerTimeMs = kvp.Value.BannerTimeMs,
-                EhloTimeMs = kvp.Value.EhloTimeMs, TlsTimeMs = kvp.Value.TlsTimeMs,
-                Error = kvp.Value.Error
-            };
+            result[diskKey] = ToCacheEntry(kvp.Value);
         }
         return result;
     }
@@ -546,38 +597,7 @@ public class SmtpProbeService
     public void ImportProbeCache(Dictionary<string, SmtpProbeCacheEntry> entries)
     {
         foreach (var kvp in entries)
-        {
-            Enum.TryParse<System.Security.Authentication.SslProtocols>(kvp.Value.TlsProtocol, out var proto);
-            X509Certificate2? cert = null;
-            if (kvp.Value.CertRawBase64 != null)
-            {
-                try { cert = new X509Certificate2(Convert.FromBase64String(kvp.Value.CertRawBase64)); }
-                catch { /* ignore corrupt cached cert data */ }
-            }
-            List<X509Certificate2>? intermediates = null;
-            if (kvp.Value.CertChainIntermediatesBase64?.Count > 0)
-            {
-                intermediates = new List<X509Certificate2>();
-                foreach (var b64 in kvp.Value.CertChainIntermediatesBase64)
-                {
-                    try { intermediates.Add(new X509Certificate2(Convert.FromBase64String(b64))); }
-                    catch { /* ignore corrupt cached cert data */ }
-                }
-            }
-            _probeCache.Import($"smtp:{kvp.Key}", new SmtpProbeResult
-            {
-                Connected = kvp.Value.Connected, Banner = kvp.Value.Banner,
-                SupportsStartTls = kvp.Value.SupportsStartTls, EhloCapabilities = kvp.Value.EhloCapabilities,
-                Certificate = cert, CertChainIntermediates = intermediates,
-                CertSubject = kvp.Value.CertSubject, CertIssuer = kvp.Value.CertIssuer,
-                CertExpiry = kvp.Value.CertExpiry, CertSans = kvp.Value.CertSans,
-                TlsProtocol = proto, TlsCipherSuite = kvp.Value.TlsCipherSuite,
-                SmtpMaxSize = kvp.Value.SmtpMaxSize, SupportsRequireTls = kvp.Value.SupportsRequireTls,
-                ConnectTimeMs = kvp.Value.ConnectTimeMs, BannerTimeMs = kvp.Value.BannerTimeMs,
-                EhloTimeMs = kvp.Value.EhloTimeMs, TlsTimeMs = kvp.Value.TlsTimeMs,
-                Error = kvp.Value.Error
-            });
-        }
+            _probeCache.Import($"smtp:{kvp.Key}", FromCacheEntry(kvp.Value));
     }
 
     public Dictionary<string, bool> ExportPortCache()

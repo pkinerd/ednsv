@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
+using System.Text.Json;
 using DnsClient;
 using DnsClient.Protocol;
 using Microsoft.Extensions.Caching.Memory;
@@ -110,16 +111,16 @@ public class DnsResolverService
     /// Creates a resolver using the specified DNS server(s).
     /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null)
-        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning) { }
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null, RedisConnection? redis = null)
+        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning, redis) { }
 
     /// <summary>
     /// Creates a resolver that uses the OS-configured DNS resolvers.
     /// </summary>
-    public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null)
-        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning);
+    public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null, RedisConnection? redis = null)
+        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning, redis);
 
-    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl, DnsTuning? tuning)
+    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl, DnsTuning? tuning, RedisConnection? redis = null)
     {
         var t = tuning ?? new DnsTuning();
         _queryTimeout = TimeSpan.FromSeconds(t.QueryTimeoutSeconds);
@@ -179,11 +180,31 @@ public class DnsResolverService
         _concurrencyLimiter = new SemaphoreSlim(t.MaxConcurrency, t.MaxConcurrency);
         _refillTimer = new Timer(_ => RefillTokens(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 
-        // In-memory caches with optional TTL
+        // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
-        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
-        _ptrCache = new ProbeCache<List<string>>(cacheTtl);
-        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl);
+        ProbeCacheL2<IDnsQueryResponse>? DnsL2(string type) =>
+            redis != null && redis.Enabled
+                ? new ProbeCacheL2<IDnsQueryResponse>(redis, type, cacheTtl,
+                    resp =>
+                    {
+                        var e = DnsCacheSerializer.SerializeResponse(resp);
+                        return e == null ? null : JsonSerializer.Serialize(e);
+                    },
+                    json =>
+                    {
+                        var e = JsonSerializer.Deserialize<DnsCacheEntry>(json);
+                        return e == null ? null : DnsCacheSerializer.DeserializeResponse(e);
+                    })
+                : null;
+        ProbeCacheL2<List<string>>? ptrL2 =
+            redis != null && redis.Enabled
+                ? new ProbeCacheL2<List<string>>(redis, "ptr", cacheTtl,
+                    list => JsonSerializer.Serialize(list),
+                    json => JsonSerializer.Deserialize<List<string>>(json))
+                : null;
+        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns"));
+        _ptrCache = new ProbeCache<List<string>>(cacheTtl, ptrL2);
+        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"));
     }
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
