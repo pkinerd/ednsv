@@ -2,13 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #159 (attempt 1) |
-| **Run ID** | 25161764399 |
+| **Run** | #208 (attempt 1) |
+| **Run ID** | 30097410984 |
 | **Result** | pass |
-| **Commit** | 30fb47c6a747aaa639a02ae35f08639ea0952286 |
-| **Ref** | refs/heads/main |
-| **Event** | push |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 4c002c953e2b6045937f6d8a26063ecd28da9120 |
+| **Ref** | refs/pull/27/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #27: Improve UI/UX: toast messages, scroll nav, collapsible sections, and history migration |
+| **Branch** | claude/redis-caching-verify-45k9yk |
 
 ## Artifacts
 ```
@@ -28,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
