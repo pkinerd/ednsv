@@ -2,13 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #152 (attempt 1) |
-| **Run ID** | 25146850836 |
+| **Run** | #202 (attempt 1) |
+| **Run ID** | 30093284639 |
 | **Result** | pass |
-| **Commit** | 03c22823f4ae9828a4c0c9998615cf366e2512a8 |
-| **Ref** | refs/heads/main |
-| **Event** | push |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | c8b7d555257fa3d14c0d097b7570f6b01251cafc |
+| **Ref** | refs/pull/26/merge |
+| **Event** | pull_request |
 | **Actor** | pkinerd |
+| **PR** | #26: added support for horizontal scale via redis |
+| **Branch** | claude/external-idp-entra-auth-31ftjw |
 
 ## Artifacts
 ```
@@ -28,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
