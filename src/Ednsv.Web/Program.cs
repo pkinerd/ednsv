@@ -260,6 +260,22 @@ if (externalAuthEnabled)
         .PersistKeysToFileSystem(new DirectoryInfo(keysPath))
         .SetApplicationName("ednsv");
 
+    // Housekeeping: DataProtection never removes expired keys, so on a long-lived
+    // (shared) mount they accumulate. Drop keys expired longer ago than the
+    // retention window. Floor the window at the max OIDC session lifetime (+1 day
+    // slack) so a key that could still unprotect a live session cookie is never
+    // deleted, regardless of the configured value. Runs before the provider reads
+    // the ring, so DP never references a removed key.
+    var configuredRetentionDays = Math.Max(1,
+        builder.Configuration.GetValue<int>("DataProtection:KeyRetentionDays", 30));
+    var minRetentionDays = (int)Math.Ceiling(Math.Max(0, oidcSettings.SessionHours) / 24.0) + 1;
+    var keyRetention = TimeSpan.FromDays(Math.Max(configuredRetentionDays, minRetentionDays));
+    var staleRemoved = DataProtectionKeyring.RemoveStaleKeys(keysPath, keyRetention, Console.Error.WriteLine);
+    if (staleRemoved > 0)
+        Console.Error.WriteLine(
+            $"DataProtection key-ring: removed {staleRemoved} expired key file(s) "
+            + $"older than {keyRetention.TotalDays:F0} days.");
+
     if (dpKeySecret != null)
     {
         // A secret is configured, so the ring must be encrypted at rest. DP only

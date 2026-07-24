@@ -222,6 +222,61 @@ public sealed class DataProtectionSecretTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    private static string KeyXmlWithExpiry(string id, DateTimeOffset expiry) => $"""
+        <key id="{id}" version="1">
+          <creationDate>2020-01-01T00:00:00Z</creationDate>
+          <activationDate>2020-01-01T00:00:00Z</activationDate>
+          <expirationDate>{expiry.UtcDateTime:o}</expirationDate>
+          <descriptor deserializerType="X"><descriptor /></descriptor>
+        </key>
+        """;
+
+    [Fact]
+    public void RemoveStaleKeys_DeletesLongExpired_KeepsRecentActiveAndUndated()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), $"ednsv-keys-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var stale = Path.Combine(dir, "key-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.xml");
+            var recent = Path.Combine(dir, "key-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb.xml");
+            var active = Path.Combine(dir, "key-cccccccc-cccc-cccc-cccc-cccccccccccc.xml");
+            var undated = Path.Combine(dir, "key-dddddddd-dddd-dddd-dddd-dddddddddddd.xml");
+            File.WriteAllText(stale, KeyXmlWithExpiry("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", now.AddDays(-100)));
+            File.WriteAllText(recent, KeyXmlWithExpiry("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", now.AddDays(-10)));
+            File.WriteAllText(active, KeyXmlWithExpiry("cccccccc-cccc-cccc-cccc-cccccccccccc", now.AddDays(80)));
+            File.WriteAllText(undated, "<key id=\"dddddddd-dddd-dddd-dddd-dddddddddddd\" version=\"1\"><creationDate>2020-01-01T00:00:00Z</creationDate></key>");
+
+            var removed = DataProtectionKeyring.RemoveStaleKeys(dir, TimeSpan.FromDays(30));
+
+            Assert.Equal(1, removed);
+            Assert.False(File.Exists(stale), "expired beyond retention should be deleted");
+            Assert.True(File.Exists(recent), "expired within retention should be kept");
+            Assert.True(File.Exists(active), "future/active key should be kept");
+            Assert.True(File.Exists(undated), "key with no parseable expiry should be kept");
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    [Fact]
+    public void RemoveStaleKeys_MalformedAndMissingDir_AreNoOps()
+    {
+        Assert.Equal(0, DataProtectionKeyring.RemoveStaleKeys(
+            Path.Combine(Path.GetTempPath(), $"ednsv-nope-{Guid.NewGuid():N}"), TimeSpan.FromDays(30)));
+
+        var dir = Path.Combine(Path.GetTempPath(), $"ednsv-keys-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var malformed = Path.Combine(dir, "key-eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee.xml");
+            File.WriteAllText(malformed, "not xml at all");
+            Assert.Equal(0, DataProtectionKeyring.RemoveStaleKeys(dir, TimeSpan.FromDays(1)));
+            Assert.True(File.Exists(malformed));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void RemoveUnencryptedKeys_IgnoresNonKeyMalformedAndMissingDir()
     {

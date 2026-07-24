@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
@@ -225,5 +226,70 @@ public static class DataProtectionKeyring
                     && string.Equals(attr.Value, "true", StringComparison.OrdinalIgnoreCase))
                     return true;
         return false;
+    }
+
+    /// <summary>
+    /// Deletes key-ring files whose expiration is further in the past than
+    /// <paramref name="retention"/>. DataProtection never removes expired keys
+    /// itself, so on a long-lived (shared) mount they accumulate. A key can still be
+    /// needed to unprotect a payload until that payload's own lifetime elapses, so
+    /// the caller must pass a retention window comfortably larger than the longest
+    /// protected-payload lifetime (here the OIDC session cookie). Keys that expire
+    /// in the future (including the active key), expire within the retention window,
+    /// or have no parseable expiration are always kept. Run before the provider
+    /// reads the ring so DP never references a removed key.
+    /// </summary>
+    /// <returns>The number of expired key files removed.</returns>
+    public static int RemoveStaleKeys(string keysPath, TimeSpan retention, Action<string>? warn = null)
+    {
+        DirectoryInfo dir;
+        try
+        {
+            dir = new DirectoryInfo(keysPath);
+            if (!dir.Exists) return 0;
+        }
+        catch
+        {
+            return 0;
+        }
+
+        var cutoff = DateTimeOffset.UtcNow - retention;
+        var removed = 0;
+        foreach (var file in dir.EnumerateFiles("key-*.xml"))
+        {
+            DateTimeOffset? expiry;
+            try { expiry = ReadKeyExpiration(file.FullName); }
+            catch { continue; } // unreadable/not a key — leave it
+            // Keep: no expiry, still valid, or expired but within the retention window.
+            if (expiry == null || expiry.Value >= cutoff) continue;
+            try
+            {
+                file.Delete();
+                removed++;
+            }
+            catch (Exception ex)
+            {
+                warn?.Invoke($"Could not remove expired data-protection key file {file.Name}: {ex.Message}");
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>Reads a key file's &lt;expirationDate&gt;, or null when the file is
+    /// not a key-ring key or has no parseable expiration.</summary>
+    private static DateTimeOffset? ReadKeyExpiration(string path)
+    {
+        var root = XDocument.Load(path).Root;
+        if (root == null || !string.Equals(root.Name.LocalName, "key", StringComparison.Ordinal))
+            return null;
+
+        foreach (var el in root.Elements())
+        {
+            if (!string.Equals(el.Name.LocalName, "expirationDate", StringComparison.Ordinal)) continue;
+            return DateTimeOffset.TryParse(el.Value, CultureInfo.InvariantCulture,
+                DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var dto)
+                ? dto : null;
+        }
+        return null;
     }
 }
