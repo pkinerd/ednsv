@@ -331,8 +331,44 @@ it never calls downstream APIs on their behalf — so it has no need for access
 or refresh tokens. Deployments that prefer the authorization-code flow can set
 `ResponseType=code`; on Entra ID that requires a `ClientSecret` (or
 certificate/federated credential), while IdPs that support public clients can
-run code+PKCE without one. Access-token-bearing response types are rejected at
-startup.
+run code+PKCE without one.
+
+**Why `id_token` is the default, and its security properties.** ednsv is a
+pure authentication consumer: it needs the user's identity and role claims to
+establish a session and nothing more — it never calls a downstream API on the
+user's behalf, so it has no use for access or refresh tokens or the token
+endpoint. That makes the ID-token flow both sufficient and the least-privilege
+choice (no client credential is held, so none can leak, expire, or be abused
+to mint tokens). The general "avoid the implicit flow" guidance (OAuth 2.0
+Security BCP, RFC 9700) targets a specific hazard — **access tokens** returned
+in the URL fragment, where they land in browser history, `Referer` headers,
+and server logs. ednsv structurally avoids that hazard:
+
+- **No access tokens, ever.** Only an ID token is requested. `ResponseType` is
+  validated at startup and rejects anything that would deliver an access token
+  in the front channel — only `id_token`, `code`, and `code id_token` are
+  accepted.
+- **`form_post`, not URL fragment.** The ID token is POSTed to `CallbackPath`
+  in the request body, so it never appears in a URL, browser history, or access
+  logs.
+- **Signature + audience + issuer validated** against the IdP's published,
+  auto-rotating signing keys (fetched from OIDC metadata); a tampered or
+  wrong-audience token is rejected.
+- **Nonce replay/injection protection.** Each sign-in carries a nonce bound to
+  a correlation cookie; a replayed or injected token whose nonce doesn't match
+  is rejected.
+- **Single-use, then discarded.** The ID token is consumed once at the callback
+  to mint the `ednsv-session` cookie and is not stored (`SaveTokens=false`).
+  After sign-in the credential is that session cookie (HttpOnly, `SameSite=Lax`,
+  Data Protection-encrypted — see below), not the ID token.
+- **HTTPS required.** Like the code flow, this depends on TLS end-to-end and on
+  correct forwarded headers behind a reverse proxy (below); the correlation and
+  session cookies are `Secure`.
+
+Choose `ResponseType=code` if your policy forbids front-channel token delivery
+outright, or if ednsv will later need to call APIs on the user's behalf — it
+adds a back-channel exchange and (on Entra) a client credential, but no
+additional security for an auth-only app.
 
 **Roles.** ednsv has two roles: standard and admin. Token users carry an
 explicit admin flag set at issue time. SSO and JWT callers are mapped from

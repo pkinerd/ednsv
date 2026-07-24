@@ -29,8 +29,11 @@ certificate is created, so there is nothing to expire or rotate.**
      `https://<your-host>/signout-callback-oidc`
    - Under **Implicit grant and hybrid flows**, tick **ID tokens (used for
      implicit and hybrid flows)** — required for the secret-less flow. (Only
-     the ID token is ever issued; ednsv rejects access-token-bearing response
-     types at startup, which is the risk the implicit-flow warnings are about.)
+     the ID token is ever issued, via `form_post`; ednsv rejects
+     access-token-bearing response types at startup, which is the hazard the
+     implicit-flow warnings are actually about. See the security properties of
+     this flow in
+     [configuration.md → Authentication](configuration.md#authentication).)
 2. **App roles → Create app role** for admins:
    - Display name / value: `Ednsv.Admin`, allowed member types: **Users/Groups**.
    - Optionally a second role (e.g. `Ednsv.User`) if you want to restrict
