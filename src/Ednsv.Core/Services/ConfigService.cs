@@ -158,6 +158,39 @@ public sealed class ConfigService
         public List<ConfigRevisionInfo> Revisions { get; set; } = new();
     }
 
+    /// <summary>
+    /// Read-side shape for the history index that tolerates BOTH the current
+    /// body-less format and the legacy single-file format (pre config-history/
+    /// split) that embedded each revision's full config inline under "config".
+    /// A legacy inline body is migrated to its own config-rev-{id}.json on load
+    /// so <see cref="GetRevision"/> can find it — otherwise every pre-upgrade
+    /// revision 404s because its per-revision body file was never written.
+    /// </summary>
+    private sealed class HistoryIndexRead
+    {
+        [JsonPropertyName("nextId")]
+        public int NextId { get; set; } = 1;
+
+        [JsonPropertyName("revisions")]
+        public List<LegacyRevisionEntry> Revisions { get; set; } = new();
+    }
+
+    private sealed class LegacyRevisionEntry
+    {
+        [JsonPropertyName("id")]
+        public int Id { get; set; }
+
+        [JsonPropertyName("savedAt")]
+        public DateTime SavedAt { get; set; }
+
+        [JsonPropertyName("savedBy")]
+        public string SavedBy { get; set; } = "";
+
+        /// <summary>Present only in legacy files; migrated to a per-revision body on load.</summary>
+        [JsonPropertyName("config")]
+        public AppConfig? Config { get; set; }
+    }
+
     private readonly string _dataDir;
     private readonly string _filePath;
     private readonly string _historyIndexPath;
@@ -450,14 +483,35 @@ public sealed class ConfigService
         {
             var json = File.ReadAllText(_historyIndexPath);
             if (string.IsNullOrWhiteSpace(json)) return;
-            var index = JsonSerializer.Deserialize<HistoryIndex>(json, JsonOpts);
+            var index = JsonSerializer.Deserialize<HistoryIndexRead>(json, JsonOpts);
             if (index?.Revisions == null) return;
             lock (_lock)
             {
                 _history.Clear();
-                _history.AddRange(index.Revisions);
+                bool anyInline = false, anyFailed = false;
+                foreach (var e in index.Revisions)
+                {
+                    _history.Add(new ConfigRevisionInfo(e.Id, e.SavedAt, e.SavedBy));
+                    if (e.Config == null) continue;   // already body-less (new format)
+                    anyInline = true;
+                    // Externalise the legacy inline body so GetRevision can find it.
+                    // Only fill gaps — never clobber a body already written.
+                    if (File.Exists(RevisionPath(e.Id))) continue;
+                    try
+                    {
+                        e.Config.DkimSelectors = NormalizeKeys(e.Config.DkimSelectors ?? new Dictionary<string, List<string>>());
+                        e.Config.KnownDomains = NormalizeDomainList(e.Config.KnownDomains ?? new List<string>());
+                        WriteRevisionBodyLocked(e.Id, e.Config);
+                    }
+                    catch { anyFailed = true; }   // best effort; retried on a later load
+                }
                 var maxId = _history.Count > 0 ? _history.Max(r => r.Id) : 0;
                 _nextRevisionId = Math.Max(index.NextId, maxId + 1);
+                // Collapse the legacy file to the body-less format once every inline
+                // body has its own file, so the migration is one-time and the (large)
+                // legacy index shrinks. Skip if any body failed to externalise, so we
+                // never drop an inline copy we haven't safely relocated yet.
+                if (anyInline && !anyFailed) SaveHistoryLocked();
             }
         }
         catch

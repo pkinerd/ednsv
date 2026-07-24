@@ -18,6 +18,7 @@
   .nav .current { color: var(--text); font-weight: 600; }
   .nav .who { color: var(--muted); margin-left: auto; }
   .nav .signout { color: var(--muted); }
+  .nav a .ext { font-size: 0.72em; opacity: 0.75; margin-left: 0.1rem; }
   .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
   .panel h2 { margin-top: 0; }
   label { display: block; font-size: 0.85rem; color: var(--text); margin-bottom: 0.4rem; }
@@ -36,10 +37,34 @@
   button.danger { background: transparent; color: var(--error); border: 1px solid var(--error); }
   button.danger:hover { background: var(--error); color: var(--bg); }
   .actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
-  .msg { padding: 0.7rem 1rem; border-radius: 4px; font-size: 0.85rem; margin-bottom: 1rem; }
-  .msg.error { background: #7f1d1d33; border: 1px solid var(--error); color: var(--error); }
-  .msg.ok { background: #16653433; border: 1px solid var(--pass); color: var(--pass); }
-  .msg.warn { background: #71401233; border: 1px solid var(--warn); color: var(--warn); }
+  /* Toast messages: fixed overlay so showing/hiding never reflows the page
+     (no more "jumpy" layout shift), with a manual dismiss control. */
+  #messages { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%);
+    z-index: 1000; width: min(680px, calc(100% - 2rem)); pointer-events: none; }
+  .msg { pointer-events: auto; display: flex; align-items: flex-start; gap: 0.75rem;
+    padding: 0.7rem 1rem; border-radius: 6px; font-size: 0.85rem;
+    background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    animation: msgIn 0.18s ease-out; }
+  .msg + .msg { margin-top: 0.5rem; }
+  .msg .msg-text { flex: 1; }
+  .msg .msg-close { flex: none; background: transparent; border: none; color: inherit;
+    font-size: 1.1rem; line-height: 1; padding: 0 0.2rem; cursor: pointer; opacity: 0.7; font-weight: 700; }
+  .msg .msg-close:hover { opacity: 1; }
+  .msg.error { background: #2a1414; border: 1px solid var(--error); color: var(--error); }
+  .msg.ok { background: #12241a; border: 1px solid var(--pass); color: var(--pass); }
+  .msg.warn { background: #2a2110; border: 1px solid var(--warn); color: var(--warn); }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+  /* Breathing room below the form/JSON action buttons before the Maintenance panel. */
+  .tab-pane > .actions { margin-bottom: 1.5rem; }
+  /* Floating scroll controls for the long config page. */
+  .scrollnav { position: fixed; right: 1rem; bottom: 1rem; z-index: 900;
+    display: flex; flex-direction: column; gap: 0.4rem; }
+  .scrollnav button { width: 2.5rem; height: 2.5rem; padding: 0; border-radius: 50%;
+    background: var(--surface); color: var(--accent); border: 1px solid var(--border);
+    font-size: 1rem; line-height: 1; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center; }
+  .scrollnav button:hover { border-color: var(--accent); opacity: 1; }
+  @media (max-width: 640px) { .scrollnav { right: 0.6rem; bottom: 0.6rem; } }
   .field { margin-bottom: 0.9rem; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -77,9 +102,9 @@
 
   <div class="nav">
     <a href="/">Validator</a>
-    <a href="/tokens.html" id="tokensLink" style="display:none">Tokens</a>
+    <a href="/tokens.html" id="tokensLink" style="display:none">Access Tokens</a>
     <span class="current">Config</span>
-    <a href="/swagger" target="_blank" rel="noopener">API docs</a>
+    <a href="/swagger" target="_blank" rel="noopener" title="Opens in a new tab">API <span class="ext" aria-hidden="true">↗</span></a>
     <span class="who" id="who"></span>
     <a href="#" id="signOut" class="signout">Sign out</a>
   </div>
@@ -133,19 +158,21 @@
       <textarea id="cfgKnownDomains" placeholder="example.com, gmail.com, your-customer.org"></textarea>
     </div>
 
-    <div class="panel">
-      <h2>Per-domain DKIM selectors</h2>
-      <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
-      <table id="domTable">
-        <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
-        <tbody id="domTableBody"></tbody>
-      </table>
-      <div class="add-row">
-        <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
-        <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
-        <div><button class="secondary" id="addDomainBtn">Add</button></div>
+    <details class="panel collapsible" open>
+      <summary>Per-domain DKIM selectors <span class="hint" id="domCountHint"></span></summary>
+      <div class="details-body">
+        <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
+        <table id="domTable">
+          <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
+          <tbody id="domTableBody"></tbody>
+        </table>
+        <div class="add-row">
+          <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
+          <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
+          <div><button class="secondary" id="addDomainBtn">Add</button></div>
+        </div>
       </div>
-    </div>
+    </details>
 
     <div class="section-head">
       <h2>Advanced — probe data lists</h2>
@@ -276,6 +303,11 @@
   </div>
 </div>
 
+<div class="scrollnav" aria-hidden="true">
+  <button type="button" id="scrollTopBtn" title="Scroll to top">↑</button>
+  <button type="button" id="scrollBottomBtn" title="Scroll to bottom">↓</button>
+</div>
+
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
@@ -283,8 +315,15 @@ let current = null;  // last server snapshot
 
 function showMessage(text, kind = 'error') {
   const m = $('#messages');
-  m.innerHTML = `<div class="msg ${kind}">${esc(text)}</div>`;
-  setTimeout(() => { if (m.firstChild?.textContent === text) m.innerHTML = ''; }, 5000);
+  m.innerHTML =
+    `<div class="msg ${kind}"><span class="msg-text">${esc(text)}</span>` +
+    `<button class="msg-close" type="button" aria-label="Dismiss">&times;</button></div>`;
+  const node = m.firstElementChild;
+  node.querySelector('.msg-close').addEventListener('click', () => node.remove());
+  // Success toasts are transient; warnings/errors stay until dismissed or
+  // replaced so they never vanish mid-read (the old fixed 5s auto-clear made
+  // the message area feel unpredictable).
+  if (kind === 'ok') setTimeout(() => node.remove(), 4000);
 }
 
 function parseList(s) {
@@ -365,6 +404,8 @@ function fillForm(cfg) {
 function renderDomTable(map) {
   const tbody = $('#domTableBody');
   const keys = Object.keys(map);
+  const hint = $('#domCountHint');
+  if (hint) hint.textContent = keys.length ? `${keys.length} domain${keys.length === 1 ? '' : 's'}` : 'none yet';
   if (keys.length === 0) {
     tbody.innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
     return;
@@ -506,6 +547,9 @@ $('#clearCacheBtn').addEventListener('click', async () => {
   } catch (e) { showMessage(e.message); }
   finally { btn.disabled = false; }
 });
+
+$('#scrollTopBtn')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+$('#scrollBottomBtn')?.addEventListener('click', () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' }));
 
 $('#signOut').addEventListener('click', async e => {
   e.preventDefault();
