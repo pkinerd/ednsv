@@ -116,8 +116,9 @@
       <button type="button" class="arrow-btn" id="domainArrow" title="Show all known domains" aria-label="Show all known domains">&#9662;</button>
       <div class="suggestions" id="domainSuggestions" role="listbox"></div>
     </div>
-    <select id="recheck" title="Recheck: clear cached probes for issues at or above this severity">
+    <select id="recheck" title="Recheck: bypass cached probes. 'All' re-runs every check against fresh data; the severity options only clear caches for prior issues at or above that level.">
       <option value="">No recheck</option>
+      <option value="all">Recheck all (ignore cache)</option>
       <option value="Warning">Recheck warnings+</option>
       <option value="Error">Recheck errors+</option>
       <option value="Critical">Recheck critical</option>
@@ -287,7 +288,9 @@ fetch('/api/auth/me').then(r => r.ok ? r.json() : null).then(d => {
   }
   if (d.isAdmin || d.disabled) {
     document.getElementById('adminConfigLink').style.display = '';
-    document.getElementById('tokensLink').style.display = '';
+    // The tokens page only applies when token auth is on (or auth is off entirely).
+    if (d.tokenAuthEnabled || d.disabled)
+      document.getElementById('tokensLink').style.display = '';
   }
 }).catch(() => {});
 
@@ -447,6 +450,11 @@ document.addEventListener('mousedown', e => {
 
 document.getElementById('signOut').addEventListener('click', async e => {
   e.preventDefault();
+  // SSO sessions with single logout configured also end the IdP session.
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.authMethod === 'oidc' && me.singleLogout) { location.href = '/api/auth/oidc/logout'; return; }
+  } catch {}
   try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
   location.href = '/login.html';
 });
@@ -463,7 +471,9 @@ form.addEventListener('submit', async e => {
 async function startValidation(domain, recheckSeverity) {
   btn.disabled = true;
   resultsEl.innerHTML = '';
-  const recheckLabel = recheckSeverity ? ` (recheck >= ${recheckSeverity})` : '';
+  const recheckLabel = recheckSeverity
+    ? (recheckSeverity === 'all' ? ' (recheck all)' : ` (recheck >= ${recheckSeverity})`)
+    : '';
   statusEl.textContent = `Starting validation for ${domain}${recheckLabel}...`;
 
   const body = { domain, options: currentOptions() };
@@ -580,6 +590,11 @@ function fmtDuration(d) {
 
 let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
 
+// Categories whose detail lines (SPF mechanisms, DKIM selectors, DMARC tags,
+// raw TXT records) are never truncated — these are the records operators come
+// here to read in full.
+const NO_TRUNCATE_CATS = new Set(['SPF', 'DKIM', 'DMARC', 'TXT']);
+
 function renderReport(report, domain) {
   activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
   const r = report.results || report.Results || [];
@@ -628,18 +643,21 @@ function renderReport(report, domain) {
       html += `<div class="check" data-sev="${c.severity}">`;
       html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span></div>`;
       html += `<div class="check-summary">${esc(c.summary)}</div>`;
-      // Warnings and errors are the actionable findings — show them all, first and
-      // never truncated. Only the informational details are capped, so a check with
-      // many detail lines (e.g. DKIM, blocklists) can't hide its warnings/errors
-      // behind "...and N more".
+      // Warnings and errors are the actionable findings — always shown in full,
+      // first and never truncated. Informational details are capped, EXCEPT for
+      // the critical email-DNS categories (SPF/DKIM/DMARC/TXT), whose records
+      // must always be shown in full. And a cap only ever hides lines when it
+      // saves something meaningful: if fewer than 5 lines would be hidden we
+      // just show them all (no pointless "...and 1 more").
       const issues = [...(c.errors||[]), ...(c.warnings||[])];
       const info = (c.details||[]);
       if (issues.length || info.length) {
         html += '<ul class="details">';
         for (const d of issues) html += `<li class="issue">${esc(d)}</li>`;
         const cap = 20;
-        for (const d of info.slice(0, cap)) html += `<li>${esc(d)}</li>`;
-        if (info.length > cap) html += `<li>...and ${info.length - cap} more</li>`;
+        const shown = (NO_TRUNCATE_CATS.has(cat) || info.length - cap < 5) ? info.length : cap;
+        for (const d of info.slice(0, shown)) html += `<li>${esc(d)}</li>`;
+        if (info.length > shown) html += `<li>...and ${info.length - shown} more</li>`;
         html += '</ul>';
       }
       html += '</div>';
@@ -648,12 +666,17 @@ function renderReport(report, domain) {
   }
 
   const hasIssues = (counts.Warning || 0) + (counts.Error || 0) + (counts.Critical || 0) > 0;
-  if (hasIssues && domain) {
+  if (domain) {
+    // "All" re-runs every check against fresh data and is always available;
+    // the severity-scoped rechecks only appear when there are issues to target.
     html += '<div style="margin-top:1rem;display:flex;gap:0.5rem;align-items:center">';
-    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck issues:</span>';
-    html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
-    html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
-    html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    html += '<span style="color:var(--muted);font-size:0.82rem">Recheck:</span>';
+    html += '<button class="recheck-btn" data-sev="all">All</button>';
+    if (hasIssues) {
+      html += '<button class="recheck-btn" data-sev="Warning">Warnings+</button>';
+      html += '<button class="recheck-btn" data-sev="Error">Errors+</button>';
+      html += '<button class="recheck-btn" data-sev="Critical">Critical</button>';
+    }
     html += '</div>';
   }
 

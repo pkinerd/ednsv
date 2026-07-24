@@ -71,6 +71,23 @@ public sealed class CacheManager : IAsyncDisposable
     public void RequestFlush() => _flusher?.RequestFlush();
 
     /// <summary>
+    /// Wipes every cache — the in-memory DNS/SMTP/HTTP probe caches, the
+    /// in-memory recheck summaries, and all on-disk cache files. Subsequent
+    /// validations re-fetch everything from scratch (slower until re-warmed).
+    /// In-memory is cleared before disk so a concurrent flush can only ever
+    /// re-persist an already-empty cache.
+    /// </summary>
+    public Task ClearAllAsync()
+    {
+        _dns.ClearCache();
+        _smtp.ClearCache();
+        _http.ClearCache();
+        _previousResults.Clear();
+        DiskCacheService.Clear(_cacheDir);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Saves a domain's validation result summary for future recheck decisions.
     /// Updates both the in-memory map (for subsequent rechecks within this process)
     /// and the on-disk cache (for persistence across restarts).

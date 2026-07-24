@@ -19,6 +19,10 @@
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .error { color: var(--error); font-size: 0.82rem; margin-top: 0.75rem; min-height: 1rem; }
   .hint { color: var(--muted); font-size: 0.72rem; margin-top: 1rem; line-height: 1.4; }
+  .divider { display: flex; align-items: center; gap: 0.6rem; color: var(--muted); font-size: 0.72rem; margin-top: 1rem; }
+  .divider::before, .divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+  .sso { background: transparent; border: 1px solid var(--accent); color: var(--accent); margin-top: 1rem; }
+  .sso:hover { background: rgba(56, 189, 248, 0.1); opacity: 1; }
 </style>
 </head>
 <body>
@@ -31,15 +35,40 @@
     <label for="token">Token</label>
     <input type="password" id="token" name="token" autocomplete="current-password" required>
     <button type="submit" id="btn">Sign in</button>
-    <div class="error" id="err"></div>
   </form>
-  <p class="hint">Root user is <code>ednsv</code>. Use the token whose hash is in EDNSV_AUTH_TOKEN_HASH, or one issued from the tokens page.</p>
+  <div class="divider" id="ssoDivider" style="display:none">or</div>
+  <button type="button" class="sso" id="ssoBtn" style="display:none">Sign in with single sign-on</button>
+  <div class="error" id="err"></div>
+  <p class="hint" id="hint">Root user is <code>ednsv</code>. Use the token whose hash is in EDNSV_AUTH_TOKEN_HASH, or one issued from the tokens page.</p>
 </div>
 
 <script>
 const form = document.getElementById('form');
 const btn = document.getElementById('btn');
 const err = document.getElementById('err');
+
+const params = new URLSearchParams(location.search);
+const nextParam = params.get('next') || '/';
+const next = nextParam.startsWith('/') && !nextParam.startsWith('//') ? nextParam : '/';
+if (params.get('error') === 'sso_failed')
+  err.textContent = 'Single sign-on failed. Try again, or contact your administrator if you were denied access.';
+
+// Show only the sign-in methods this instance has enabled.
+fetch('/api/auth/methods').then(r => r.ok ? r.json() : null).then(m => {
+  if (!m) return;
+  if (!m.tokenAuth) {
+    form.style.display = 'none';
+    document.getElementById('hint').style.display = 'none';
+  }
+  if (m.sso) {
+    document.getElementById('ssoBtn').style.display = '';
+    if (m.tokenAuth) document.getElementById('ssoDivider').style.display = '';
+  }
+}).catch(() => {});
+
+document.getElementById('ssoBtn').addEventListener('click', () => {
+  location.href = '/api/auth/oidc/login?next=' + encodeURIComponent(next);
+});
 
 form.addEventListener('submit', async e => {
   e.preventDefault();
@@ -56,8 +85,7 @@ form.addEventListener('submit', async e => {
       })
     });
     if (res.ok) {
-      const next = new URLSearchParams(location.search).get('next') || '/';
-      location.href = next.startsWith('/') ? next : '/';
+      location.href = next;
       return;
     }
     const data = await res.json().catch(() => ({}));

@@ -166,15 +166,21 @@ function renderTable() {
 
 async function refresh() {
   try {
+    const me = await loadMe();
     const data = await loadUsers();
     state.users = data.users || [];
-    state.me = { username: data.currentUser, isAdmin: !!data.isAdmin, isRoot: !!data.isRoot };
-    $('#who').textContent = data.disabled
+    state.me = { username: me.username, isAdmin: !!me.isAdmin, isRoot: !!me.isRoot };
+    $('#who').textContent = me.disabled
       ? 'Auth disabled'
       : `Signed in as ${state.me.username}${state.me.isAdmin ? ' (admin)' : ''}`;
-    $('#signOut').style.display = data.disabled ? 'none' : '';
-    $('#issuePanel').style.display = (state.me.isAdmin && !data.disabled) ? '' : 'none';
-    $('#configLink').style.display = (state.me.isAdmin || data.disabled) ? '' : 'none';
+    $('#signOut').style.display = me.disabled ? 'none' : '';
+    const tokenAuthOn = !me.disabled && me.tokenAuthEnabled;
+    $('#issuePanel').style.display = (state.me.isAdmin && tokenAuthOn) ? '' : 'none';
+    $('#configLink').style.display = (state.me.isAdmin || me.disabled) ? '' : 'none';
+    if (!tokenAuthOn && !me.disabled) {
+      $('#tableWrap').innerHTML = '<div class="empty">Token auth is disabled on this instance — sign-in is via single sign-on only.</div>';
+      return;
+    }
     renderTable();
   } catch (err) {
     showMessage(err.message);
@@ -251,6 +257,11 @@ $('#newUsername').addEventListener('keydown', e => { if (e.key === 'Enter') issu
 
 $('#signOut').addEventListener('click', async e => {
   e.preventDefault();
+  // SSO sessions with single logout configured also end the IdP session.
+  try {
+    const me = await (await fetch('/api/auth/me')).json();
+    if (me.authMethod === 'oidc' && me.singleLogout) { location.href = '/api/auth/oidc/logout'; return; }
+  } catch {}
   try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch {}
   location.href = '/login.html';
 });

@@ -254,9 +254,13 @@ public sealed class AuthService
     /// <summary>
     /// Revokes the target user and cascades to all descendants (everyone they
     /// issued, recursively). Caller must be the root user, or an ancestor of
-    /// the target in the issuance chain.
+    /// the target in the issuance chain — unless <paramref name="elevated"/> is
+    /// set, in which case the caller may revoke any user except root. Elevated
+    /// revoke is granted to external-IdP admins (SSO / JWT), who sit outside the
+    /// token issuance tree and are trusted by the IdP; the root user (config
+    /// token) is never revocable by anyone.
     /// </summary>
-    public RevokeResult Revoke(string targetUsername, string requestedBy)
+    public RevokeResult Revoke(string targetUsername, string requestedBy, bool elevated = false)
     {
         if (Disabled) return new RevokeResult(RevokeStatus.Disabled);
         if (string.IsNullOrEmpty(targetUsername)) return new RevokeResult(RevokeStatus.NotFound);
@@ -269,7 +273,7 @@ public sealed class AuthService
                 u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
             if (target == null) return new RevokeResult(RevokeStatus.NotFound);
 
-            if (!IsAncestorOrRootLocked(requestedBy, target.Username))
+            if (!elevated && !IsAncestorOrRootLocked(requestedBy, target.Username))
                 return new RevokeResult(RevokeStatus.NotAllowed);
 
             var toRevoke = new List<User> { target };

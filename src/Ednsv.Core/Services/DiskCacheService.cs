@@ -32,6 +32,28 @@ public class DiskCacheService
     private const string RelayTestsFile = "relay-tests.json";
     private const string DomainResultsFile = "domain-results.json";
 
+    private static readonly string[] AllCacheFiles =
+    {
+        SmtpProbesFile, PortProbesFile, RcptProbesFile, HttpGetFile, HttpGetWithHeadersFile,
+        UnreachableServersFile, PtrLookupsFile, DnsQueriesFile, DnsServerQueriesFile,
+        AxfrResultsFile, RelayTestsFile, DomainResultsFile
+    };
+
+    /// <summary>
+    /// Deletes every on-disk cache file (and any leftover .tmp) in the cache
+    /// directory. In-memory caches are cleared separately by the caller.
+    /// </summary>
+    public static void Clear(string cacheDir)
+    {
+        if (!Directory.Exists(cacheDir)) return;
+        foreach (var f in AllCacheFiles)
+        {
+            var path = Path.Combine(cacheDir, f);
+            try { File.Delete(path); } catch { /* best effort */ }
+            try { File.Delete(path + ".tmp"); } catch { /* best effort */ }
+        }
+    }
+
     /// <summary>
     /// Saves current service caches to disk, merging with any existing entries.
     /// </summary>
