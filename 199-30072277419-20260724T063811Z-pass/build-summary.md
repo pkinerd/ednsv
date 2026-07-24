@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #149 (attempt 1) |
-| **Run ID** | 25146504809 |
+| **Run** | #199 (attempt 1) |
+| **Run ID** | 30072277419 |
 | **Result** | pass |
-| **Commit** | c90b410eed909c0b6975719458088553a83f9a5c |
-| **Ref** | refs/pull/11/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | e2ab90eb00eaea8bf33ca519d8bec7df53440657 |
+| **Ref** | refs/pull/25/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #11: Add token-based authentication and token management UI |
-| **Branch** | claude/add-lightweight-auth-wrEVH |
+| **PR** | #25: updated to make things that may need to be configurable so |
+| **Branch** | claude/external-idp-entra-auth-31ftjw |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
