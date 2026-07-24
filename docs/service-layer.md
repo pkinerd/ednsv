@@ -69,6 +69,12 @@ flowchart TD
 
 In addition, every service ProbeCache deduplicates concurrent requests for the **same key** down to a single network call (see [Caching Architecture](caching-architecture.md)).
 
+The DNS QPS/in-flight caps and the HTTP in-flight cap are startup-configurable
+(`Dns:TokensPerSecond`, `Dns:MaxConcurrency`, `Http:MaxConcurrency`), as are the
+SMTP/HTTP probe timeouts (`Smtp:TimeoutSeconds`, `Smtp:PortTimeoutSeconds`,
+`Http:TimeoutSeconds`). See [configuration.md](configuration.md) → *Probe
+tuning*. All are read at startup, so changes require a restart.
+
 ## DnsResolverService
 
 **File**: `src/Ednsv.Core/Services/DnsResolverService.cs`
@@ -84,6 +90,11 @@ DNS queries are gated by two semaphores, both enforced by a single `RateLimitedA
 | Token rate | 40/sec | `SemaphoreSlim` of `tokensPerSecond`, refilled every 1 s by a `Timer` | Bound sustained QPS independent of response time |
 | Max concurrency | 50 | `SemaphoreSlim` of `maxConcurrency` | Cap simultaneous in-flight DNS queries |
 
+Both defaults are overridable at startup via `Dns:TokensPerSecond` /
+`Dns:MaxConcurrency` (see [configuration.md](configuration.md) → *Probe
+tuning*); the values are captured when the singleton service is built, so a
+change requires a restart.
+
 `RefillTokens()` releases tokens **one at a time** in a `for` loop (up to `_tokensPerSecond`) and short-circuits on `SemaphoreFullException`. This avoids a TOCTOU race between reading `CurrentCount` and calling `Release(N)` — under load the previous "compute deficit, release in bulk" form could throw and skip an entire refill cycle.
 
 Trace output (when enabled) logs wait times per query: `"rate-wait:Xms concurrency-wait:Yms network:Zms"`.
@@ -98,6 +109,11 @@ Four `LookupClient` instances are constructed up front so different query types 
 | `_dnsblClient` | 3 s | 1 | `QueryDnsblAsync` — blocklists, where unresponsive hosts shouldn't pollute the error log |
 | `_speculativeClient` | 3 s | 1 | `QuerySpeculativeAsync` — optional probes (DKIM selectors, SRV) where timeout means "skip" |
 | `_directClient` | 15 s | 2 | `UseCache=false` — direct queries that must not hit the LookupClient cache |
+
+The `_client`/`_directClient` timeout and retry defaults (15 s / 2) are
+overridable at startup via `Dns:QueryTimeoutSeconds` / `Dns:QueryRetries`. The
+fast `_dnsblClient`/`_speculativeClient` budgets (3 s / 1) are intentionally
+fixed — their whole point is a short skip-if-slow ceiling.
 
 ### Caches
 
@@ -118,7 +134,7 @@ When a server-specific query (`QueryServerAsync`) fails, the IP is bumped in `_u
 1. `count >= MaxRetries` (default 3), and
 2. `DateTime.UtcNow - lastFailure < _unreachableDecay` (5 minutes).
 
-Once the decay window passes, the next call retries the server normally; on success the entry is removed. This replaces the older "permanent until process restart" blacklist that left transiently-down resolvers blacklisted for the entire run.
+Once the decay window passes, the next call retries the server normally; on success the entry is removed. This replaces the older "permanent until process restart" blacklist that left transiently-down resolvers blacklisted for the entire run. Both `MaxRetries` and the decay window are startup-configurable via `Dns:MaxRetries` / `Dns:UnreachableDecayMinutes`.
 
 ### Key Methods
 

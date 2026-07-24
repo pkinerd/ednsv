@@ -124,19 +124,6 @@ public class IpBlocklistCheck : ICheck
     public string Name => "IP Blocklist Check (DNSBL)";
     public CheckCategory Category => CheckCategory.DNSBL;
 
-    // Lists that work reliably via public DNS resolvers
-    private static readonly string[] PublicBlocklists =
-    {
-        "bl.spamcop.net"
-    };
-
-    // Lists that require a private/registered resolver — return false positives via public DNS
-    private static readonly string[] PrivateBlocklists =
-    {
-        "zen.spamhaus.org",
-        "b.barracudacentral.org"
-    };
-
     // Well-known DNSBL responses that indicate resolver/query errors, not actual listings
     // Spamhaus: 127.255.255.254 = public/open resolver, 127.255.255.252 = ANY query not supported
     // URIBL/SURBL: 127.0.0.1 = query refused (public resolver)
@@ -169,14 +156,17 @@ public class IpBlocklistCheck : ICheck
             int listed = 0;
             var tasks = new List<Task<(string ip, string bl, List<DnsClient.Protocol.ARecord> aRecs)>>();
 
+            var publicBlocklists = ProbeList.OrDefault(ctx.Options.IpBlocklistsPublic, ProbeDefaults.IpBlocklistsPublic);
+            var privateBlocklists = ProbeList.OrDefault(ctx.Options.IpBlocklistsPrivate, ProbeDefaults.IpBlocklistsPrivate);
+
             foreach (var ip in allMxIps)
             {
                 var octets = ip.Split('.').Reverse();
                 var reversed = string.Join('.', octets);
 
                 var blocklists = ctx.Options.EnablePrivateDnsbl
-                    ? PublicBlocklists.Concat(PrivateBlocklists)
-                    : PublicBlocklists;
+                    ? publicBlocklists.Concat(privateBlocklists)
+                    : publicBlocklists;
                 foreach (var bl in blocklists)
                 {
                     var capturedIp = ip;
@@ -238,14 +228,6 @@ public class MxHostnameBlocklistCheck : ICheck
     public string Name => "MX Hostname Blocklist (RHSBL)";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    // All RHSBL lists require private/registered resolvers
-    private static readonly string[] PrivateDomainBlocklists =
-    {
-        "dbl.spamhaus.org",
-        "multi.surbl.org",
-        "black.uribl.com"
-    };
-
     private static readonly HashSet<string> FalsePositiveResponses = new(StringComparer.Ordinal)
     {
         "127.255.255.254", "127.255.255.253", "127.255.255.252", "127.0.0.1"
@@ -289,9 +271,10 @@ public class MxHostnameBlocklistCheck : ICheck
             }
 
             int listed = 0;
+            var domainBlocklists = ProbeList.OrDefault(ctx.Options.DomainBlocklists, ProbeDefaults.DomainBlocklists);
             foreach (var mxDomain in mxDomains)
             {
-                foreach (var bl in PrivateDomainBlocklists)
+                foreach (var bl in domainBlocklists)
                 {
                     var query = $"{mxDomain}.{bl}";
                     var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);
@@ -338,14 +321,6 @@ public class DomainBlocklistCheck : ICheck
     public string Name => "Domain Blocklist Check";
     public CheckCategory Category => CheckCategory.DomainBL;
 
-    // All domain blocklists require private/registered resolvers
-    private static readonly string[] PrivateDomainBlocklists =
-    {
-        "dbl.spamhaus.org",
-        "multi.surbl.org",
-        "black.uribl.com"
-    };
-
     // Well-known responses that indicate resolver/query errors, not actual listings
     // Spamhaus DBL: 127.255.255.254 = public/open resolver
     // URIBL: 127.0.0.1 = query refused (public resolver)
@@ -373,7 +348,8 @@ public class DomainBlocklistCheck : ICheck
         try
         {
             int listed = 0;
-            foreach (var bl in PrivateDomainBlocklists)
+            var domainBlocklists = ProbeList.OrDefault(ctx.Options.DomainBlocklists, ProbeDefaults.DomainBlocklists);
+            foreach (var bl in domainBlocklists)
             {
                 var query = $"{domain}.{bl}";
                 var resp = await ctx.Dns.QueryDnsblAsync(query, QueryType.A);

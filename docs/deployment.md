@@ -39,23 +39,40 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 
 | Option | Description |
 |--------|-------------|
-| `--format text\|json\|html\|markdown` | Output format (default: text) |
-| `--output <file>` | Write output to file |
-| `--output-dir <dir>` | Per-domain reports, index file, cross-domain issues |
+| `--domains-file <file>` / `-F` | Read domains from a text (one per line) or CSV file (`domain`/`fqdn` column) |
+| `--format text\|json\|html\|markdown` / `-f` | Output format (default: text) |
+| `--output <file>` / `-o` | Write output to file |
+| `--output-dir <dir>` / `-D` | Per-domain reports, index file, cross-domain issues |
+| `--live-index` | Rewrite the index/issues files after each domain (with `--output-dir`) |
 | `--verbose` | Show check category explanations |
 | `--trace` | Detailed DNS/SMTP/cache timing diagnostics |
 | `--mask-trace` / `--no-mask-trace` | Privacy masking for trace output (default: on) |
 | `--mask-salt <salt>` | Deterministic hash salt for consistent masks |
-| `--cache <dir>` | Enable disk cache (default: `.ednsv-cache/`) |
-| `--recheck warning\|error\|critical` | Re-validate previously failing checks |
-| `--dns-server <ip,...>` | Custom DNS server(s), comma-separated |
+| `--cache [dir]` / `-c` | Persist probe cache between runs (default dir: `.ednsv-cache/`) |
+| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24) |
+| `--recheck warning\|error\|critical` | Re-validate previously failing checks (bypasses stale cache only) |
+| `--retry` | Double retry counts for unreliable networks |
+| `--retry-errors` | With `--cache`, re-probe previously failed checks, keep successful cached results |
+| `--dns-server <ip,...>` / `-s` | Custom DNS server(s), comma-separated, round-robin (default: Google Public DNS) |
 | `--dkim-selectors <sel,...>` | Additional DKIM selectors to probe |
 | `--axfr` | Attempt zone transfers for DKIM discovery |
 | `--catch-all` | Test for catch-all mail acceptance |
 | `--open-relay` | Test MX hosts for open relay |
 | `--open-resolver` | Test NS hosts for open recursive resolution |
-| `--private-dnsbl` | Include blocklists requiring registered resolvers |
+| `--resolver-test-domain <domain>` | Probe target for the open-resolver test (default: `www.google.com`) |
+| `--private-dnsbl` | Include blocklists requiring registered resolvers (Spamhaus, Barracuda, SURBL, URIBL) |
 | `--list-checks` | Show detailed descriptions of all check categories |
+
+**Restricted-network flags** (all default ON; pass to disable a probe class where egress is blocked):
+
+| Option | Disables |
+|--------|----------|
+| `--no-smtp` | SMTP probes (ports 25/465/587): SMTP, DANE, MX STARTTLS, Postmaster/Abuse, submission ports, IPv6 SMTP |
+| `--no-http` | HTTP/HTTPS probes: MTA-STS, security.txt, BIMI, Certificate Transparency |
+| `--no-dnsbl` | Public DNSBL/RHSBL queries |
+| `--no-direct-dns` | Direct authoritative / public-resolver queries: propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver |
+| `--doh` | (opt-*in*) Run the propagation check over JSON DNS-over-HTTPS instead of raw UDP/53 (routes via `HTTPS_PROXY`) |
+| `--restricted-network` | Preset for `--no-smtp --no-http --no-dnsbl --no-direct-dns` (DNS-only against the configured resolver) |
 
 ### Cache Workflow
 
@@ -221,6 +238,29 @@ Triggers an immediate disk cache flush.
 
 Returns the list of check category descriptions (from `CheckDescriptions.Categories`).
 
+#### Additional endpoints
+
+Beyond the core validation flow above, the service exposes configuration, cache-management, and authentication endpoints. All are browsable (with request/response schemas) via **Swagger UI at `/swagger`**.
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `GET /api/defaults` | none | Effective server-side default `ValidationOptions` used to pre-populate the UI |
+| `POST /api/cache/clear` | admin | Clear the on-disk + in-memory cache |
+| `GET /api/config` | admin | Read the live runtime config (toggles, DKIM selectors, probe data lists) |
+| `PUT /api/config` | admin | Update the live runtime config (writes a new revision) |
+| `GET /api/config/history` | admin | List config revision history |
+| `GET /api/config/history/{id}` | admin | Fetch a specific config revision |
+| `GET /api/debug/proxy` | admin | Diagnostic outbound-proxy connectivity probe |
+| `GET /api/auth/methods` | none | Which auth methods are enabled (token / OIDC) |
+| `GET /api/auth/me` | any | Current identity + roles |
+| `POST /api/auth/login` / `logout` | none | Token-based session login/logout |
+| `GET /api/auth/oidc/login` / `logout` | none | Start / end an OIDC browser flow |
+| `GET \| POST /api/auth/users` | admin | List / issue user tokens |
+| `POST /api/auth/users/{username}/revoke` | admin | Revoke a user's token |
+| `DELETE /api/auth/users/{username}` | admin | Delete a user |
+
+See [configuration.md](configuration.md) for auth modes and config semantics, and [entra-setup.md](entra-setup.md) for OIDC/Entra ID setup.
+
 ### ValidationTracker
 
 The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job state:
@@ -235,13 +275,32 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 
 ### Web UI
 
-A single-page web application at `src/Ednsv.Web/wwwroot/index.html`:
+Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
 
-- Dark theme with vanilla JavaScript (no framework dependencies)
-- Submits domain via POST /api/validate
-- Polls GET /api/status/{jobId} for real-time progress
-- Displays results with severity filtering
-- Supports recheck functionality
+- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck.
+- **`config.html`** — admin console for the live runtime config (toggles, DKIM selectors, probe data lists) and user/token management, backed by the `/api/config*` and `/api/auth/users*` endpoints.
+
+## Docker
+
+The web service ships as a container. The multi-stage [`Dockerfile`](../Dockerfile) restores and publishes `Ednsv.Web` on the .NET 8 SDK image, then runs it on the ASP.NET runtime image.
+
+```bash
+# Build locally
+docker build -t ednsv .
+
+# Run (listens on 8080 inside the container)
+docker run --rm -p 8080:8080 ednsv
+```
+
+- The container listens on port **8080** (`ASPNETCORE_HTTP_PORTS=8080`, `EXPOSE 8080`).
+- Pass configuration as environment variables, e.g. `-e DnsServer=1.1.1.1 -e EnableSmtpProbes=false`. See [configuration.md](configuration.md) for the full list.
+- Persist cache/state by mounting a volume at the configured `DataDir` (default `.ednsv-data`), e.g. `-v ednsv-data:/app/.ednsv-data`.
+
+CI publishes images to GitHub Container Registry (`ghcr.io/<owner>/ednsv`): `latest` on the default branch and `latest-any` for every successful build.
+
+```bash
+docker run --rm -p 8080:8080 ghcr.io/<owner>/ednsv:latest
+```
 
 ## Network egress (outbound ports)
 
@@ -288,14 +347,11 @@ resolver**. A locked-down deployment can allow just 53 to its resolver plus 443 
 
 **Triggers**: Push to any branch, PR to main
 
-**Pipeline**:
-1. `dotnet restore` — install NuGet dependencies
-2. `dotnet build --configuration Release` — compile all projects
-3. `dotnet test --configuration Release` — run xUnit tests (cache, masking)
-4. **Integration tests** — validate real domains (google.com, gmail.com, cnn.com, example.com) with JSON output parsing
-5. **Cache integration tests** — cold run, warm run, speedup measurement, recheck with cache clearing
-6. **Multi-domain tests** — cache reuse verification across domains
-7. **Build log archival** — logs pushed to `build-logs` orphan branch
+**Jobs**:
+1. **Build & Unit Tests** — `dotnet restore` → `dotnet build --configuration Release` → `dotnet test` (Ednsv.Core.Tests + Ednsv.Web.Tests). Gates the integration and docker jobs.
+2. **Integration Tests** — validate real domains (google.com, gmail.com, cnn.com, example.com) with JSON output parsing; cache cold/warm speedup, recheck-with-clear, and multi-domain cache-reuse verification.
+3. **Docker** — build the Web image and push to GHCR (`latest` on default branch, `latest-any` per build; fork PRs build without pushing).
+4. **Build log archival** — logs pushed to a `build-logs` orphan branch.
 
 ## Build Commands
 

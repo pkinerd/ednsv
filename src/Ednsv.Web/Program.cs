@@ -56,6 +56,31 @@ var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
 var dnsServerStr = builder.Configuration.GetValue<string>("DnsServer");
 var dkimSelectorsStr = builder.Configuration.GetValue<string>("DkimSelectors");
+
+// ── Probe tuning (startup-only; changes require a restart) ────────────────
+// DNS/SMTP/HTTP timeouts, retries and rate limits are baked into the shared
+// singleton services at construction, so they are read here from appsettings /
+// env vars rather than the runtime-editable config.json. All default to the
+// original built-in behaviour.
+var dnsTuning = new DnsTuning
+{
+    TokensPerSecond         = builder.Configuration.GetValue("Dns:TokensPerSecond",         40),
+    MaxConcurrency          = builder.Configuration.GetValue("Dns:MaxConcurrency",          50),
+    QueryTimeoutSeconds     = builder.Configuration.GetValue("Dns:QueryTimeoutSeconds",     15.0),
+    QueryRetries            = builder.Configuration.GetValue("Dns:QueryRetries",            2),
+    MaxRetries              = builder.Configuration.GetValue("Dns:MaxRetries",              3),
+    UnreachableDecayMinutes = builder.Configuration.GetValue("Dns:UnreachableDecayMinutes", 5.0)
+};
+DnsResolverService.SetMaxRetries(dnsTuning.MaxRetries);
+var smtpTimeoutSeconds     = builder.Configuration.GetValue("Smtp:TimeoutSeconds",     10.0);
+var smtpPortTimeoutSeconds = builder.Configuration.GetValue("Smtp:PortTimeoutSeconds", 5.0);
+var smtpMaxRetries         = builder.Configuration.GetValue("Smtp:MaxRetries",         3);
+SmtpProbeService.SetMaxRetries(smtpMaxRetries);
+var httpTimeoutSeconds     = builder.Configuration.GetValue("Http:TimeoutSeconds",     10.0);
+var httpMaxConcurrency     = builder.Configuration.GetValue("Http:MaxConcurrency",     20);
+var httpMaxRetries         = builder.Configuration.GetValue("Http:MaxRetries",         3);
+HttpProbeService.SetMaxRetries(httpMaxRetries);
+
 var enableTrace = builder.Configuration.GetValue<bool>("Trace", false);
 var maskTrace = builder.Configuration.GetValue<bool>("MaskTrace", true); // default ON for privacy
 var maskSalt = builder.Configuration.GetValue<string>("MaskSalt");
@@ -98,19 +123,19 @@ if (!string.IsNullOrEmpty(dnsServerStr))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
     dns = dnsServers.Count > 0
-        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl)
-        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl);
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl);
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning);
 }
-var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl);
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds);
 // HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
 // BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
 // isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
 var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency);
 if (!validateHttpsCerts)
     Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
@@ -163,7 +188,21 @@ ValidationOptions BuildDefaultOptions()
         EnableDoh               = cfg.EnableDoh,
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
-            .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase),
+        PropagationResolvers        = new List<string>(cfg.PropagationResolvers),
+        PropagationDohResolvers     = new List<string>(cfg.PropagationDohResolvers),
+        IpBlocklistsPublic          = new List<string>(cfg.IpBlocklistsPublic),
+        IpBlocklistsPrivate         = new List<string>(cfg.IpBlocklistsPrivate),
+        ExtendedIpBlocklistsPublic  = new List<string>(cfg.ExtendedIpBlocklistsPublic),
+        ExtendedIpBlocklistsPrivate = new List<string>(cfg.ExtendedIpBlocklistsPrivate),
+        DomainBlocklists            = new List<string>(cfg.DomainBlocklists),
+        ArcSelectors                = new List<string>(cfg.ArcSelectors),
+        DmarcDiscoverySubdomains    = new List<string>(cfg.DmarcDiscoverySubdomains),
+        MailSurveySubdomains        = new List<string>(cfg.MailSurveySubdomains),
+        SpfSubdomains               = new List<string>(cfg.SpfSubdomains),
+        SrvServiceNames             = new List<string>(cfg.SrvServiceNames),
+        VmcIssuers                  = new List<string>(cfg.VmcIssuers),
+        CrtShBaseUrl                = cfg.CrtShBaseUrl
     };
 }
 
@@ -646,6 +685,25 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
     if (options.PerDomainDkimSelectors.Count == 0)
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
+    // Probe data lists come from server config: when the caller doesn't supply
+    // one, fall back to the admin-configured default so a request body can't
+    // silently drop the operator's curated lists.
+    static void Fill(List<string> target, List<string> fallback, Action<List<string>> set)
+    { if (target.Count == 0 && fallback.Count > 0) set(fallback); }
+    Fill(options.PropagationResolvers, defaults.PropagationResolvers, v => options.PropagationResolvers = v);
+    Fill(options.PropagationDohResolvers, defaults.PropagationDohResolvers, v => options.PropagationDohResolvers = v);
+    Fill(options.IpBlocklistsPublic, defaults.IpBlocklistsPublic, v => options.IpBlocklistsPublic = v);
+    Fill(options.IpBlocklistsPrivate, defaults.IpBlocklistsPrivate, v => options.IpBlocklistsPrivate = v);
+    Fill(options.ExtendedIpBlocklistsPublic, defaults.ExtendedIpBlocklistsPublic, v => options.ExtendedIpBlocklistsPublic = v);
+    Fill(options.ExtendedIpBlocklistsPrivate, defaults.ExtendedIpBlocklistsPrivate, v => options.ExtendedIpBlocklistsPrivate = v);
+    Fill(options.DomainBlocklists, defaults.DomainBlocklists, v => options.DomainBlocklists = v);
+    Fill(options.ArcSelectors, defaults.ArcSelectors, v => options.ArcSelectors = v);
+    Fill(options.DmarcDiscoverySubdomains, defaults.DmarcDiscoverySubdomains, v => options.DmarcDiscoverySubdomains = v);
+    Fill(options.MailSurveySubdomains, defaults.MailSurveySubdomains, v => options.MailSurveySubdomains = v);
+    Fill(options.SpfSubdomains, defaults.SpfSubdomains, v => options.SpfSubdomains = v);
+    Fill(options.SrvServiceNames, defaults.SrvServiceNames, v => options.SrvServiceNames = v);
+    Fill(options.VmcIssuers, defaults.VmcIssuers, v => options.VmcIssuers = v);
+    if (string.IsNullOrWhiteSpace(options.CrtShBaseUrl)) options.CrtShBaseUrl = defaults.CrtShBaseUrl;
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username, recheckAll);
     logger.LogInformation(
@@ -780,7 +838,21 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnablePrivateDnsbl = ParseBool("privateDnsbl"),
         ForceDkimSelectors = ParseBool("forceDkimSelectors"),
         AdditionalDkimSelectors = defaults.AdditionalDkimSelectors,
-        PerDomainDkimSelectors  = defaults.PerDomainDkimSelectors
+        PerDomainDkimSelectors  = defaults.PerDomainDkimSelectors,
+        PropagationResolvers        = defaults.PropagationResolvers,
+        PropagationDohResolvers     = defaults.PropagationDohResolvers,
+        IpBlocklistsPublic          = defaults.IpBlocklistsPublic,
+        IpBlocklistsPrivate         = defaults.IpBlocklistsPrivate,
+        ExtendedIpBlocklistsPublic  = defaults.ExtendedIpBlocklistsPublic,
+        ExtendedIpBlocklistsPrivate = defaults.ExtendedIpBlocklistsPrivate,
+        DomainBlocklists            = defaults.DomainBlocklists,
+        ArcSelectors                = defaults.ArcSelectors,
+        DmarcDiscoverySubdomains    = defaults.DmarcDiscoverySubdomains,
+        MailSurveySubdomains        = defaults.MailSurveySubdomains,
+        SpfSubdomains               = defaults.SpfSubdomains,
+        SrvServiceNames             = defaults.SrvServiceNames,
+        VmcIssuers                  = defaults.VmcIssuers,
+        CrtShBaseUrl                = defaults.CrtShBaseUrl
     };
     var dkimRaw = httpCtx.Request.Query["dkimSelectors"].ToString();
     if (!string.IsNullOrWhiteSpace(dkimRaw))
