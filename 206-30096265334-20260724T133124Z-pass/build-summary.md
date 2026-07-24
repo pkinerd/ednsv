@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #156 (attempt 1) |
-| **Run ID** | 25155651320 |
+| **Run** | #206 (attempt 1) |
+| **Run ID** | 30096265334 |
 | **Result** | pass |
-| **Commit** | 15d8805bbdce12fca34a498b0139eb1b954b264c |
-| **Ref** | refs/pull/12/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | bf59af29cfb2f2950007619e326c8c5ecae25537 |
+| **Ref** | refs/pull/27/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #12: Add network-category toggles for restricted environments |
-| **Branch** | claude/add-environment-check-options-J1DiB |
+| **PR** | #27: Improve UI/UX: toast messages, scroll nav, collapsible sections, and history migration |
+| **Branch** | claude/redis-caching-verify-45k9yk |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
