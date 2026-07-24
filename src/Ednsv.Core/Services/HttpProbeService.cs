@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace Ednsv.Core.Services;
 
@@ -46,11 +47,31 @@ public class HttpProbeService
     /// </param>
     /// <param name="timeoutSeconds">Per-request HTTP timeout. Default 10s.</param>
     /// <param name="maxConcurrency">Cap on simultaneous outbound requests. Default 20.</param>
-    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10, int maxConcurrency = 20)
+    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10, int maxConcurrency = 20, RedisConnection? redis = null)
     {
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-        _getCache = new ProbeCache<GetResult>(cacheTtl);
-        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl);
+        ProbeCacheL2<GetResult>? getL2 =
+            redis != null && redis.Enabled
+                ? new ProbeCacheL2<GetResult>(redis, "http-get", cacheTtl,
+                    r => JsonSerializer.Serialize(new HttpGetCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode }),
+                    json =>
+                    {
+                        var e = JsonSerializer.Deserialize<HttpGetCacheEntry>(json);
+                        return e == null ? null : new GetResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode };
+                    })
+                : null;
+        ProbeCacheL2<GetWithHeadersResult>? getHeadersL2 =
+            redis != null && redis.Enabled
+                ? new ProbeCacheL2<GetWithHeadersResult>(redis, "http-get-headers", cacheTtl,
+                    r => JsonSerializer.Serialize(new HttpGetWithHeadersCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode, ContentType = r.ContentType }),
+                    json =>
+                    {
+                        var e = JsonSerializer.Deserialize<HttpGetWithHeadersCacheEntry>(json);
+                        return e == null ? null : new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType };
+                    })
+                : null;
+        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl, getHeadersL2);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true

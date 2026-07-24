@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using StackExchange.Redis;
 
 namespace Ednsv.Core.Services;
 
@@ -117,6 +118,20 @@ public sealed class AppConfig
 /// <summary>Metadata for a revision, without the (potentially large) config body.</summary>
 public sealed record ConfigRevisionInfo(int Id, DateTime SavedAt, string SavedBy);
 
+/// <summary>Thrown when a distributed write loses the beacon compare-and-set:
+/// another pod persisted a newer revision since the editor loaded. Maps to 409.</summary>
+public sealed class RevisionConflictException : Exception
+{
+    public RevisionConflictException(string message) : base(message) { }
+}
+
+/// <summary>Thrown when a distributed write cannot reach Redis to coordinate:
+/// the durable file is not written so pods can't silently diverge. Maps to 503.</summary>
+public sealed class StoreUnavailableException : Exception
+{
+    public StoreUnavailableException(string message) : base(message) { }
+}
+
 public sealed class ConfigService
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -152,13 +167,26 @@ public sealed class ConfigService
     private readonly List<ConfigRevisionInfo> _history = new(); // oldest first
     private int _nextRevisionId = 1;
 
-    public ConfigService(string dataDir)
+    // Distributed coordination (opt-in). When Redis is configured, a single
+    // beacon key holds the GUID of the current head revision. Every save mints a
+    // new GUID and promotes it via an atomic compare-and-set; reads check the
+    // beacon on demand and reload the shared file when the GUID has moved.
+    private readonly RedisConnection? _redis;
+    private string _headGuid = Guid.NewGuid().ToString("N");
+    private const string BeaconSuffix = "config:head";
+
+    public ConfigService(string dataDir, RedisConnection? redis = null)
     {
         _dataDir = dataDir;
         _filePath = Path.Combine(dataDir, "config.json");
         _historyIndexPath = Path.Combine(dataDir, "config-history.json");
         _historyDir = Path.Combine(dataDir, "config-history");
+        _redis = redis != null && redis.Enabled ? redis : null;
     }
+
+    /// <summary>Current head-revision GUID this pod is serving. Clients echo this
+    /// back on a subsequent save (via If-Match) to detect concurrent edits.</summary>
+    public string Head { get { lock (_lock) return _headGuid; } }
 
     private string RevisionPath(int id) => Path.Combine(_historyDir, $"config-rev-{id}.json");
 
@@ -187,6 +215,7 @@ public sealed class ConfigService
                         {
                             _current = parsed;
                             SeedBaselineRevisionLocked();
+                            InitBeaconLocked();
                         }
                         return Snapshot();
                     }
@@ -205,12 +234,14 @@ public sealed class ConfigService
             _current = seed;
             SaveLocked();
             SeedBaselineRevisionLocked();
+            InitBeaconLocked();
         }
         return Snapshot();
     }
 
     public AppConfig Snapshot()
     {
+        EnsureFresh();
         lock (_lock) return CloneConfig(_current);
     }
 
@@ -219,7 +250,7 @@ public sealed class ConfigService
     /// and record a revision attributed to <paramref name="savedBy"/> so the
     /// change is backed up and auditable.
     /// </summary>
-    public void Replace(AppConfig incoming, string savedBy = "system")
+    public void Replace(AppConfig incoming, string savedBy = "system", string? expectedHead = null)
     {
         if (incoming == null) throw new ArgumentNullException(nameof(incoming));
         incoming.DefaultDkimSelectors ??= new List<string>();
@@ -242,17 +273,120 @@ public sealed class ConfigService
         incoming.VmcIssuers = NormalizeLines(incoming.VmcIssuers, Checks.ProbeDefaults.VmcIssuers);
         incoming.CrtShBaseUrl = string.IsNullOrWhiteSpace(incoming.CrtShBaseUrl)
             ? Checks.ProbeDefaults.CrtShBaseUrl : incoming.CrtShBaseUrl.Trim();
+
+        if (_redis != null)
+        {
+            // Adopt the cluster's current head (and history / next-id) before writing.
+            EnsureFresh();
+            var db = _redis.GetDatabase();
+            if (db == null)
+                throw new StoreUnavailableException("Redis is unreachable; refusing to persist config to avoid divergence across pods.");
+            var beacon = _redis.Key(BeaconSuffix);
+            string baseHead;
+            lock (_lock) baseHead = expectedHead ?? _headGuid;
+            var newHead = Guid.NewGuid().ToString("N");
+            // Atomic compare-and-set: promote only if the head is still the one
+            // the editor based their change on. A concurrent save moved it → 409.
+            var tran = db.CreateTransaction();
+            tran.AddCondition(Condition.StringEqual(beacon, baseHead));
+            _ = tran.StringSetAsync(beacon, newHead);
+            bool committed;
+            try { committed = tran.Execute(); }
+            catch { throw new StoreUnavailableException("Redis transaction failed while coordinating the config write."); }
+            if (!committed)
+                throw new RevisionConflictException("The configuration was changed by another session. Reload and re-apply your changes.");
+            lock (_lock)
+            {
+                _current = incoming;
+                SaveLocked();
+                AppendRevisionLocked(string.IsNullOrWhiteSpace(savedBy) ? "unknown" : savedBy);
+                _headGuid = newHead;
+            }
+            return;
+        }
+
         lock (_lock)
         {
             _current = incoming;
             SaveLocked();
             AppendRevisionLocked(string.IsNullOrWhiteSpace(savedBy) ? "unknown" : savedBy);
+            _headGuid = Guid.NewGuid().ToString("N");
         }
+    }
+
+    // ── Distributed coordination (beacon) ────────────────────────────────
+
+    /// <summary>On-demand staleness check: if another pod advanced the beacon,
+    /// reload the shared config file and history so this pod serves current data.
+    /// No-op in single-instance mode or when Redis is unreachable (serves local).</summary>
+    public void EnsureFresh()
+    {
+        if (_redis == null) return;
+        var db = _redis.GetDatabase();
+        if (db == null) return; // Redis down — keep serving the last-known local copy.
+        var beacon = _redis.Key(BeaconSuffix);
+        RedisValue v;
+        try { v = db.StringGet(beacon); }
+        catch { return; }
+        if (v.IsNullOrEmpty)
+        {
+            // Beacon absent (never set or flushed): publish our head so peers converge.
+            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            return;
+        }
+        string remote = v!;
+        lock (_lock)
+        {
+            if (remote == _headGuid) return;
+            ReloadFromDiskLocked();
+            _headGuid = remote;
+        }
+    }
+
+    private void InitBeaconLocked()
+    {
+        if (_redis == null) return;
+        var db = _redis.GetDatabase();
+        if (db == null) return;
+        var beacon = _redis.Key(BeaconSuffix);
+        try
+        {
+            var existing = db.StringGet(beacon);
+            if (existing.IsNullOrEmpty)
+                db.StringSet(beacon, _headGuid, when: When.NotExists);
+            else
+                _headGuid = existing!; // adopt the cluster head for the shared file.
+        }
+        catch { /* best effort — fall back to local head */ }
+    }
+
+    private void ReloadFromDiskLocked()
+    {
+        if (File.Exists(_filePath))
+        {
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                if (!string.IsNullOrWhiteSpace(json))
+                {
+                    var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+                    if (parsed != null)
+                    {
+                        parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors ?? new Dictionary<string, List<string>>());
+                        parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains ?? new List<string>());
+                        _current = parsed;
+                    }
+                }
+            }
+            catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+        }
+        LoadHistory(); // re-sync revision metadata and next-id from the shared index.
     }
 
     /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.</summary>
     public IReadOnlyList<ConfigRevisionInfo> ListRevisions()
     {
+        EnsureFresh();
         lock (_lock)
         {
             return _history.AsEnumerable().Reverse().ToList();
@@ -262,6 +396,7 @@ public sealed class ConfigService
     /// <summary>The config saved in revision <paramref name="id"/>, or null if unknown.</summary>
     public AppConfig? GetRevision(int id)
     {
+        EnsureFresh();
         lock (_lock)
         {
             if (!_history.Any(r => r.Id == id)) return null;

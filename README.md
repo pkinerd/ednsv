@@ -52,6 +52,7 @@ Start with the architecture overview, then dive into the area you need:
 | [Service layer](docs/service-layer.md) | DNS/SMTP/HTTP probe services, rate limiting, config, auth, and startup wiring |
 | [Deployment & API](docs/deployment.md) | CLI options, the REST API (all endpoints), the web UI, Docker, and CI/CD |
 | [Configuration](docs/configuration.md) | Environment variables, runtime config, probe tuning, and the editable probe data lists |
+| [Horizontal scaling](docs/horizontal-scaling.md) | Running `Ednsv.Web` across multiple replicas: Redis-backed jobs/cache, shared keyring, config/user coordination |
 | [Entra ID setup](docs/entra-setup.md) | Single sign-on (OIDC) for users and client-credentials API access for service accounts |
 
 Copyright 2026, all rights reserved.

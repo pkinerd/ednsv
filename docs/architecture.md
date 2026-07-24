@@ -205,3 +205,7 @@ Every shared write surface in the cache layer is now serialised:
 - `BackgroundCacheFlusher._lock` (`SemaphoreSlim(1, 1)`) gates `SaveAsync` calls. Timer flushes use `WaitAsync(0)` and skip when one is already in progress; explicit and dispose-time flushes block.
 - `DiskCacheService._domainResultsLock` (static `SemaphoreSlim(1, 1)`) gates the read-modify-write on `domain-results.json`, with `temp file → File.Move(overwrite=true)` for atomic publication.
 - `CacheManager.FlushAsync` routes through the flusher's lock when one exists, so manual and background flushes can never overlap.
+
+### Horizontal scaling (opt-in)
+
+The web service is single-process by default but can run across multiple replicas when a Redis connection string is configured: async jobs and a probe-cache L2 move into Redis, config/user writes coordinate through a Redis beacon (compare-and-set), and the data-protection keyring lives on a shared RWX mount. With Redis unset the original single-instance behaviour is unchanged. See [horizontal-scaling.md](horizontal-scaling.md).

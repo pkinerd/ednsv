@@ -1,7 +1,67 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Caching.Memory;
+using StackExchange.Redis;
 
 namespace Ednsv.Core.Services;
+
+/// <summary>
+/// Optional shared L2 for a <see cref="ProbeCache{T}"/>: a Redis-backed,
+/// per-key-TTL cache sitting behind the per-pod L1 <see cref="MemoryCache"/>.
+/// Values are serialised to a string via caller-supplied delegates and stored
+/// under <c>{InstanceName}:cache:{type}:{key}</c>.
+///
+/// Every operation is best-effort: a null database (Redis unconfigured or
+/// currently unreachable) or any serialisation/transport error is swallowed and
+/// treated as a miss, so callers transparently fall through to the network.
+/// </summary>
+public sealed class ProbeCacheL2<TValue> where TValue : class
+{
+    private readonly RedisConnection _redis;
+    private readonly string _prefix;
+    private readonly TimeSpan? _ttl;
+    private readonly Func<TValue, string?> _serialize;
+    private readonly Func<string, TValue?> _deserialize;
+
+    public ProbeCacheL2(RedisConnection redis, string type, TimeSpan? ttl,
+        Func<TValue, string?> serialize, Func<string, TValue?> deserialize)
+    {
+        _redis = redis;
+        _prefix = $"cache:{type}:";
+        _ttl = ttl;
+        _serialize = serialize;
+        _deserialize = deserialize;
+    }
+
+    /// <summary>True when the backing Redis connection is configured.</summary>
+    public bool Enabled => _redis.Enabled;
+
+    /// <summary>Read a value from the L2, or null on miss / any error.</summary>
+    public async Task<TValue?> TryGetAsync(string key)
+    {
+        var db = _redis.GetDatabase();
+        if (db == null) return null;
+        try
+        {
+            var val = await db.StringGetAsync(_redis.Key(_prefix + key));
+            if (val.IsNullOrEmpty) return null;
+            return _deserialize(val!);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Write-through to the L2 (fire-and-forget). Best-effort.</summary>
+    public void Set(string key, TValue value)
+    {
+        var db = _redis.GetDatabase();
+        if (db == null) return;
+        string? payload;
+        try { payload = _serialize(value); }
+        catch { return; }
+        if (payload == null) return;
+        try { db.StringSet(_redis.Key(_prefix + key), payload, _ttl, flags: CommandFlags.FireAndForget); }
+        catch { /* best effort — an L2 write failure just means the next pod refills */ }
+    }
+}
 
 /// <summary>
 /// Single-source-of-truth cache using MemoryCache with optional TTL.
@@ -24,6 +84,8 @@ public class ProbeCache<TValue> where TValue : class
 {
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
+    // Optional shared L2 (Redis). Null in single-instance mode.
+    private readonly ProbeCacheL2<TValue>? _l2;
     // Write-through log for disk export — never read during cache lookups.
     // Each entry carries the time its value was obtained (a fresh network fetch
     // stamps DateTime.UtcNow via Set; an entry loaded from disk keeps its original
@@ -47,10 +109,11 @@ public class ProbeCache<TValue> where TValue : class
         set => TraceContext.Sink = value;
     }
 
-    public ProbeCache(TimeSpan? ttl = null)
+    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _l2 = l2 != null && l2.Enabled ? l2 : null;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
@@ -106,11 +169,16 @@ public class ProbeCache<TValue> where TValue : class
         // 2. Join existing in-flight task or start a new one.
         //    Lazy ensures only one factory runs even if GetOrAdd calls
         //    the value factory on multiple threads (documented .NET behavior).
+        // Recheck bypass also skips the L2 read (but not the L2 write-back below,
+        // so a forced recheck refreshes the shared cache for other pods).
+        bool bypass = recheckFlag != RecheckHelper.CacheDep.None &&
+            RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag);
+
         bool isNewEntry = false;
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist, bypass));
         });
 
         if (!isNewEntry)
@@ -128,15 +196,32 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist, bool skipL2Read)
     {
         try
         {
+            // L1 already missed. Try the shared L2 before the network; a hit
+            // populates L1 so subsequent local reads are fast.
+            if (!skipL2Read && _l2 != null)
+            {
+                var l2v = await _l2.TryGetAsync(key);
+                if (l2v != null)
+                {
+                    Trace?.Invoke($"[CACHE] L2 HIT {key}");
+                    Set(key, l2v);
+                    return l2v;
+                }
+            }
+
             var result = await factory();
             // Always cache in MemoryCache (avoids repeated network calls within a run).
-            // Only add to _exportLog when shouldPersist approves (controls disk persistence).
+            // Only add to _exportLog / L2 when shouldPersist approves (transient
+            // errors stay L1-only and never poison disk or the shared L2).
             if (shouldPersist == null || shouldPersist(result))
+            {
                 Set(key, result);
+                _l2?.Set(key, result);
+            }
             else
                 SetMemoryOnly(key, result);
             return result;

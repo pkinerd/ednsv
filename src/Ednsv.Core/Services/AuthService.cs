@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using StackExchange.Redis;
 
 namespace Ednsv.Core.Services;
 
@@ -48,12 +49,21 @@ public sealed class AuthService
     private readonly object _lock = new();
     private List<User> _users = new();
 
+    // Distributed coordination (opt-in) — mirrors ConfigService. A Redis beacon
+    // holds the GUID of the current users.json head; reads check it on demand so
+    // a revocation on one pod is visible everywhere, and writes promote a new
+    // head via compare-and-set (retrying on a concurrent change).
+    private readonly RedisConnection? _redis;
+    private string _headGuid = Guid.NewGuid().ToString("N");
+    private const string BeaconSuffix = "users:head";
+
     public bool Disabled => _rootHash == null;
 
-    public AuthService(string authDir, string? rootTokenHash)
+    public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null)
     {
         _authDir = authDir;
         _filePath = Path.Combine(authDir, "users.json");
+        _redis = redis != null && redis.Enabled ? redis : null;
 
         if (string.IsNullOrWhiteSpace(rootTokenHash) ||
             rootTokenHash.Equals(DisabledMarker, StringComparison.OrdinalIgnoreCase))
@@ -69,6 +79,7 @@ public sealed class AuthService
     public void Load()
     {
         if (Disabled) return;
+        InitBeacon(); // publish/adopt the cluster head before reading the file
         if (!File.Exists(_filePath)) return;
 
         var json = File.ReadAllText(_filePath);
@@ -115,6 +126,89 @@ public sealed class AuthService
         File.Move(tmp, _filePath, overwrite: true);
     }
 
+    // ── Distributed coordination (beacon) ────────────────────────────────
+
+    private const int MaxWriteAttempts = 5;
+
+    /// <summary>Reload users.json if another pod advanced the beacon. Must hold _lock.</summary>
+    private void EnsureFreshLocked()
+    {
+        if (_redis == null) return;
+        var db = _redis.GetDatabase();
+        if (db == null) return; // Redis down — keep serving the last-known local copy.
+        var beacon = _redis.Key(BeaconSuffix);
+        RedisValue v;
+        try { v = db.StringGet(beacon); }
+        catch { return; }
+        if (v.IsNullOrEmpty)
+        {
+            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            return;
+        }
+        string remote = v!;
+        if (remote == _headGuid) return;
+        ReloadUsersFromDiskLocked();
+        _headGuid = remote;
+    }
+
+    /// <summary>Persist users and promote a new head. Returns false on a beacon
+    /// CAS conflict (caller reloads and retries). Throws when Redis is required
+    /// but unreachable. Must hold _lock.</summary>
+    private bool TryCommitLocked()
+    {
+        if (_redis == null)
+        {
+            SaveLocked();
+            _headGuid = Guid.NewGuid().ToString("N");
+            return true;
+        }
+        var db = _redis.GetDatabase();
+        if (db == null)
+            throw new StoreUnavailableException("Redis is unreachable; refusing to persist user changes to avoid divergence across pods.");
+        var beacon = _redis.Key(BeaconSuffix);
+        var newHead = Guid.NewGuid().ToString("N");
+        var tran = db.CreateTransaction();
+        tran.AddCondition(Condition.StringEqual(beacon, _headGuid));
+        _ = tran.StringSetAsync(beacon, newHead);
+        bool committed;
+        try { committed = tran.Execute(); }
+        catch { throw new StoreUnavailableException("Redis transaction failed while coordinating the user write."); }
+        if (!committed) return false;
+        SaveLocked();
+        _headGuid = newHead;
+        return true;
+    }
+
+    private void InitBeacon()
+    {
+        if (_redis == null) return;
+        var db = _redis.GetDatabase();
+        if (db == null) return;
+        var beacon = _redis.Key(BeaconSuffix);
+        try
+        {
+            var existing = db.StringGet(beacon);
+            if (existing.IsNullOrEmpty)
+                db.StringSet(beacon, _headGuid, when: When.NotExists);
+            else
+                _headGuid = existing!; // adopt the cluster head for the shared file.
+        }
+        catch { /* best effort — fall back to local head */ }
+    }
+
+    private void ReloadUsersFromDiskLocked()
+    {
+        if (!File.Exists(_filePath)) { _users = new List<User>(); return; }
+        try
+        {
+            var json = File.ReadAllText(_filePath);
+            if (string.IsNullOrWhiteSpace(json)) { _users = new List<User>(); return; }
+            var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
+            if (file?.Users != null) _users = file.Users;
+        }
+        catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+    }
+
     public static string Hash(string token)
     {
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(token));
@@ -145,6 +239,7 @@ public sealed class AuthService
 
         lock (_lock)
         {
+            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (!u.Username.Equals(username, StringComparison.OrdinalIgnoreCase)) continue;
@@ -167,6 +262,7 @@ public sealed class AuthService
 
         lock (_lock)
         {
+            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (u.Revoked) continue;
@@ -190,25 +286,32 @@ public sealed class AuthService
         if (newUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new IssueResult(IssueStatus.UsernameTaken);
 
-        lock (_lock)
+        for (int attempt = 0; ; attempt++)
         {
-            if (_users.Any(u => u.Username.Equals(newUsername, StringComparison.OrdinalIgnoreCase)))
-                return new IssueResult(IssueStatus.UsernameTaken);
-
-            var token = GenerateToken();
-            var user = new User
+            lock (_lock)
             {
-                Username = newUsername,
-                Hash = Hash(token),
-                IssuedBy = issuedBy,
-                IsAdmin = isAdmin,
-                IssuedAt = DateTime.UtcNow,
-                IssuedFromIp = issuedFromIp,
-                Revoked = false
-            };
-            _users.Add(user);
-            SaveLocked();
-            return new IssueResult(IssueStatus.Success, Clone(user), token);
+                EnsureFreshLocked();
+                if (_users.Any(u => u.Username.Equals(newUsername, StringComparison.OrdinalIgnoreCase)))
+                    return new IssueResult(IssueStatus.UsernameTaken);
+
+                var token = GenerateToken();
+                var user = new User
+                {
+                    Username = newUsername,
+                    Hash = Hash(token),
+                    IssuedBy = issuedBy,
+                    IsAdmin = isAdmin,
+                    IssuedAt = DateTime.UtcNow,
+                    IssuedFromIp = issuedFromIp,
+                    Revoked = false
+                };
+                _users.Add(user);
+                if (TryCommitLocked())
+                    return new IssueResult(IssueStatus.Success, Clone(user), token);
+                _users.Remove(user); // CAS lost — discard and retry from fresh state
+            }
+            if (attempt >= MaxWriteAttempts)
+                throw new StoreUnavailableException("Could not persist the new user after repeated concurrent modifications.");
         }
     }
 
@@ -234,20 +337,27 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new DeleteResult(DeleteStatus.NotAllowed);
 
-        lock (_lock)
+        for (int attempt = 0; ; attempt++)
         {
-            var target = _users.FirstOrDefault(u =>
-                u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
-            if (target == null) return new DeleteResult(DeleteStatus.NotFound);
-            if (!target.Revoked) return new DeleteResult(DeleteStatus.NotRevoked);
+            lock (_lock)
+            {
+                EnsureFreshLocked();
+                var target = _users.FirstOrDefault(u =>
+                    u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
+                if (target == null) return new DeleteResult(DeleteStatus.NotFound);
+                if (!target.Revoked) return new DeleteResult(DeleteStatus.NotRevoked);
 
-            var toDelete = new List<User> { target };
-            toDelete.AddRange(GetDescendantsLocked(target.Username));
-            var names = new HashSet<string>(toDelete.Select(u => u.Username), StringComparer.OrdinalIgnoreCase);
+                var toDelete = new List<User> { target };
+                toDelete.AddRange(GetDescendantsLocked(target.Username));
+                var names = new HashSet<string>(toDelete.Select(u => u.Username), StringComparer.OrdinalIgnoreCase);
 
-            _users.RemoveAll(u => names.Contains(u.Username));
-            SaveLocked();
-            return new DeleteResult(DeleteStatus.Success, names.ToArray());
+                _users.RemoveAll(u => names.Contains(u.Username));
+                if (TryCommitLocked())
+                    return new DeleteResult(DeleteStatus.Success, names.ToArray());
+                // CAS lost — next iteration's EnsureFreshLocked reloads the true state.
+            }
+            if (attempt >= MaxWriteAttempts)
+                throw new StoreUnavailableException("Could not persist the user deletion after repeated concurrent modifications.");
         }
     }
 
@@ -267,34 +377,41 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new RevokeResult(RevokeStatus.NotAllowed);
 
-        lock (_lock)
+        for (int attempt = 0; ; attempt++)
         {
-            var target = _users.FirstOrDefault(u =>
-                u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
-            if (target == null) return new RevokeResult(RevokeStatus.NotFound);
-
-            if (!elevated && !IsAncestorOrRootLocked(requestedBy, target.Username))
-                return new RevokeResult(RevokeStatus.NotAllowed);
-
-            var toRevoke = new List<User> { target };
-            toRevoke.AddRange(GetDescendantsLocked(target.Username));
-
-            var now = DateTime.UtcNow;
-            var affected = new List<string>();
-            foreach (var u in toRevoke)
+            lock (_lock)
             {
-                if (u.Revoked) continue;
-                u.Revoked = true;
-                u.RevokedAt = now;
-                u.RevokedBy = requestedBy;
-                affected.Add(u.Username);
+                EnsureFreshLocked();
+                var target = _users.FirstOrDefault(u =>
+                    u.Username.Equals(targetUsername, StringComparison.OrdinalIgnoreCase));
+                if (target == null) return new RevokeResult(RevokeStatus.NotFound);
+
+                if (!elevated && !IsAncestorOrRootLocked(requestedBy, target.Username))
+                    return new RevokeResult(RevokeStatus.NotAllowed);
+
+                var toRevoke = new List<User> { target };
+                toRevoke.AddRange(GetDescendantsLocked(target.Username));
+
+                var now = DateTime.UtcNow;
+                var affected = new List<string>();
+                foreach (var u in toRevoke)
+                {
+                    if (u.Revoked) continue;
+                    u.Revoked = true;
+                    u.RevokedAt = now;
+                    u.RevokedBy = requestedBy;
+                    affected.Add(u.Username);
+                }
+
+                if (affected.Count == 0)
+                    return new RevokeResult(RevokeStatus.AlreadyRevoked, Array.Empty<string>());
+
+                if (TryCommitLocked())
+                    return new RevokeResult(RevokeStatus.Success, affected);
+                // CAS lost — next iteration's EnsureFreshLocked reloads the true state.
             }
-
-            if (affected.Count == 0)
-                return new RevokeResult(RevokeStatus.AlreadyRevoked, Array.Empty<string>());
-
-            SaveLocked();
-            return new RevokeResult(RevokeStatus.Success, affected);
+            if (attempt >= MaxWriteAttempts)
+                throw new StoreUnavailableException("Could not persist the revocation after repeated concurrent modifications.");
         }
     }
 
@@ -304,6 +421,7 @@ public sealed class AuthService
         if (Disabled) return Array.Empty<User>();
         lock (_lock)
         {
+            EnsureFreshLocked();
             if (requestedBy.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
                 return _users.Select(Clone).ToList();
             return GetDescendantsLocked(requestedBy).Select(Clone).ToList();

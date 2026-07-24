@@ -161,6 +161,10 @@ Each entry includes a `CachedAtUtc` timestamp. On load, entries older than the c
 
 `CacheManager.FlushAsync()` routes through the flusher's lock when one is active; otherwise it calls `DiskCacheService.SaveAsync` directly. This guarantees there is at most one in-flight disk write at any time across all paths (timer, manual flush, dispose), eliminating concurrent-write races on the JSON files.
 
+### Optional Redis L2 (distributed mode)
+
+When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
+
 ## Service Cache Inventory
 
 Each service maintains specific ProbeCache instances:

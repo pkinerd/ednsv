@@ -86,6 +86,26 @@ Config page). All are optional — omit them to keep the defaults shown.
 `ASPNETCORE_HTTP_PORTS` (built-in ASP.NET Core variable) controls the HTTP
 listen port. The Docker image sets it to `8080`.
 
+## Horizontal scaling (multi-replica)
+
+`Ednsv.Web` runs as a single process by default. To run **multiple replicas**
+behind a load balancer it can offload shared state to Redis and a shared file
+mount. This is **opt-in** — with `Redis:ConnectionString` unset the service
+behaves exactly as the single-instance settings above describe.
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode; set → distributed mode (Redis-backed jobs + probe-cache L2 + config/user coordination). May contain a `{AccessKey}` placeholder. |
+| `Redis:AccessKey` | *(unset)* | Secret injected into `Redis:ConnectionString` at startup by replacing the literal `{AccessKey}` placeholder — keeps the key out of `appsettings.json` (supply via env var `Redis__AccessKey` / a mounted secret). |
+| `Redis:InstanceName` | `ednsv` | Key prefix (namespacing) for all EDNSV keys on a shared Redis. |
+| `JobRetentionMinutes` | `5` | Minutes a completed/failed async job is retained in Redis before expiry. |
+| `DataProtection:KeysPath` | `<DataDir>/keys` | Directory for the data-protection keyring (OIDC session cookie). Point at the shared RWX mount so all pods validate each other's sessions. |
+| `DataProtection:KeyEncryptionSecret` | *(unset)* | ≥32-char opaque secret used to encrypt the keyring at rest (AES-GCM via HKDF-SHA256). Unset → keyring written unencrypted (warning logged). |
+
+See [horizontal-scaling.md](horizontal-scaling.md) for the full model — what
+state lives where, the failure model, the health/readiness probes, and a
+distributed-deployment example.
+
 ## Log format
 
 The console emits **structured JSON in Production** and the human-friendly
