@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #146 (attempt 1) |
-| **Run ID** | 25144991147 |
+| **Run** | #197 (attempt 1) |
+| **Run ID** | 30070388557 |
 | **Result** | pass |
-| **Commit** | 7e9e6f408c81fb64691040411a3f9497148b1e52 |
-| **Ref** | refs/pull/9/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 608b9fd7a3cf4eea0b5bc69789a056e91d580ec9 |
+| **Ref** | refs/pull/23/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #9: Claude/tls cert chain validation 1 na en |
-| **Branch** | claude/tls-cert-chain-validation-1NAEn |
+| **PR** | #23: Add external IdP authentication (OIDC SSO and JWT bearer) |
+| **Branch** | claude/external-idp-entra-auth-31ftjw |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
