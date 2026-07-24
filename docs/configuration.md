@@ -465,20 +465,23 @@ The CLI does not expose these lists; it always uses the built-in defaults.
 ## Runtime config revision history
 
 Every save of the runtime config (`PUT /api/config`, i.e. the **Config** page's
-Save button) is backed up: the saved config is appended to
-`{DataDir}/config-history.json` along with **who** saved it (the caller's
-username, or `(auth-disabled)` on a localhost-only open instance) and **when**.
-The newest ~300 revisions are kept; older ones are trimmed. On first run a
-baseline revision (`(initial)`) captures the seeded config so even the first
-change is recoverable.
+Save button) is backed up: the saved config's body is written to its own file
+`{DataDir}/config-history/config-rev-{id}.json`, and a lightweight index at
+`{DataDir}/config-history.json` records the **id**, **who** saved it (the
+caller's username, or `(auth-disabled)` on a localhost-only open instance) and
+**when** — without duplicating the (potentially large) config body. The newest
+~300 revisions are kept; older ones are trimmed from the index and their
+per-revision files deleted. On first run a baseline revision (`(initial)`)
+captures the seeded config so even the first change is recoverable.
 
 The Config page shows a **Revision history** dropdown listing each revision as
 "date — user", newest first. Selecting one loads that config into both the form
 and JSON views without applying it — review it, then click **Save config** to
-apply it as a new revision (attributed to you). Keep `config-history.json` on
-the persistent volume alongside the rest of `DataDir` to retain history across
-restarts. The history endpoints (`GET /api/config/history` and
-`GET /api/config/history/{id}`) are admin-only, like the rest of the config API.
+apply it as a new revision (attributed to you). Keep the `config-history.json`
+index **and** the `config-history/` directory on the persistent volume
+alongside the rest of `DataDir` to retain history across restarts. The history
+endpoints (`GET /api/config/history` and `GET /api/config/history/{id}`) are
+admin-only, like the rest of the config API.
 
 ### Token auth
 

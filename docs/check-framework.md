@@ -174,7 +174,7 @@ The `AdjustForUnreachableHosts()` method downgrades a `Pass` to `Warning` when s
 
 ## Check Categories
 
-30 categories organized into functional groups:
+31 categories organized into functional groups:
 
 ```mermaid
 graph LR
@@ -267,7 +267,7 @@ These **write** to CheckContext shared state. They run in a fixed order because 
 5. **SpfRecordCheck** — parses SPF TXT record, populates `SpfRecord`
 6. **DmarcRecordCheck** — parses DMARC record, populates `DmarcRecord`
 
-### Concurrent Checks (~50, parallel)
+### Concurrent Checks (81, parallel)
 
 These **read** from CheckContext shared state. They are independent of each other and run with `MaxDegreeOfParallelism = 12`. Examples:
 
@@ -296,3 +296,9 @@ Optional features controlled per-validation:
 | `EnableDnsbl` | true | Issue DNS-based blocklist queries |
 | `EnableDirectDns` | true | Allow direct-to-authoritative / public-resolver queries (propagation, lame delegation, glue, AXFR, etc.) |
 | `EnableDoh` | false | Use DNS-over-HTTPS for the propagation check (routes via `HTTPS_PROXY`) |
+
+`ValidationOptions` also carries the operator-editable **probe data lists**
+(propagation resolvers, DNSBL/RHSBL zones, ARC selectors, survey subdomains,
+SRV names, VMC issuers, crt.sh base URL). Each falls back to `ProbeDefaults`
+when left empty. These are seeded from and edited via the runtime config — see
+[configuration.md → Runtime probe data lists](configuration.md#runtime-probe-data-lists-configjson).

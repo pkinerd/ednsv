@@ -56,6 +56,18 @@
   .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
   .tab-pane { display: none; }
   .tab-pane.active { display: block; }
+  .section-head { display: flex; align-items: baseline; gap: 0.5rem; margin: 1.75rem 0 0.25rem; }
+  .section-head h2 { margin: 0; }
+  .section-head .tier { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  details.panel { padding: 0; }
+  details.panel > summary { cursor: pointer; padding: 0.85rem 1rem; font-size: 0.9rem; font-weight: 600; color: var(--text); list-style: none; display: flex; align-items: center; gap: 0.5rem; user-select: none; }
+  details.panel > summary::-webkit-details-marker { display: none; }
+  details.panel > summary::before { content: '\25B6'; color: var(--muted); font-size: 0.6rem; transition: transform 0.15s ease; }
+  details.panel[open] > summary::before { transform: rotate(90deg); }
+  details.panel[open] > summary { border-bottom: 1px solid var(--border); }
+  details.panel > summary .hint { color: var(--muted); font-weight: normal; font-size: 0.72rem; margin-left: auto; text-transform: none; letter-spacing: 0; }
+  details.panel .details-body { padding: 1rem; }
+  details.panel .details-body .field:last-child { margin-bottom: 0; }
 </style>
 </head>
 <body>
@@ -122,68 +134,6 @@
     </div>
 
     <div class="panel">
-      <h2>Probe data lists</h2>
-      <p class="subtitle">Advanced. One entry per line. Labelled entries use <code>value|label</code> (the label is shown in reports). Leave a list empty to fall back to the built-in defaults.</p>
-
-      <div class="field">
-        <label>Propagation resolvers (direct DNS)<span class="desc">Public resolvers queried for the propagation-consistency check. <code>ip|label</code>.</span></label>
-        <textarea id="cfgPropagationResolvers" placeholder="8.8.8.8|Google&#10;1.1.1.1|Cloudflare"></textarea>
-      </div>
-      <div class="field">
-        <label>Propagation resolvers (DoH JSON endpoints)<span class="desc">Used instead of raw DNS when DoH is enabled. <code>url|label</code>.</span></label>
-        <textarea id="cfgPropagationDohResolvers" placeholder="https://dns.google/resolve|Google (DoH)"></textarea>
-      </div>
-      <div class="field">
-        <label>IP blocklists — public resolvers<span class="desc">DNSBL zones that answer reliably over public DNS.</span></label>
-        <textarea id="cfgIpBlocklistsPublic" placeholder="bl.spamcop.net"></textarea>
-      </div>
-      <div class="field">
-        <label>IP blocklists — private resolver only<span class="desc">DNSBL zones that need a registered/private resolver.</span></label>
-        <textarea id="cfgIpBlocklistsPrivate" placeholder="zen.spamhaus.org&#10;b.barracudacentral.org"></textarea>
-      </div>
-      <div class="field">
-        <label>Extended IP blocklists — public<span class="desc">Additional DNSBL zones for the extended check. <code>zone|label</code>.</span></label>
-        <textarea id="cfgExtendedIpBlocklistsPublic" placeholder="all.s5h.net|S5H"></textarea>
-      </div>
-      <div class="field">
-        <label>Extended IP blocklists — private<span class="desc">Extended DNSBL zones needing a private resolver. <code>zone|label</code>.</span></label>
-        <textarea id="cfgExtendedIpBlocklistsPrivate" placeholder="cbl.abuseat.org|CBL"></textarea>
-      </div>
-      <div class="field">
-        <label>Domain blocklists (RHSBL)<span class="desc">Domain/URI blocklist zones for MX-hostname and domain checks.</span></label>
-        <textarea id="cfgDomainBlocklists" placeholder="dbl.spamhaus.org&#10;multi.surbl.org"></textarea>
-      </div>
-      <div class="field">
-        <label>ARC selectors<span class="desc">Selectors probed for ARC signing records.</span></label>
-        <textarea id="cfgArcSelectors" placeholder="arc&#10;s1&#10;google"></textarea>
-      </div>
-      <div class="field">
-        <label>DMARC discovery subdomains<span class="desc">Subdomains checked for weaker DMARC overrides.</span></label>
-        <textarea id="cfgDmarcDiscoverySubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
-      </div>
-      <div class="field">
-        <label>Mail survey subdomains<span class="desc">Subdomains probed by the mail-subdomain survey.</span></label>
-        <textarea id="cfgMailSurveySubdomains" placeholder="mail&#10;smtp&#10;webmail"></textarea>
-      </div>
-      <div class="field">
-        <label>SPF coverage subdomains<span class="desc">Mail-sending subdomains checked for SPF coverage.</span></label>
-        <textarea id="cfgSpfSubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
-      </div>
-      <div class="field">
-        <label>SRV service names<span class="desc">SRV prefixes queried for mail services.</span></label>
-        <textarea id="cfgSrvServiceNames" placeholder="_submission._tcp&#10;_imaps._tcp"></textarea>
-      </div>
-      <div class="field">
-        <label>Recognised VMC issuers<span class="desc">Certificate-authority names treated as recognised VMC CAs.</span></label>
-        <textarea id="cfgVmcIssuers" placeholder="DigiCert&#10;Entrust&#10;GlobalSign"></textarea>
-      </div>
-      <div class="field">
-        <label>crt.sh base URL<span class="desc">Base URL for Certificate Transparency lookups. Leave blank for the default.</span></label>
-        <input type="text" id="cfgCrtShBaseUrl" placeholder="https://crt.sh/">
-      </div>
-    </div>
-
-    <div class="panel">
       <h2>Per-domain DKIM selectors</h2>
       <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
       <table id="domTable">
@@ -196,6 +146,104 @@
         <div><button class="secondary" id="addDomainBtn">Add</button></div>
       </div>
     </div>
+
+    <div class="section-head">
+      <h2>Advanced — probe data lists</h2>
+      <span class="tier">optional</span>
+    </div>
+    <p class="subtitle">Overrides for the built-in probe lists. Collapsed by default — leave a list empty to use the built-in defaults. One entry per line; labelled entries use <code>value|label</code> (the label is shown in reports).</p>
+
+    <details class="panel collapsible">
+      <summary>Propagation resolvers <span class="hint">DNS consistency sources</span></summary>
+      <div class="details-body">
+        <div class="field">
+          <label>Propagation resolvers (direct DNS)<span class="desc">Public resolvers queried for the propagation-consistency check. <code>ip|label</code>.</span></label>
+          <textarea id="cfgPropagationResolvers" placeholder="8.8.8.8|Google&#10;1.1.1.1|Cloudflare"></textarea>
+        </div>
+        <div class="field">
+          <label>Propagation resolvers (DoH JSON endpoints)<span class="desc">Used instead of raw DNS when DoH is enabled. <code>url|label</code>.</span></label>
+          <textarea id="cfgPropagationDohResolvers" placeholder="https://dns.google/resolve|Google (DoH)"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel collapsible">
+      <summary>IP blocklists (DNSBL) <span class="hint">Spamhaus, Barracuda, SpamCop, …</span></summary>
+      <div class="details-body">
+        <div class="field">
+          <label>IP blocklists — public resolvers<span class="desc">DNSBL zones that answer reliably over public DNS.</span></label>
+          <textarea id="cfgIpBlocklistsPublic" placeholder="bl.spamcop.net"></textarea>
+        </div>
+        <div class="field">
+          <label>IP blocklists — private resolver only<span class="desc">DNSBL zones that need a registered/private resolver.</span></label>
+          <textarea id="cfgIpBlocklistsPrivate" placeholder="zen.spamhaus.org&#10;b.barracudacentral.org"></textarea>
+        </div>
+        <div class="field">
+          <label>Extended IP blocklists — public<span class="desc">Additional DNSBL zones for the extended check. <code>zone|label</code>.</span></label>
+          <textarea id="cfgExtendedIpBlocklistsPublic" placeholder="all.s5h.net|S5H"></textarea>
+        </div>
+        <div class="field">
+          <label>Extended IP blocklists — private<span class="desc">Extended DNSBL zones needing a private resolver. <code>zone|label</code>.</span></label>
+          <textarea id="cfgExtendedIpBlocklistsPrivate" placeholder="cbl.abuseat.org|CBL"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel collapsible">
+      <summary>Domain blocklists (RHSBL)</summary>
+      <div class="details-body">
+        <div class="field">
+          <label>Domain blocklists (RHSBL)<span class="desc">Domain/URI blocklist zones for MX-hostname and domain checks.</span></label>
+          <textarea id="cfgDomainBlocklists" placeholder="dbl.spamhaus.org&#10;multi.surbl.org"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel collapsible">
+      <summary>ARC &amp; DMARC discovery</summary>
+      <div class="details-body">
+        <div class="field">
+          <label>ARC selectors<span class="desc">Selectors probed for ARC signing records.</span></label>
+          <textarea id="cfgArcSelectors" placeholder="arc&#10;s1&#10;google"></textarea>
+        </div>
+        <div class="field">
+          <label>DMARC discovery subdomains<span class="desc">Subdomains checked for weaker DMARC overrides.</span></label>
+          <textarea id="cfgDmarcDiscoverySubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel collapsible">
+      <summary>Subdomain &amp; SRV surveys</summary>
+      <div class="details-body">
+        <div class="field">
+          <label>Mail survey subdomains<span class="desc">Subdomains probed by the mail-subdomain survey.</span></label>
+          <textarea id="cfgMailSurveySubdomains" placeholder="mail&#10;smtp&#10;webmail"></textarea>
+        </div>
+        <div class="field">
+          <label>SPF coverage subdomains<span class="desc">Mail-sending subdomains checked for SPF coverage.</span></label>
+          <textarea id="cfgSpfSubdomains" placeholder="mail&#10;smtp&#10;newsletter"></textarea>
+        </div>
+        <div class="field">
+          <label>SRV service names<span class="desc">SRV prefixes queried for mail services.</span></label>
+          <textarea id="cfgSrvServiceNames" placeholder="_submission._tcp&#10;_imaps._tcp"></textarea>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel collapsible">
+      <summary>Branding &amp; Certificate Transparency</summary>
+      <div class="details-body">
+        <div class="field">
+          <label>Recognised VMC issuers<span class="desc">Certificate-authority names treated as recognised VMC CAs.</span></label>
+          <textarea id="cfgVmcIssuers" placeholder="DigiCert&#10;Entrust&#10;GlobalSign"></textarea>
+        </div>
+        <div class="field">
+          <label>crt.sh base URL<span class="desc">Base URL for Certificate Transparency lookups. Leave blank for the default.</span></label>
+          <input type="text" id="cfgCrtShBaseUrl" placeholder="https://crt.sh/">
+        </div>
+      </div>
+    </details>
 
     <div class="actions">
       <button id="saveBtn">Save config</button>
