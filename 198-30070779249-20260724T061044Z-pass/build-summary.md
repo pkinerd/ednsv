@@ -2,15 +2,16 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #148 (attempt 1) |
-| **Run ID** | 25145251481 |
+| **Run** | #198 (attempt 1) |
+| **Run ID** | 30070779249 |
 | **Result** | pass |
-| **Commit** | 1c15e10310e0628537e278b59583b6495c42fa28 |
-| **Ref** | refs/pull/10/merge |
-| **Event** | pull_request |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 8c64a58e8c1b3afb4e8a237ffdc1412d272ed064 |
+| **Ref** | refs/heads/main |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #10: Add Docker image build and push to CI/CD pipeline |
-| **Branch** | claude/add-docker-ci-build-iaIP8 |
 
 ## Artifacts
 ```
@@ -30,10 +31,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
