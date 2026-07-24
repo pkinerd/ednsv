@@ -2,15 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #154 (attempt 1) |
-| **Run ID** | 25147813196 |
+| **Run** | #205 (attempt 1) |
+| **Run ID** | 30095775555 |
 | **Result** | pass |
-| **Commit** | 0489d2ce9d847a7e7a79eb80fb0720a6a721b447 |
-| **Ref** | refs/pull/11/merge |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 9ad50c76e7cc7c969fd3e68343a4c57257a91d56 |
+| **Ref** | refs/pull/27/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #11: Add token-based authentication and token management UI |
-| **Branch** | claude/add-lightweight-auth-wrEVH |
+| **PR** | #27: Improve UI/UX: toast messages, scroll nav, collapsible sections, and history migration |
+| **Branch** | claude/redis-caching-verify-45k9yk |
 
 ## Artifacts
 ```
@@ -30,10 +33,8 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
-test-reports/integration-cache/unreachable-servers.json
 test-reports/multi-domain.txt
 ```
