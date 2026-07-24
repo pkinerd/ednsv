@@ -2,10 +2,13 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #161 (attempt 1) |
-| **Run ID** | 25166386301 |
+| **Run** | #211 (attempt 1) |
+| **Run ID** | 30100361132 |
 | **Result** | pass |
-| **Commit** | fe3840b9694417bd96444c7eeaedbe3223ef363c |
+| **Build & Unit Tests** | success |
+| **Integration Tests** | success |
+| **Docker** | success |
+| **Commit** | 0907a58f50a6c98d23ae466ed31c3a0c15264622 |
 | **Ref** | refs/heads/main |
 | **Event** | push |
 | **Actor** | pkinerd |
@@ -28,7 +31,6 @@ test-reports/integration-cache/dns-server-queries.json
 test-reports/integration-cache/domain-results.json
 test-reports/integration-cache/http-get-headers.json
 test-reports/integration-cache/http-get.json
-test-reports/integration-cache/port-probes.json
 test-reports/integration-cache/ptr-lookups.json
 test-reports/integration-cache/rcpt-probes.json
 test-reports/integration-cache/smtp-probes.json
