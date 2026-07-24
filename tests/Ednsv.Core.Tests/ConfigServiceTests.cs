@@ -99,56 +99,32 @@ public sealed class ConfigServiceTests : IDisposable
         Assert.Equal($"user{ConfigService.MaxRevisions + 24}", revs[0].SavedBy);
     }
 
-    // Regression: revisions saved BEFORE the history-storage split (bodies were
-    // embedded inline in config-history.json, no per-revision files) used to 404
-    // on load because GetRevision only looked for config-rev-{id}.json. LoadHistory
-    // now migrates inline bodies to their own files on load.
+    // Regression: revisions saved BEFORE the history-storage split embedded their
+    // body inline in config-history.json. Once the index was rewritten body-less
+    // that inline body was gone, leaving metadata with no loadable body file — the
+    // picker offered those revisions and loading them 404'd. ListRevisions now
+    // filters to revisions whose body file actually exists.
     [Fact]
-    public void LegacyInlineHistoryIsMigratedAndLoadable()
+    public void RevisionsWithoutABodyFileAreNotListed()
     {
-        Directory.CreateDirectory(_dir);
-        // Legacy single-file format: metadata AND full config body inline, no
-        // config-history/ directory, no per-revision files.
-        var legacy = """
-        {
-          "nextId": 3,
-          "revisions": [
-            { "id": 1, "savedAt": "2026-07-01T00:00:00Z", "savedBy": "(initial)",
-              "config": { "enableSmtpProbes": true, "knownDomains": ["legacy-one.test"] } },
-            { "id": 2, "savedAt": "2026-07-02T00:00:00Z", "savedBy": "alice",
-              "config": { "enableSmtpProbes": false, "knownDomains": ["legacy-two.test"] } }
-          ]
-        }
-        """;
-        File.WriteAllText(Path.Combine(_dir, "config-history.json"), legacy);
-
         var svc = new ConfigService(_dir);
-        svc.LoadOrSeed(Seed());
+        svc.LoadOrSeed(Seed());                                          // rev 1 (baseline)
+        svc.Replace(new AppConfig { EnableDnsbl = false }, "alice");     // rev 2
+        svc.Replace(new AppConfig { EnableHttpProbes = false }, "bob");  // rev 3
 
-        // Both legacy revisions are listed AND their bodies load (no 404).
-        var revs = svc.ListRevisions();
-        Assert.Equal(2, revs.Count);
+        var all = svc.ListRevisions();
+        Assert.Equal(3, all.Count);
 
-        var rev1 = svc.GetRevision(1);
-        Assert.NotNull(rev1);
-        Assert.Contains("legacy-one.test", rev1!.KnownDomains);
+        // Orphan the oldest revision the way the pre-split → split upgrade did to
+        // every legacy revision: metadata stays, body file is gone.
+        var orphanId = all.Min(r => r.Id);
+        File.Delete(Path.Combine(_dir, "config-history", $"config-rev-{orphanId}.json"));
 
-        var rev2 = svc.GetRevision(2);
-        Assert.NotNull(rev2);
-        Assert.False(rev2!.EnableSmtpProbes);
-        Assert.Contains("legacy-two.test", rev2.KnownDomains);
-
-        // Migration wrote per-revision body files and collapsed the index to the
-        // body-less format (so it doesn't re-migrate every load).
-        Assert.True(File.Exists(Path.Combine(_dir, "config-history", "config-rev-1.json")));
-        Assert.True(File.Exists(Path.Combine(_dir, "config-history", "config-rev-2.json")));
-        var rewritten = File.ReadAllText(Path.Combine(_dir, "config-history.json"));
-        Assert.DoesNotContain("\"config\"", rewritten);
-
-        // A fresh instance over the migrated dir still loads the revisions.
-        var reloaded = new ConfigService(_dir);
-        reloaded.LoadOrSeed(Seed());
-        Assert.NotNull(reloaded.GetRevision(1));
-        Assert.NotNull(reloaded.GetRevision(2));
+        var listed = svc.ListRevisions();
+        Assert.Equal(2, listed.Count);
+        Assert.DoesNotContain(listed, r => r.Id == orphanId);
+        // Every revision still listed has a body that loads (no 404 from the picker).
+        foreach (var r in listed)
+            Assert.NotNull(svc.GetRevision(r.Id));
     }
 }
