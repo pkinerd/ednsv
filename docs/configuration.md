@@ -59,6 +59,30 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | `Auth:JwtBearer:NameClaim` | string | `azp`          | Claim identifying the calling application (falls back to `appid` for v1 tokens). The username becomes `app:{value}`. |
 | `ValidateHttpsCertificates` | bool | `true`         | Validate TLS certificates on outbound HTTPS probes (MTA-STS policy, BIMI logo/VMC, DoH, security.txt, crt.sh). Keep `true` — RFC 8461 requires MTA-STS policies to be fetched over a validated connection, so disabling this makes those HTTPS verdicts untrustworthy. Set to `false` **only** behind a TLS-intercepting egress proxy whose CA is not in the host trust store. |
 
+### Probe tuning (startup-only)
+
+These control the throughput/timeout behaviour of the DNS, SMTP and HTTP
+probe engines. They are read **once at startup** when the singleton probe
+services are constructed, so **a change requires a restart** to take effect
+(unlike the runtime probe data lists below, which are hot-editable via the
+Config page). All are optional — omit them to keep the defaults shown.
+
+| Key                          | Type   | Default | Notes |
+|------------------------------|--------|---------|-------|
+| `Dns:TokensPerSecond`        | int    | `40`    | Global DNS query rate limit (token-bucket refill per second). |
+| `Dns:MaxConcurrency`         | int    | `50`    | Max concurrent in-flight DNS queries. |
+| `Dns:QueryTimeoutSeconds`    | int    | `15`    | Per-query timeout for the main/direct resolvers. (The fast DNSBL and speculative resolvers keep their fixed short 3s/1-retry skip-if-slow budget.) |
+| `Dns:QueryRetries`           | int    | `2`     | Per-query retry count for the main/direct resolvers. |
+| `Dns:MaxRetries`             | int    | `3`     | Application-level retry ceiling for transient DNS failures. `--retry` (CLI) doubles this at runtime. |
+| `Dns:UnreachableDecayMinutes`| int    | `5`     | How long a nameserver marked unreachable is skipped before being retried. |
+| `Smtp:TimeoutSeconds`        | double | `10`    | SMTP conversation timeout for banner/EHLO/STARTTLS probes. |
+| `Smtp:PortTimeoutSeconds`    | double | `5`     | TCP connect timeout for the SMTP port-reachability probe. |
+| `Smtp:MaxRetries`            | int    | `3`     | Application-level retry ceiling for transient SMTP failures. |
+| `Http:TimeoutSeconds`        | double | `10`    | Per-request timeout for outbound HTTP/HTTPS probes. |
+| `Http:MaxConcurrency`        | int    | `20`    | Max concurrent outbound HTTP/HTTPS probes. |
+| `Http:MaxRetries`            | int    | `3`     | Application-level retry ceiling for transient HTTP failures. |
+
+
 `ASPNETCORE_HTTP_PORTS` (built-in ASP.NET Core variable) controls the HTTP
 listen port. The Docker image sets it to `8080`.
 
@@ -409,23 +433,57 @@ front-channel end-session redirect.
 For a step-by-step Entra ID (Azure AD) setup — app registration, admin app
 role, and service-account client-credentials — see [entra-setup.md](entra-setup.md).
 
+## Runtime probe data lists (config.json)
+
+Beyond the on/off toggles, the **Config** page exposes the data lists the
+checks probe against. These live in `{DataDir}/config.json`, are edited from
+the *Probe data lists* panel (or the raw-JSON editor), and take effect on the
+**next validation** — no restart needed. Each is seeded on first run with the
+built-in defaults, so the panel always shows the real values in use.
+
+Enter one entry per line. Some lists accept an optional label after a `|`
+(the `value|label` convention) — the label is what the report displays.
+**Clearing a list falls back to the built-in defaults** for that list.
+
+| JSON field                    | Meaning | Entry form |
+|-------------------------------|---------|------------|
+| `propagationResolvers`        | Public resolvers queried by the propagation-consistency check (direct DNS). | `ip\|label` |
+| `propagationDohResolvers`     | JSON DoH endpoints used instead of raw DNS when DoH is enabled. | `url\|label` |
+| `ipBlocklistsPublic`          | DNSBL zones that answer reliably over public DNS. | `zone` |
+| `ipBlocklistsPrivate`         | DNSBL zones needing a registered/private resolver. | `zone` |
+| `extendedIpBlocklistsPublic`  | Extra DNSBL zones for the extended IP-blocklist check (public). | `zone\|label` |
+| `extendedIpBlocklistsPrivate` | Extra DNSBL zones for the extended check (private resolver). | `zone\|label` |
+| `domainBlocklists`            | Domain/URI (RHSBL) zones for the MX-hostname and domain blocklist checks. | `zone` |
+| `arcSelectors`                | Selectors probed for ARC signing records. | `selector` |
+| `dmarcDiscoverySubdomains`    | Subdomains checked for weaker DMARC overrides. | `subdomain` |
+| `mailSurveySubdomains`        | Subdomains probed by the mail-subdomain survey. | `subdomain` |
+| `spfSubdomains`               | Mail-sending subdomains checked for SPF coverage. | `subdomain` |
+| `srvServiceNames`             | SRV prefixes queried for mail services. | `_service._proto` |
+| `vmcIssuers`                  | CA names treated as recognised VMC issuers. | `name` |
+| `crtShBaseUrl`                | Base URL for Certificate Transparency lookups (blank = `https://crt.sh/`). | URL |
+
+The CLI does not expose these lists; it always uses the built-in defaults.
+
 ## Runtime config revision history
 
 Every save of the runtime config (`PUT /api/config`, i.e. the **Config** page's
-Save button) is backed up: the saved config is appended to
-`{DataDir}/config-history.json` along with **who** saved it (the caller's
-username, or `(auth-disabled)` on a localhost-only open instance) and **when**.
-The newest ~300 revisions are kept; older ones are trimmed. On first run a
-baseline revision (`(initial)`) captures the seeded config so even the first
-change is recoverable.
+Save button) is backed up: the saved config's body is written to its own file
+`{DataDir}/config-history/config-rev-{id}.json`, and a lightweight index at
+`{DataDir}/config-history.json` records the **id**, **who** saved it (the
+caller's username, or `(auth-disabled)` on a localhost-only open instance) and
+**when** — without duplicating the (potentially large) config body. The newest
+~300 revisions are kept; older ones are trimmed from the index and their
+per-revision files deleted. On first run a baseline revision (`(initial)`)
+captures the seeded config so even the first change is recoverable.
 
 The Config page shows a **Revision history** dropdown listing each revision as
 "date — user", newest first. Selecting one loads that config into both the form
 and JSON views without applying it — review it, then click **Save config** to
-apply it as a new revision (attributed to you). Keep `config-history.json` on
-the persistent volume alongside the rest of `DataDir` to retain history across
-restarts. The history endpoints (`GET /api/config/history` and
-`GET /api/config/history/{id}`) are admin-only, like the rest of the config API.
+apply it as a new revision (attributed to you). Keep the `config-history.json`
+index **and** the `config-history/` directory on the persistent volume
+alongside the rest of `DataDir` to retain history across restarts. The history
+endpoints (`GET /api/config/history` and `GET /api/config/history/{id}`) are
+admin-only, like the rest of the config API.
 
 ### Token auth
 

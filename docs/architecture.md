@@ -1,6 +1,6 @@
 # System Architecture Overview
 
-EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 80+ automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 8.0 and can be run as a CLI tool or a web service.
+EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 87 automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 8.0 and can be run as a CLI tool or a web service.
 
 ## High-Level Architecture
 
@@ -14,7 +14,7 @@ graph TD
     subgraph "Ednsv.Core"
         DV["DomainValidator<br/><i>Orchestrator</i>"]
 
-        subgraph Checks["Check Modules (14 files, 50+ checks)"]
+        subgraph Checks["Check Modules (14 files, 87 checks)"]
             FC["Foundation Checks<br/><i>Sequential, populate shared state</i>"]
             CC["Concurrent Checks<br/><i>Parallel, read-only</i>"]
         end
@@ -85,49 +85,55 @@ ednsv.sln
 │   │   ├── CheckDescriptions.cs       # Built-in check category descriptions
 │   │   ├── Models/
 │   │   │   └── CheckResult.cs         # CheckResult, ValidationReport, enums
-│   │   ├── Checks/                    # Check implementations
-│   │   │   ├── ICheck.cs              # ICheck interface, CheckContext, ValidationOptions
+│   │   ├── Checks/                    # Check implementations (87 checks)
+│   │   │   ├── ICheck.cs              # ICheck interface, CheckContext, ValidationOptions, ProbeDefaults
 │   │   │   ├── BasicRecordChecks.cs   # A, AAAA, CNAME
 │   │   │   ├── DelegationChecks.cs    # NS delegation chain, consistency
 │   │   │   ├── DkimChecks.cs          # DKIM selectors, ARC
 │   │   │   ├── DmarcChecks.cs         # DMARC policy, inheritance, reporting
-│   │   │   ├── ExtendedChecks.cs      # CAA, DANE, TLSA, security.txt
-│   │   │   ├── HighValueChecks.cs     # MTA-STS, TLS-RPT, BIMI, DNSSEC
-│   │   │   ├── MiscChecks.cs          # Wildcard, TTL, TXT hygiene
+│   │   │   ├── ExtendedChecks.cs      # CAA, DANE, security.txt, CT, propagation
+│   │   │   ├── HighValueChecks.cs     # MTA-STS, TLS-RPT, BIMI, DNSSEC, extended DNSBL
+│   │   │   ├── MiscChecks.cs          # Wildcard, TTL, TXT hygiene, SRV, autodiscover
 │   │   │   ├── MxChecks.cs            # MX records, IP detection, null MX
 │   │   │   ├── NsChecks.cs            # NS records, lame delegation, diversity
-│   │   │   ├── PtrAndBlacklistChecks.cs # PTR, FCrDNS, DNSBL
-│   │   │   ├── SecurityChecks.cs      # DNSSEC validation, SMTP TLS
-│   │   │   ├── SmtpChecks.cs          # SMTP banner, EHLO, TLS, timing
+│   │   │   ├── PtrAndBlacklistChecks.cs # PTR, FCrDNS, DNSBL, domain blocklists
+│   │   │   ├── SecurityChecks.cs      # SMTP TLS cert/version, BIMI VMC, propagation
+│   │   │   ├── SmtpChecks.cs          # SMTP banner, EHLO, TLS, submission ports
 │   │   │   └── SpfChecks.cs           # SPF parsing, lookup limits, macros
 │   │   └── Services/
 │   │       ├── DnsResolverService.cs  # DNS queries, rate limiting (token bucket + concurrency cap)
 │   │       ├── SmtpProbeService.cs    # SMTP probing, TLS, certificates
-│   │       ├── HttpProbeService.cs    # HTTP/HTTPS GET with caching + concurrency cap (20)
+│   │       ├── HttpProbeService.cs    # HTTP/HTTPS GET with caching + concurrency cap
 │   │       ├── ProbeCache.cs          # Generic cache with in-flight dedup + shouldPersist
 │   │       ├── DiskCacheService.cs    # JSON persistence + BackgroundCacheFlusher
 │   │       ├── DnsCacheSerializer.cs  # DNS response serialization
 │   │       ├── CacheManager.cs        # Cache load/save/flush orchestration (IAsyncDisposable)
 │   │       ├── RecheckHelper.cs       # AsyncLocal-based selective cache bypass for recheck
+│   │       ├── NetworkCapabilities.cs # Probes host egress (raw DNS / SMTP / HTTP) for capability hints
 │   │       ├── TraceContext.cs        # AsyncLocal sink + Phase/Check labels for structured tracing
 │   │       ├── TraceMasker.cs         # SHA256 hashing of sensitive trace data
 │   │       ├── AuthService.cs         # Web auth (token hash + per-user files)
-│   │       └── ConfigService.cs       # Live admin config (categories, DKIM selectors)
+│   │       ├── ExternalUserMapper.cs  # Maps OIDC/JWT claims to ednsv identities + roles
+│   │       └── ConfigService.cs       # Live admin config (toggles, DKIM selectors, probe data lists, revision history)
 │   │
 │   ├── Ednsv.Cli/                     # CLI application
 │   │   └── Program.cs                 # System.CommandLine entry point
 │   │
 │   └── Ednsv.Web/                     # Web service
 │       ├── Program.cs                 # ASP.NET Core API + ValidationTracker (IDisposable, 1h job retention)
-│       └── wwwroot/index.html         # Single-page web UI
+│       ├── AuthSettings.cs            # Strongly-typed OIDC / JWT-bearer options
+│       ├── appsettings.json           # Default settings + inline documentation
+│       └── wwwroot/                   # Single-page UI: index.html (validator) + config.html (admin)
 │
 ├── tests/
-│   └── Ednsv.Core.Tests/             # xUnit tests
-│       ├── DiskCacheTests.cs          # Cache round-trip persistence
-│       ├── InMemoryCacheTests.cs      # Cache behavior, dedup, hit tracking
-│       └── TraceMaskerTests.cs        # Privacy masking determinism
+│   ├── Ednsv.Core.Tests/             # xUnit unit tests (cache, auth, config, masking)
+│   └── Ednsv.Web.Tests/              # xUnit integration tests (auth modes, OIDC/JWT, audit, config history)
 │
-└── .github/workflows/ci.yml          # CI: build, test, integration tests
+├── docs/                              # Architecture, pipeline, configuration, deployment guides
+├── Dockerfile                         # Web image build (publishes Ednsv.Web)
+├── README.md                          # Project introduction and documentation index
+├── run-web.sh                         # Local dev launcher for the web server
+└── .github/workflows/ci.yml           # CI: build, test, integration tests, Docker publish
 ```
 
 ## Component Overview
@@ -135,7 +141,7 @@ ednsv.sln
 | Component | Responsibility |
 |-----------|---------------|
 | **DomainValidator** | Orchestrates the 4-phase validation pipeline (prefetch, foundation, concurrent, deferred retry). Creates CheckContext with shared state and coordinates check execution. |
-| **ICheck implementations** | 50+ individual checks organized into 14 files. Each check receives a domain and CheckContext, returning a list of CheckResult objects. |
+| **ICheck implementations** | 87 individual checks organized into 14 files. Each check receives a domain and CheckContext, returning a list of CheckResult objects. |
 | **CheckContext** | Thread-safe shared state populated by foundation checks (MxHosts, NsHosts, SpfRecord, DmarcRecord, etc.) and read by concurrent checks. Also holds per-validation SMTP probe cache and error tracking. |
 | **DnsResolverService** | Executes DNS queries with rate limiting (40 tokens/sec via token bucket, max 50 concurrent), in-memory caching, and unreachable-server tracking with 5-minute time-decay. Routes per-validation errors via an AsyncLocal bag. Supports custom nameservers. |
 | **SmtpProbeService** | Connects to SMTP servers, performs STARTTLS handshake, extracts TLS/certificate details. Supports port probing (587, 465), RCPT verification, and relay testing. |
@@ -158,9 +164,11 @@ ednsv.sln
 | CLI parsing | [System.CommandLine](https://www.nuget.org/packages/System.CommandLine) 2.0.0-beta4 |
 | CLI rich output | [Spectre.Console](https://www.nuget.org/packages/Spectre.Console) 0.48.0 |
 | Web framework | ASP.NET Core (built-in) |
+| API docs | [Swashbuckle.AspNetCore](https://www.nuget.org/packages/Swashbuckle.AspNetCore) 6.6.2 (Swagger UI) |
+| External auth | Microsoft.AspNetCore.Authentication.OpenIdConnect / .JwtBearer 8.0.29 |
 | In-memory cache | Microsoft.Extensions.Caching.Memory 8.0.1 |
 | Serialization | System.Text.Json 10.0.5 |
-| Testing | xUnit 2.4.2, coverlet (code coverage) |
+| Testing | xUnit 2.4.2, Microsoft.AspNetCore.Mvc.Testing 8.0.29, coverlet (code coverage) |
 
 ## Key Design Decisions
 
@@ -168,7 +176,7 @@ ednsv.sln
 
 Foundation checks (AuthoritativeNs, A, AAAA, MX, SPF, DMARC) run **sequentially** because they populate shared state in CheckContext that all other checks depend on. This ordering is required — for example, MX checks need NS resolution to have completed, and SPF/DMARC parsing feeds into dozens of downstream checks.
 
-Concurrent checks (~50) run in **parallel** (max 12) because they only **read** from the shared state established by foundation checks. This design maximizes throughput while keeping the shared state model simple and race-free.
+Concurrent checks (81) run in **parallel** (max 12) because they only **read** from the shared state established by foundation checks. This design maximizes throughput while keeping the shared state model simple and race-free.
 
 ### Service Sharing Across Validations
 

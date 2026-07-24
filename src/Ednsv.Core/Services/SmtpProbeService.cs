@@ -33,16 +33,20 @@ public class SmtpProbeResult
 
 public class SmtpProbeService
 {
-    private readonly TimeSpan _timeout = TimeSpan.FromSeconds(10);
-    private readonly TimeSpan _portTimeout = TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _timeout;
+    private readonly TimeSpan _portTimeout;
     private const int PortMaxRetries = 2;
     private static volatile int MaxRetries = 3;
     public static void SetMaxRetries(int value) => MaxRetries = value;
     private readonly ProbeCache<SmtpProbeResult> _probeCache;
     private readonly ProbeCacheValue<bool> _portCache;
 
-    public SmtpProbeService(TimeSpan? cacheTtl = null)
+    /// <param name="timeoutSeconds">SMTP command/connect timeout. Default 10s.</param>
+    /// <param name="portTimeoutSeconds">TCP port-open probe timeout. Default 5s.</param>
+    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5)
     {
+        _timeout = TimeSpan.FromSeconds(timeoutSeconds);
+        _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
         _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl);
         _portCache = new ProbeCacheValue<bool>(cacheTtl);
     }

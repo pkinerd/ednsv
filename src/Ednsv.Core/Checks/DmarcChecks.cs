@@ -614,8 +614,6 @@ public class SubdomainDmarcOverrideCheck : ICheck
     public string Name => "Subdomain DMARC Override";
     public CheckCategory Category => CheckCategory.DMARC;
 
-    private static readonly string[] CommonSubdomains = { "mail", "smtp", "email", "www", "newsletter", "marketing", "bounce", "send", "outbound" };
-
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var result = new CheckResult { CheckName = Name, Category = Category };
@@ -634,7 +632,8 @@ public class SubdomainDmarcOverrideCheck : ICheck
 
             var weaker = new List<string>();
 
-            foreach (var sub in CommonSubdomains)
+            var commonSubdomains = ProbeList.OrDefault(ctx.Options.DmarcDiscoverySubdomains, ProbeDefaults.DmarcDiscoverySubdomains);
+            foreach (var sub in commonSubdomains)
             {
                 var subDmarc = $"_dmarc.{sub}.{domain}";
                 var txts = await ctx.Dns.GetTxtRecordsAsync(subDmarc);

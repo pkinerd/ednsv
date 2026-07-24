@@ -447,50 +447,6 @@ public class ExtendedDnsblCheck : ICheck
     public string Name => "Extended IP Blocklist Check";
     public CheckCategory Category => CheckCategory.DNSBL;
 
-    // Lists that work reliably via public DNS resolvers
-    private static readonly (string zone, string name)[] PublicBlocklists =
-    {
-        // Tier 1: Widely used, open to public queries
-        ("all.s5h.net", "S5H"),
-        ("dnsbl.sorbs.net", "SORBS Combined"),
-        ("spam.dnsbl.sorbs.net", "SORBS Spam"),
-        ("bl.mailspike.net", "Mailspike"),
-        ("dnsbl-1.uceprotect.net", "UCEProtect L1"),
-
-        // Tier 2: Additional well-known open lists
-        ("dnsbl-2.uceprotect.net", "UCEProtect L2"),
-        ("dnsbl-3.uceprotect.net", "UCEProtect L3"),
-        ("psbl.surriel.com", "PSBL"),
-        ("dyna.spamrats.com", "SpamRATS Dyna"),
-        ("noptr.spamrats.com", "SpamRATS NoPtr"),
-        ("spam.spamrats.com", "SpamRATS Spam"),
-        ("dnsbl.dronebl.org", "DroneBL"),
-        ("rbl.interserver.net", "InterServer"),
-        ("bogons.cymru.com", "Cymru Bogons"),
-        ("bl.blocklist.de", "Blocklist.de"),
-        ("bl.nordspam.com", "NordSpam BL"),
-        ("dnsbl.inps.de", "INPS"),
-        ("ix.dnsbl.manitu.net", "NiX Spam"),
-        ("truncate.gbudb.net", "Truncate/GBUdb"),
-        ("z.mailspike.net", "Mailspike Z"),
-        ("spambot.bls.digibase.ca", "Digibase SpamBot"),
-    };
-
-    // Lists that require a private/registered resolver, or are commonly dead/unresponsive
-    private static readonly (string zone, string name)[] PrivateBlocklists =
-    {
-        ("cbl.abuseat.org", "CBL"),                // Often blocks public resolvers
-        ("db.wpbl.info", "WPBL"),                  // Frequently unresponsive
-        ("bl.spamcannibal.org", "SpamCannibal"),   // Dead
-        ("access.redhawk.org", "Redhawk"),         // Dead
-        ("combined.abuse.ch", "abuse.ch Combined"),// Discontinued DNSBL
-        ("rbl.abuse.net", "abuse.net"),            // Frequently unresponsive
-        ("singular.ttk.pte.hu", "Singular"),       // Frequently unresponsive
-        ("uribl.swinog.ch", "SwiNOG URIBL"),      // Often blocks public resolvers
-        ("bl.fmb.la", "FMB"),                      // Frequently unresponsive
-        ("dnsbl.rv-soft.info", "RV-Soft"),         // Frequently unresponsive
-    };
-
     // Same false-positive set as IpBlocklistCheck
     private static readonly HashSet<string> FalsePositiveResponses = new(StringComparer.Ordinal)
     {
@@ -518,6 +474,8 @@ public class ExtendedDnsblCheck : ICheck
         int listed = 0;
         // Build all query tasks up-front and run in parallel.
         // Rate limiting is handled globally by DnsResolverService.
+        var publicBlocklists = ProbeList.Labeled(ctx.Options.ExtendedIpBlocklistsPublic, ProbeDefaults.ExtendedIpBlocklistsPublic);
+        var privateBlocklists = ProbeList.Labeled(ctx.Options.ExtendedIpBlocklistsPrivate, ProbeDefaults.ExtendedIpBlocklistsPrivate);
         var tasks = new List<Task<(string ip, string name, List<DnsClient.Protocol.ARecord> aRecs)>>();
 
         foreach (var ip in allMxIps)
@@ -526,8 +484,8 @@ public class ExtendedDnsblCheck : ICheck
             var reversed = string.Join('.', octets);
 
             var blocklists = ctx.Options.EnablePrivateDnsbl
-                ? PublicBlocklists.Concat(PrivateBlocklists)
-                : PublicBlocklists;
+                ? publicBlocklists.Concat(privateBlocklists)
+                : publicBlocklists;
             foreach (var (zone, name) in blocklists)
             {
                 var capturedIp = ip;

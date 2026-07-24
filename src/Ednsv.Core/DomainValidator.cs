@@ -284,7 +284,7 @@ public class DomainValidator
         // MTA-STS is email-critical (3 retries); security.txt and CT are info-only (1 retry).
         _ = Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt"));
         _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt", maxRetries: 1));
-        _ = Task.Run(() => _http.GetAsync($"https://crt.sh/?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
+        _ = Task.Run(() => _http.GetAsync($"{Checks.ProbeList.CrtShBase(context.Options.CrtShBaseUrl)}?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
 
         TraceLog($"[PHASE] PREFETCH START for {domain}");
         var prefetchSw = Stopwatch.StartNew();

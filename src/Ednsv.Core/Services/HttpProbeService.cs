@@ -33,7 +33,7 @@ public class HttpProbeService
 
     private readonly ProbeCache<GetResult> _getCache;
     private readonly ProbeCache<GetWithHeadersResult> _getWithHeadersCache;
-    private readonly SemaphoreSlim _concurrencyLimiter = new(20, 20);
+    private readonly SemaphoreSlim _concurrencyLimiter;
 
     /// <param name="validateCertificates">
     /// When true (default), outbound HTTPS uses normal PKIX certificate validation.
@@ -44,8 +44,11 @@ public class HttpProbeService
     /// egress proxy whose CA is not in the system trust store (the original reason
     /// validation was disabled) — doing so makes all HTTPS verdicts untrustworthy.
     /// </param>
-    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true)
+    /// <param name="timeoutSeconds">Per-request HTTP timeout. Default 10s.</param>
+    /// <param name="maxConcurrency">Cap on simultaneous outbound requests. Default 20.</param>
+    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10, int maxConcurrency = 20)
     {
+        _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         _getCache = new ProbeCache<GetResult>(cacheTtl);
         _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl);
         var handler = new HttpClientHandler
@@ -56,7 +59,7 @@ public class HttpProbeService
             handler.ServerCertificateCustomValidationCallback = (_, _, _, _) => true;
         _client = new HttpClient(handler)
         {
-            Timeout = TimeSpan.FromSeconds(10)
+            Timeout = TimeSpan.FromSeconds(timeoutSeconds)
         };
         _client.DefaultRequestHeaders.UserAgent.ParseAdd("ednsv/1.0");
     }

@@ -621,7 +621,8 @@ public class BimiCheck : ICheck
                     }
                     else
                     {
-                        ValidateVmc(pemContent, domain, fetchedSvgContent, result);
+                        ValidateVmc(pemContent, domain, fetchedSvgContent, result,
+                            ProbeList.OrDefault(ctx.Options.VmcIssuers, ProbeDefaults.VmcIssuers));
                     }
                 }
             }
@@ -743,7 +744,7 @@ public class BimiCheck : ICheck
         }
     }
 
-    private static void ValidateVmc(string pemContent, string domain, string? svgContent, CheckResult result)
+    private static void ValidateVmc(string pemContent, string domain, string? svgContent, CheckResult result, IReadOnlyList<string> knownVmcIssuers)
     {
         if (!pemContent.Contains("-----BEGIN CERTIFICATE-----"))
         {
@@ -791,7 +792,6 @@ public class BimiCheck : ICheck
 
             // Check issuer is a known VMC Certificate Authority
             var issuerCn = ExtractCn(cert.Issuer);
-            var knownVmcIssuers = new[] { "DigiCert", "Entrust", "GlobalSign" };
             bool knownIssuer = knownVmcIssuers.Any(i =>
                 cert.Issuer.Contains(i, StringComparison.OrdinalIgnoreCase));
             if (knownIssuer)

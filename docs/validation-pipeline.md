@@ -34,7 +34,7 @@ flowchart TD
 
     subgraph CONCURRENT["Phase 3: Concurrent Checks (Parallel, max 12)"]
         direction TB
-        C1["~50 checks run in parallel"]
+        C1["81 checks run in parallel"]
         C1 --> C2{"Completed<br/>within 45s?"}
         C2 -->|Yes| C3["Collect results"]
         C2 -->|No| C4["Add to deferred retry list"]
@@ -69,7 +69,7 @@ Primes service caches before checks begin, minimizing network latency during the
 **Fire-and-forget HTTP** (runs in background throughout the pipeline):
 - `https://mta-sts.{domain}/.well-known/mta-sts.txt` (3 retries, email-critical)
 - `https://{domain}/.well-known/security.txt` (1 retry, informational)
-- `https://crt.sh/?q={domain}&output=json` (1 retry, informational)
+- `{crtShBaseUrl}?q={domain}&output=json` (1 retry, informational; base URL defaults to `https://crt.sh/`, configurable via the runtime config)
 
 **DNS Phase 1** (concurrent):
 - MX, NS, A, AAAA, TXT, SOA records for the domain
@@ -107,7 +107,7 @@ Foundation checks also set **lookup failure flags** (`MxLookupFailed`, `NsLookup
 
 ### Phase 3: Concurrent Checks
 
-~50 checks run in parallel using `Parallel.ForEachAsync` with `MaxDegreeOfParallelism = 12`. All concurrent checks are **read-only** on the shared state populated by foundation checks.
+81 checks run in parallel using `Parallel.ForEachAsync` with `MaxDegreeOfParallelism = 12`. All concurrent checks are **read-only** on the shared state populated by foundation checks.
 
 Each check is wrapped in a `CancellationTokenSource(45s)`; the token is passed into `ICheck.RunAsync(domain, context, ct)`. When the timeout fires, the running task observes the token and tears down its DNS/SMTP/HTTP awaits instead of being orphaned. The validator distinguishes:
 
@@ -168,7 +168,7 @@ sequenceDiagram
     end
 
     Note over DV: Phase 3: Concurrent (max 12 parallel)
-    par 50+ checks
+    par 81 concurrent checks
         DV->>CTX: Read shared state
         CTX->>DNS: DNS queries (cached)
         CTX->>SMTP: SMTP data (from cache)

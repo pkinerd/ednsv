@@ -65,22 +65,53 @@ public sealed class AppConfig
     /// </summary>
     [JsonPropertyName("knownDomains")]
     public List<string> KnownDomains { get; set; } = new();
-}
 
-/// <summary>One saved version of <see cref="AppConfig"/> with who saved it and when.</summary>
-public sealed class ConfigRevision
-{
-    [JsonPropertyName("id")]
-    public int Id { get; set; }
+    // ── Configurable probe data lists (admin-editable) ───────────────────
+    // Each defaults to the built-in list from ProbeDefaults so behaviour is
+    // unchanged out of the box. Labeled entries use "value|label"; clearing a
+    // list reverts the affected check to its built-in default.
 
-    [JsonPropertyName("savedAt")]
-    public DateTime SavedAt { get; set; }
+    [JsonPropertyName("propagationResolvers")]
+    public List<string> PropagationResolvers { get; set; } = new(Checks.ProbeDefaults.PropagationResolvers);
 
-    [JsonPropertyName("savedBy")]
-    public string SavedBy { get; set; } = "";
+    [JsonPropertyName("propagationDohResolvers")]
+    public List<string> PropagationDohResolvers { get; set; } = new(Checks.ProbeDefaults.PropagationDohResolvers);
 
-    [JsonPropertyName("config")]
-    public AppConfig Config { get; set; } = new();
+    [JsonPropertyName("ipBlocklistsPublic")]
+    public List<string> IpBlocklistsPublic { get; set; } = new(Checks.ProbeDefaults.IpBlocklistsPublic);
+
+    [JsonPropertyName("ipBlocklistsPrivate")]
+    public List<string> IpBlocklistsPrivate { get; set; } = new(Checks.ProbeDefaults.IpBlocklistsPrivate);
+
+    [JsonPropertyName("extendedIpBlocklistsPublic")]
+    public List<string> ExtendedIpBlocklistsPublic { get; set; } = new(Checks.ProbeDefaults.ExtendedIpBlocklistsPublic);
+
+    [JsonPropertyName("extendedIpBlocklistsPrivate")]
+    public List<string> ExtendedIpBlocklistsPrivate { get; set; } = new(Checks.ProbeDefaults.ExtendedIpBlocklistsPrivate);
+
+    [JsonPropertyName("domainBlocklists")]
+    public List<string> DomainBlocklists { get; set; } = new(Checks.ProbeDefaults.DomainBlocklists);
+
+    [JsonPropertyName("arcSelectors")]
+    public List<string> ArcSelectors { get; set; } = new(Checks.ProbeDefaults.ArcSelectors);
+
+    [JsonPropertyName("dmarcDiscoverySubdomains")]
+    public List<string> DmarcDiscoverySubdomains { get; set; } = new(Checks.ProbeDefaults.DmarcDiscoverySubdomains);
+
+    [JsonPropertyName("mailSurveySubdomains")]
+    public List<string> MailSurveySubdomains { get; set; } = new(Checks.ProbeDefaults.MailSurveySubdomains);
+
+    [JsonPropertyName("spfSubdomains")]
+    public List<string> SpfSubdomains { get; set; } = new(Checks.ProbeDefaults.SpfSubdomains);
+
+    [JsonPropertyName("srvServiceNames")]
+    public List<string> SrvServiceNames { get; set; } = new(Checks.ProbeDefaults.SrvServiceNames);
+
+    [JsonPropertyName("vmcIssuers")]
+    public List<string> VmcIssuers { get; set; } = new(Checks.ProbeDefaults.VmcIssuers);
+
+    [JsonPropertyName("crtShBaseUrl")]
+    public string CrtShBaseUrl { get; set; } = Checks.ProbeDefaults.CrtShBaseUrl;
 }
 
 /// <summary>Metadata for a revision, without the (potentially large) config body.</summary>
@@ -98,29 +129,38 @@ public sealed class ConfigService
     /// <summary>Newest revisions kept; older ones are trimmed on save.</summary>
     public const int MaxRevisions = 300;
 
-    private sealed class HistoryFile
+    /// <summary>
+    /// Lightweight index of config history: the next revision id and per-revision
+    /// metadata only. The (potentially large) config body for each revision lives
+    /// in its own file, {historyDir}/config-rev-{id}.json, loaded on demand.
+    /// </summary>
+    private sealed class HistoryIndex
     {
         [JsonPropertyName("nextId")]
         public int NextId { get; set; } = 1;
 
         [JsonPropertyName("revisions")]
-        public List<ConfigRevision> Revisions { get; set; } = new();
+        public List<ConfigRevisionInfo> Revisions { get; set; } = new();
     }
 
     private readonly string _dataDir;
     private readonly string _filePath;
-    private readonly string _historyPath;
+    private readonly string _historyIndexPath;
+    private readonly string _historyDir;
     private readonly object _lock = new();
     private AppConfig _current = new();
-    private readonly List<ConfigRevision> _history = new(); // oldest first
+    private readonly List<ConfigRevisionInfo> _history = new(); // oldest first
     private int _nextRevisionId = 1;
 
     public ConfigService(string dataDir)
     {
         _dataDir = dataDir;
         _filePath = Path.Combine(dataDir, "config.json");
-        _historyPath = Path.Combine(dataDir, "config-history.json");
+        _historyIndexPath = Path.Combine(dataDir, "config-history.json");
+        _historyDir = Path.Combine(dataDir, "config-history");
     }
+
+    private string RevisionPath(int id) => Path.Combine(_historyDir, $"config-rev-{id}.json");
 
     /// <summary>
     /// Loads config.json if it exists, otherwise initializes from <paramref name="seed"/>
@@ -185,6 +225,23 @@ public sealed class ConfigService
         incoming.DefaultDkimSelectors ??= new List<string>();
         incoming.DkimSelectors = NormalizeKeys(incoming.DkimSelectors ?? new Dictionary<string, List<string>>());
         incoming.KnownDomains = NormalizeDomainList(incoming.KnownDomains ?? new List<string>());
+        // Trim/compact the probe data lists; null (field omitted) reverts to the
+        // built-in default so a caller can't accidentally wipe a list to null.
+        incoming.PropagationResolvers = NormalizeLines(incoming.PropagationResolvers, Checks.ProbeDefaults.PropagationResolvers);
+        incoming.PropagationDohResolvers = NormalizeLines(incoming.PropagationDohResolvers, Checks.ProbeDefaults.PropagationDohResolvers);
+        incoming.IpBlocklistsPublic = NormalizeLines(incoming.IpBlocklistsPublic, Checks.ProbeDefaults.IpBlocklistsPublic);
+        incoming.IpBlocklistsPrivate = NormalizeLines(incoming.IpBlocklistsPrivate, Checks.ProbeDefaults.IpBlocklistsPrivate);
+        incoming.ExtendedIpBlocklistsPublic = NormalizeLines(incoming.ExtendedIpBlocklistsPublic, Checks.ProbeDefaults.ExtendedIpBlocklistsPublic);
+        incoming.ExtendedIpBlocklistsPrivate = NormalizeLines(incoming.ExtendedIpBlocklistsPrivate, Checks.ProbeDefaults.ExtendedIpBlocklistsPrivate);
+        incoming.DomainBlocklists = NormalizeLines(incoming.DomainBlocklists, Checks.ProbeDefaults.DomainBlocklists);
+        incoming.ArcSelectors = NormalizeLines(incoming.ArcSelectors, Checks.ProbeDefaults.ArcSelectors);
+        incoming.DmarcDiscoverySubdomains = NormalizeLines(incoming.DmarcDiscoverySubdomains, Checks.ProbeDefaults.DmarcDiscoverySubdomains);
+        incoming.MailSurveySubdomains = NormalizeLines(incoming.MailSurveySubdomains, Checks.ProbeDefaults.MailSurveySubdomains);
+        incoming.SpfSubdomains = NormalizeLines(incoming.SpfSubdomains, Checks.ProbeDefaults.SpfSubdomains);
+        incoming.SrvServiceNames = NormalizeLines(incoming.SrvServiceNames, Checks.ProbeDefaults.SrvServiceNames);
+        incoming.VmcIssuers = NormalizeLines(incoming.VmcIssuers, Checks.ProbeDefaults.VmcIssuers);
+        incoming.CrtShBaseUrl = string.IsNullOrWhiteSpace(incoming.CrtShBaseUrl)
+            ? Checks.ProbeDefaults.CrtShBaseUrl : incoming.CrtShBaseUrl.Trim();
         lock (_lock)
         {
             _current = incoming;
@@ -198,10 +255,7 @@ public sealed class ConfigService
     {
         lock (_lock)
         {
-            return _history
-                .Select(r => new ConfigRevisionInfo(r.Id, r.SavedAt, r.SavedBy))
-                .Reverse()
-                .ToList();
+            return _history.AsEnumerable().Reverse().ToList();
         }
     }
 
@@ -210,8 +264,23 @@ public sealed class ConfigService
     {
         lock (_lock)
         {
-            var rev = _history.FirstOrDefault(r => r.Id == id);
-            return rev == null ? null : CloneConfig(rev.Config);
+            if (!_history.Any(r => r.Id == id)) return null;
+            var path = RevisionPath(id);
+            if (!File.Exists(path)) return null;
+            try
+            {
+                var json = File.ReadAllText(path);
+                if (string.IsNullOrWhiteSpace(json)) return null;
+                var cfg = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+                if (cfg == null) return null;
+                cfg.DkimSelectors = NormalizeKeys(cfg.DkimSelectors ?? new Dictionary<string, List<string>>());
+                cfg.KnownDomains = NormalizeDomainList(cfg.KnownDomains ?? new List<string>());
+                return CloneConfig(cfg);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
@@ -241,25 +310,19 @@ public sealed class ConfigService
 
     private void LoadHistory()
     {
-        if (!File.Exists(_historyPath)) return;
+        if (!File.Exists(_historyIndexPath)) return;
         try
         {
-            var json = File.ReadAllText(_historyPath);
+            var json = File.ReadAllText(_historyIndexPath);
             if (string.IsNullOrWhiteSpace(json)) return;
-            var file = JsonSerializer.Deserialize<HistoryFile>(json, JsonOpts);
-            if (file?.Revisions == null) return;
-            foreach (var r in file.Revisions)
-            {
-                r.Config ??= new AppConfig();
-                r.Config.DkimSelectors = NormalizeKeys(r.Config.DkimSelectors ?? new Dictionary<string, List<string>>());
-                r.Config.KnownDomains = NormalizeDomainList(r.Config.KnownDomains ?? new List<string>());
-            }
+            var index = JsonSerializer.Deserialize<HistoryIndex>(json, JsonOpts);
+            if (index?.Revisions == null) return;
             lock (_lock)
             {
                 _history.Clear();
-                _history.AddRange(file.Revisions);
+                _history.AddRange(index.Revisions);
                 var maxId = _history.Count > 0 ? _history.Max(r => r.Id) : 0;
-                _nextRevisionId = Math.Max(file.NextId, maxId + 1);
+                _nextRevisionId = Math.Max(index.NextId, maxId + 1);
             }
         }
         catch
@@ -278,27 +341,44 @@ public sealed class ConfigService
 
     private void AppendRevisionLocked(string savedBy)
     {
-        _history.Add(new ConfigRevision
-        {
-            Id = _nextRevisionId++,
-            SavedAt = DateTime.UtcNow,
-            SavedBy = savedBy,
-            Config = CloneConfig(_current)
-        });
-        // Keep only the newest MaxRevisions entries.
+        var id = _nextRevisionId++;
+        _history.Add(new ConfigRevisionInfo(id, DateTime.UtcNow, savedBy));
+        WriteRevisionBodyLocked(id, _current);
+
+        // Keep only the newest MaxRevisions entries; delete trimmed bodies.
         if (_history.Count > MaxRevisions)
-            _history.RemoveRange(0, _history.Count - MaxRevisions);
+        {
+            var removeCount = _history.Count - MaxRevisions;
+            foreach (var trimmed in _history.Take(removeCount))
+                TryDeleteRevisionBody(trimmed.Id);
+            _history.RemoveRange(0, removeCount);
+        }
         SaveHistoryLocked();
+    }
+
+    private void WriteRevisionBodyLocked(int id, AppConfig config)
+    {
+        Directory.CreateDirectory(_historyDir);
+        var json = JsonSerializer.Serialize(config, JsonOpts);
+        var path = RevisionPath(id);
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    private void TryDeleteRevisionBody(int id)
+    {
+        try { File.Delete(RevisionPath(id)); } catch { /* best effort */ }
     }
 
     private void SaveHistoryLocked()
     {
         Directory.CreateDirectory(_dataDir);
-        var file = new HistoryFile { NextId = _nextRevisionId, Revisions = _history };
-        var json = JsonSerializer.Serialize(file, JsonOpts);
-        var tmp = _historyPath + ".tmp";
+        var index = new HistoryIndex { NextId = _nextRevisionId, Revisions = _history };
+        var json = JsonSerializer.Serialize(index, JsonOpts);
+        var tmp = _historyIndexPath + ".tmp";
         File.WriteAllText(tmp, json);
-        File.Move(tmp, _historyPath, overwrite: true);
+        File.Move(tmp, _historyIndexPath, overwrite: true);
     }
 
     private static AppConfig CloneConfig(AppConfig c) => new()
@@ -313,7 +393,21 @@ public sealed class ConfigService
             c.DkimSelectors.Select(kv =>
                 new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
             StringComparer.OrdinalIgnoreCase),
-        KnownDomains = new List<string>(c.KnownDomains)
+        KnownDomains = new List<string>(c.KnownDomains),
+        PropagationResolvers = new List<string>(c.PropagationResolvers ?? new()),
+        PropagationDohResolvers = new List<string>(c.PropagationDohResolvers ?? new()),
+        IpBlocklistsPublic = new List<string>(c.IpBlocklistsPublic ?? new()),
+        IpBlocklistsPrivate = new List<string>(c.IpBlocklistsPrivate ?? new()),
+        ExtendedIpBlocklistsPublic = new List<string>(c.ExtendedIpBlocklistsPublic ?? new()),
+        ExtendedIpBlocklistsPrivate = new List<string>(c.ExtendedIpBlocklistsPrivate ?? new()),
+        DomainBlocklists = new List<string>(c.DomainBlocklists ?? new()),
+        ArcSelectors = new List<string>(c.ArcSelectors ?? new()),
+        DmarcDiscoverySubdomains = new List<string>(c.DmarcDiscoverySubdomains ?? new()),
+        MailSurveySubdomains = new List<string>(c.MailSurveySubdomains ?? new()),
+        SpfSubdomains = new List<string>(c.SpfSubdomains ?? new()),
+        SrvServiceNames = new List<string>(c.SrvServiceNames ?? new()),
+        VmcIssuers = new List<string>(c.VmcIssuers ?? new()),
+        CrtShBaseUrl = string.IsNullOrWhiteSpace(c.CrtShBaseUrl) ? Checks.ProbeDefaults.CrtShBaseUrl : c.CrtShBaseUrl,
     };
 
     private static Dictionary<string, List<string>> NormalizeKeys(Dictionary<string, List<string>> src)
@@ -340,4 +434,17 @@ public sealed class ConfigService
             .Where(d => d.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+    // Trim entries and drop blanks/dupes for a probe data list. A null list
+    // (JSON field explicitly null) reverts to the built-in default; an empty
+    // list is preserved (the check falls back to its default at runtime).
+    private static List<string> NormalizeLines(List<string>? src, IReadOnlyList<string> fallback)
+    {
+        if (src == null) return new List<string>(fallback);
+        return src
+            .Select(s => (s ?? "").Trim())
+            .Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
 }

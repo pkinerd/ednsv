@@ -29,6 +29,16 @@ if $TRACE; then
   fi
 fi
 
+salt="$( cat ../../Keys/trace-mask-salt.txt )"
+if [[ "$salt" == "" ]]; then
+	echo "Salt missing.">&2
+	return 1
+fi
+
+
+export EDNSV_AUTH_TOKEN_HASH="$( cat ../../Keys/ednsv-root-hash.txt )"
+export MaskSalt="$salt"
+
 git pull
 
 if [[ -n "$BRANCH" ]]; then
@@ -36,4 +46,11 @@ if [[ -n "$BRANCH" ]]; then
   git pull
 fi
 
-dotnet run --project src/Ednsv.Web
+export Logging__Console__FormatterName=Simple
+
+dotnet run --no-restore --project src/Ednsv.Web
+
+if [[ "$?" != "130" ]]; then
+	echo "Trying with restore allowed."
+	dotnet run --project src/Ednsv.Web
+fi
