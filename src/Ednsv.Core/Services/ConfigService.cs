@@ -271,6 +271,21 @@ public sealed class ConfigService
                 }
 
                 // Corrupt. Preserve it, then recover rather than refusing to start.
+                //
+                // Every step here is deliberately convergent rather than locked,
+                // because replicas restart together and there is no distributed
+                // lock on the startup path: the quarantine name is derived from
+                // the content, and the recovered config is whatever the newest
+                // parseable revision holds, so N pods independently compute the
+                // same answer and their writes are byte-identical.
+                //
+                // For the same reason recovery does NOT append a revision. That
+                // would be a read-modify-write of config-history.json with no
+                // coordination — Replace's beacon compare-and-set does not cover
+                // this path — and concurrent appends drop each other's entries,
+                // orphaning revision bodies. There is nothing to record anyway:
+                // the restored config is identical to a revision that already
+                // exists, and the quarantined file is itself the audit trail.
                 var quarantine = QuarantineCorrupt(json);
                 lock (_lock)
                 {
@@ -279,13 +294,12 @@ public sealed class ConfigService
                     {
                         _current = recovered;
                         SaveLocked(); // republish the good config so peers converge
-                        AppendRevisionLocked(RecoveredSavedBy);
                         InitBeaconLocked();
                         warn?.Invoke(
                             $"{_filePath} was corrupt ({parseError}). The unreadable content was " +
                             $"preserved as {Path.GetFileName(quarantine)} and is listed in the config " +
                             "revision history for inspection; the most recent valid revision has been " +
-                            "restored.");
+                            "restored and republished.");
                         return CloneConfig(_current);
                     }
                 }
@@ -391,7 +405,6 @@ public sealed class ConfigService
     /// stored alongside revision bodies in the history directory.</summary>
     private const string CorruptPrefix = "config-corrupt-";
     private const string CorruptSavedBy = "(corrupt config — inspect only)";
-    private const string RecoveredSavedBy = "(auto-restored after corrupt config)";
 
     /// <summary>Reads config.json, retrying briefly so a momentary I/O blip on a
     /// shared mount doesn't escalate. Throws only when it stays unreadable.</summary>
