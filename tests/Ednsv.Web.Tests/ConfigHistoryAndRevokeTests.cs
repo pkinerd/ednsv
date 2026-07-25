@@ -53,6 +53,45 @@ public sealed class ConfigHistoryAndRevokeTests
     }
 
     [Fact]
+    public async Task GetRevisionRawReturnsStoredText()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        await client.PutAsJsonAsync("/api/config",
+            new { enableSmtpProbes = false, enableHttpProbes = true, enableDnsbl = true, enableDirectDns = true, enableDoh = false, knownDomains = new[] { "raw.test" } });
+
+        var revs = (await client.GetFromJsonAsync<JsonElement>("/api/config/history")).EnumerateArray().ToList();
+        var id = revs[0].GetProperty("id").GetInt32();
+
+        var res = await client.GetAsync($"/api/config/history/{id}/raw");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal("text/plain", res.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("raw.test", await res.Content.ReadAsStringAsync());
+
+        // Negative ids address quarantined corrupt configs; there are none here.
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/config/history/-1/raw")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/config/history/999999/raw")).StatusCode);
+    }
+
+    [Fact]
+    public async Task GetRevisionRawIsAdminOnly()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        var issued = await (await admin.PostAsJsonAsync("/api/auth/users",
+            new { username = "rawreader", isAdmin = false })).Content.ReadFromJsonAsync<JsonElement>();
+
+        var user = factory.CreateClient();
+        user.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", issued.GetProperty("token").GetString()!);
+        Assert.Equal(HttpStatusCode.Forbidden, (await user.GetAsync("/api/config/history/1/raw")).StatusCode);
+    }
+
+    [Fact]
     public async Task ConfigHistoryIsAdminOnly()
     {
         using var factory = EdnsvAppFactory.WithTokenAuth();

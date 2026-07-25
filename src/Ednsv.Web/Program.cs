@@ -192,13 +192,14 @@ var seedConfig = new AppConfig
 };
 try
 {
-    configService.LoadOrSeed(seedConfig);
+    // A corrupt config self-heals (quarantine the bad file, restore the newest
+    // valid revision) so replicas keep serving. Only a config that cannot be READ
+    // is fatal — those bytes can't be backed up, so overwriting them would be the
+    // data loss we're guarding against.
+    configService.LoadOrSeed(seedConfig, msg => Console.Error.WriteLine($"WARNING: {msg}"));
 }
 catch (ConfigUnreadableException ex)
 {
-    // Fail closed. Starting anyway would mean seeding env-var defaults over a
-    // config.json that may be perfectly good and merely unreadable this second,
-    // silently discarding the operator's settings.
     Console.Error.WriteLine($"FATAL: {ex.Message}");
     throw;
 }
@@ -1133,6 +1134,20 @@ app.MapGet("/api/config/history/{id:int}", (int id, HttpContext ctx, AuthService
     return cfg == null ? Results.NotFound(new { error = "revision not found" }) : Results.Ok(cfg);
 })
 .WithName("GetConfigRevision")
+.WithTags("Config");
+
+// GET /api/config/history/{id}/raw — the stored text of a revision, or of a
+// quarantined corrupt config (negative id). Served as text because a quarantined
+// body is by definition not valid config JSON and could not be returned as one.
+app.MapGet("/api/config/history/{id:int}/raw", (int id, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    var raw = cfgSvc.GetRevisionRaw(id);
+    return raw == null
+        ? Results.NotFound(new { error = "revision not found" })
+        : Results.Text(raw, "text/plain");
+})
+.WithName("GetConfigRevisionRaw")
 .WithTags("Config");
 
 // ── Debug / diagnostics (admin-only) ─────────────────────────────────────

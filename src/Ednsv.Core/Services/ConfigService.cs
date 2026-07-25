@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using StackExchange.Redis;
@@ -115,8 +117,13 @@ public sealed class AppConfig
     public string CrtShBaseUrl { get; set; } = Checks.ProbeDefaults.CrtShBaseUrl;
 }
 
-/// <summary>Metadata for a revision, without the (potentially large) config body.</summary>
-public sealed record ConfigRevisionInfo(int Id, DateTime SavedAt, string SavedBy);
+/// <summary>Metadata for a revision, without the (potentially large) config body.
+/// <paramref name="IsCorrupt"/> marks a quarantined copy of a config.json that
+/// failed to parse: it is listed so an admin can inspect it, but it is not a
+/// valid config and can only be read as raw text, never loaded into the editor.
+/// Quarantined entries carry negative ids so they cannot collide with real
+/// revision ids.</summary>
+public sealed record ConfigRevisionInfo(int Id, DateTime SavedAt, string SavedBy, bool IsCorrupt = false);
 
 /// <summary>Thrown when a distributed write loses the beacon compare-and-set:
 /// another pod persisted a newer revision since the editor loaded. Maps to 409.</summary>
@@ -202,13 +209,28 @@ public sealed class ConfigService
     /// Loads config.json if it exists, otherwise initializes from <paramref name="seed"/>
     /// (typically env-var defaults) and writes the seeded file. Returns the active config.
     /// </summary>
-    /// <exception cref="ConfigUnreadableException">config.json exists but could not be
-    /// read or parsed. Seeding is deliberately NOT attempted in that case: the seed
-    /// path writes to disk, so treating a transient read failure — a flaky shared
-    /// mount, a sharing violation, an I/O error — as "no config yet" would replace
-    /// the operator's saved settings with env-var defaults and record that as a
-    /// revision. Failing startup keeps the file intact and surfaces the problem.</exception>
-    public AppConfig LoadOrSeed(AppConfig seed)
+    /// <remarks>
+    /// Recovery ladder when config.json is present but not usable:
+    /// <list type="number">
+    /// <item>Unreadable (I/O error, permissions, flaky mount) — retried briefly,
+    /// then <see cref="ConfigUnreadableException"/>. This is the one fatal case,
+    /// and deliberately so: the bytes could not be read, so they cannot be backed
+    /// up either, and seeding would write env-var defaults over a file that is
+    /// very likely intact. That is an infrastructure fault, not corruption.</item>
+    /// <item>Readable but unparseable — the raw content is quarantined under
+    /// config-history/ (inspectable via the revision history), then the newest
+    /// revision body that still parses is restored, so the instance comes back
+    /// with the operator's real settings rather than defaults.</item>
+    /// <item>No usable revision either — falls back to <paramref name="seed"/>.</item>
+    /// </list>
+    /// Corruption therefore self-heals and never takes the instance down, while
+    /// the bad file is preserved rather than silently overwritten.
+    /// </remarks>
+    /// <param name="warn">Receives a message when config was quarantined and
+    /// recovered, so the host can surface it in logs.</param>
+    /// <exception cref="ConfigUnreadableException">config.json exists but could not
+    /// be read at all. See the remarks for why this case is fatal.</exception>
+    public AppConfig LoadOrSeed(AppConfig seed, Action<string>? warn = null)
     {
         LoadHistory();
         AtomicFile.SweepStaleTemps(_filePath);
@@ -216,48 +238,63 @@ public sealed class ConfigService
 
         if (File.Exists(_filePath))
         {
-            string json;
-            try
-            {
-                json = File.ReadAllText(_filePath);
-            }
-            catch (Exception ex)
-            {
-                throw new ConfigUnreadableException(
-                    $"Could not read {_filePath}: {ex.Message}. Refusing to start rather than " +
-                    "overwrite the existing configuration with defaults.", ex);
-            }
+            var json = ReadConfigFileWithRetry();
 
             // An empty file carries nothing to lose, so it still seeds. Anything
-            // non-empty that fails to parse is real content we must not clobber.
+            // non-empty that fails to parse is real content we must preserve.
             if (!string.IsNullOrWhiteSpace(json))
             {
-                AppConfig? parsed;
+                AppConfig? parsed = null;
+                string? parseError = null;
                 try
                 {
                     parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+                    if (parsed == null) parseError = "the file parsed to no configuration";
                 }
                 catch (Exception ex)
                 {
-                    throw new ConfigUnreadableException(
-                        $"{_filePath} is not valid configuration JSON: {ex.Message}. Refusing to " +
-                        "start rather than overwrite it with defaults. Fix or remove the file.", ex);
+                    parseError = ex.Message;
                 }
-                if (parsed == null)
-                    throw new ConfigUnreadableException(
-                        $"{_filePath} parsed to no configuration. Refusing to start rather than " +
-                        "overwrite it with defaults. Fix or remove the file.");
 
-                // Normalize keys: lowercase, trim trailing dot
-                parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
-                parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
+                if (parsed != null)
+                {
+                    // Normalize keys: lowercase, trim trailing dot
+                    parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                    parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
+                    lock (_lock)
+                    {
+                        _current = parsed;
+                        SeedBaselineRevisionLocked();
+                        InitBeaconLocked();
+                    }
+                    return Snapshot();
+                }
+
+                // Corrupt. Preserve it, then recover rather than refusing to start.
+                var quarantine = QuarantineCorrupt(json);
                 lock (_lock)
                 {
-                    _current = parsed;
-                    SeedBaselineRevisionLocked();
-                    InitBeaconLocked();
+                    var recovered = TryRecoverFromHistoryLocked();
+                    if (recovered != null)
+                    {
+                        _current = recovered;
+                        SaveLocked(); // republish the good config so peers converge
+                        AppendRevisionLocked(RecoveredSavedBy);
+                        InitBeaconLocked();
+                        warn?.Invoke(
+                            $"{_filePath} was corrupt ({parseError}). The unreadable content was " +
+                            $"preserved as {Path.GetFileName(quarantine)} and is listed in the config " +
+                            "revision history for inspection; the most recent valid revision has been " +
+                            "restored.");
+                        return CloneConfig(_current);
+                    }
                 }
-                return Snapshot();
+
+                warn?.Invoke(
+                    $"{_filePath} was corrupt ({parseError}) and no previous revision could be " +
+                    $"restored. The unreadable content was preserved as {Path.GetFileName(quarantine)} " +
+                    "and is listed in the config revision history for inspection; startup defaults " +
+                    "have been applied.");
             }
         }
 
@@ -348,6 +385,111 @@ public sealed class ConfigService
         }
     }
 
+    // ── Corrupt-config quarantine & recovery ─────────────────────────────
+
+    /// <summary>Prefix for quarantined copies of an unparseable config.json,
+    /// stored alongside revision bodies in the history directory.</summary>
+    private const string CorruptPrefix = "config-corrupt-";
+    private const string CorruptSavedBy = "(corrupt config — inspect only)";
+    private const string RecoveredSavedBy = "(auto-restored after corrupt config)";
+
+    /// <summary>Reads config.json, retrying briefly so a momentary I/O blip on a
+    /// shared mount doesn't escalate. Throws only when it stays unreadable.</summary>
+    private string ReadConfigFileWithRetry()
+    {
+        const int attempts = 3;
+        for (var i = 1; ; i++)
+        {
+            try
+            {
+                return File.ReadAllText(_filePath);
+            }
+            catch (Exception ex) when (i < attempts)
+            {
+                _ = ex;
+                Thread.Sleep(TimeSpan.FromMilliseconds(100 * i));
+            }
+            catch (Exception ex)
+            {
+                throw new ConfigUnreadableException(
+                    $"Could not read {_filePath} after {attempts} attempts: {ex.Message}. Refusing to " +
+                    "start rather than overwrite a configuration that could not be read (and so could " +
+                    "not be backed up). This is an infrastructure fault — check the volume and its " +
+                    "permissions.", ex);
+            }
+        }
+    }
+
+    /// <summary>Preserves unparseable config.json content under the history
+    /// directory so it can be inspected later. The name is derived from a hash of
+    /// the content, so replicas that all trip over the same corrupt file converge
+    /// on one artifact instead of each writing its own.</summary>
+    private string QuarantineCorrupt(string raw)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..8].ToLowerInvariant();
+        var path = Path.Combine(_historyDir, $"{CorruptPrefix}{hash}.json");
+        try
+        {
+            Directory.CreateDirectory(_historyDir);
+            if (!File.Exists(path)) AtomicFile.WriteAllText(path, raw);
+        }
+        catch { /* best effort — recovery matters more than the keepsake */ }
+        return path;
+    }
+
+    /// <summary>Newest revision body that still parses, or null. Must hold _lock.</summary>
+    private AppConfig? TryRecoverFromHistoryLocked()
+    {
+        for (var i = _history.Count - 1; i >= 0; i--) // _history is oldest-first
+        {
+            var cfg = TryReadRevisionBody(_history[i].Id);
+            if (cfg == null) continue;
+            cfg.DkimSelectors = NormalizeKeys(cfg.DkimSelectors ?? new Dictionary<string, List<string>>());
+            cfg.KnownDomains = NormalizeDomainList(cfg.KnownDomains ?? new List<string>());
+            return cfg;
+        }
+        return null;
+    }
+
+    private AppConfig? TryReadRevisionBody(int id)
+    {
+        var path = RevisionPath(id);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var json = File.ReadAllText(path);
+            return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Quarantined corrupt configs, newest first. Discovered by listing
+    /// the directory rather than tracked in the history index, so replicas never
+    /// race to append index entries for the same event.</summary>
+    private List<(string Path, DateTime SavedAt)> EnumerateQuarantined()
+    {
+        var result = new List<(string, DateTime)>();
+        if (!Directory.Exists(_historyDir)) return result;
+        try
+        {
+            foreach (var p in Directory.GetFiles(_historyDir, CorruptPrefix + "*.json"))
+                result.Add((p, File.GetLastWriteTimeUtc(p)));
+        }
+        catch
+        {
+            return result;
+        }
+        result.Sort((a, b) =>
+        {
+            var byTime = b.Item2.CompareTo(a.Item2);
+            return byTime != 0 ? byTime : string.CompareOrdinal(b.Item1, a.Item1);
+        });
+        return result;
+    }
+
     // ── Distributed coordination (beacon) ────────────────────────────────
 
     /// <summary>On-demand staleness check: if another pod advanced the beacon,
@@ -417,7 +559,9 @@ public sealed class ConfigService
         LoadHistory(); // re-sync revision metadata and next-id from the shared index.
     }
 
-    /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.</summary>
+    /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.
+    /// Any quarantined corrupt configs are listed first, with negative ids and
+    /// <see cref="ConfigRevisionInfo.IsCorrupt"/> set.</summary>
     public IReadOnlyList<ConfigRevisionInfo> ListRevisions()
     {
         EnsureFresh();
@@ -428,10 +572,53 @@ public sealed class ConfigService
             // config-history.json; that inline body was dropped the first time the
             // index was rewritten body-less, leaving metadata with no loadable body.
             // Filtering them keeps the picker to revisions that load instead of 404.
-            return _history
+            var revisions = _history
                 .Where(r => File.Exists(RevisionPath(r.Id)))
-                .Reverse()
-                .ToList();
+                .Reverse();
+
+            // Ids are assigned by position in the newest-first quarantine list, so
+            // they stay stable for as long as that set does — long enough for a
+            // list-then-fetch round trip, and corruption events are rare.
+            var corrupt = EnumerateQuarantined()
+                .Select((q, i) => new ConfigRevisionInfo(-(i + 1), q.SavedAt, CorruptSavedBy, IsCorrupt: true));
+
+            return corrupt.Concat(revisions).ToList();
+        }
+    }
+
+    /// <summary>
+    /// The stored text of a revision body, or of a quarantined corrupt config when
+    /// <paramref name="id"/> is negative. Corrupt entries are readable only this
+    /// way — they are not valid configuration and <see cref="GetRevision"/> returns
+    /// null for them, so the editor is never asked to load one.
+    /// </summary>
+    public string? GetRevisionRaw(int id)
+    {
+        EnsureFresh();
+        lock (_lock)
+        {
+            string path;
+            if (id < 0)
+            {
+                var quarantined = EnumerateQuarantined();
+                var index = -id - 1;
+                if (index >= quarantined.Count) return null;
+                path = quarantined[index].Path;
+            }
+            else
+            {
+                if (!_history.Any(r => r.Id == id)) return null;
+                path = RevisionPath(id);
+            }
+
+            try
+            {
+                return File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
