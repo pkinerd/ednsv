@@ -195,6 +195,13 @@ public sealed class ConfigService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "config:head";
 
+    // Serialises the config read-modify-write across instances. The TTL bounds
+    // how long a writer that dies mid-save can block others; the wait bounds how
+    // long a save blocks before reporting 503 rather than hanging the request.
+    private const string WriteLockName = "config:write";
+    private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
+
     public ConfigService(string dataDir, RedisConnection? redis = null)
     {
         _dataDir = dataDir;
@@ -366,7 +373,22 @@ public sealed class ConfigService
 
         if (_redis != null)
         {
-            // Adopt the cluster's current head (and history / next-id) before writing.
+            // Hold a lease across the whole read-modify-write. The compare-and-set
+            // below decides the outcome and still does, but on its own it releases
+            // the instant it commits — leaving the file writes, the revision-id
+            // allocation and the history-index rewrite unprotected, so two saves
+            // that are both legitimately based on the current head could interleave
+            // and claim the same revision id. The lease closes that window; the CAS
+            // remains the backstop for a lease that a stall or failover has broken.
+            using var lease = _redis.TryAcquireLock(WriteLockName, WriteLockTtl, WriteLockWait);
+            if (lease == null)
+                throw new StoreUnavailableException(
+                    "Could not coordinate the config write with other instances (Redis unreachable or another save in progress). Retry shortly.");
+
+            // Adopt the cluster's current head (and history / next-id) before
+            // writing. Inside the lease this is now meaningful: the previous
+            // writer finished its files before releasing, so the beacon and the
+            // durable state agree.
             EnsureFresh();
             var db = _redis.GetDatabase();
             if (db == null)

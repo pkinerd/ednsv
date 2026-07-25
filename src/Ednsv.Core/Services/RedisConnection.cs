@@ -113,6 +113,72 @@ public sealed class RedisConnection : IDisposable
     }
 
     /// <summary>
+    /// Takes a short-lived exclusive lease named <paramref name="suffix"/>, or
+    /// returns null when it cannot be had within <paramref name="maxWait"/> (or
+    /// Redis is unconfigured or unreachable). Dispose the result to release.
+    ///
+    /// This is contention control, <b>not</b> a correctness boundary. A TTL lease
+    /// can be violated — the holder stalls past the TTL, or a failover loses the
+    /// key — and a filesystem cannot validate a fencing token, so callers must
+    /// keep whatever compare-and-set already decides the outcome. The lease
+    /// exists to stop two writers interleaving their file I/O in the common case,
+    /// not to make it impossible.
+    /// </summary>
+    public IDisposable? TryAcquireLock(string suffix, TimeSpan ttl, TimeSpan maxWait)
+    {
+        if (_lazy == null) return null;
+        IDatabase db;
+        try { db = _lazy.Value.GetDatabase(); }
+        catch { return null; }
+
+        var key = (RedisKey)Key("lock:" + suffix);
+        var token = (RedisValue)Guid.NewGuid().ToString("N");
+        var deadline = DateTime.UtcNow + maxWait;
+        var backoff = TimeSpan.FromMilliseconds(25);
+
+        while (true)
+        {
+            try
+            {
+                if (db.LockTake(key, token, ttl)) return new Lease(db, key, token);
+            }
+            catch
+            {
+                return null; // treated as "cannot coordinate" by callers
+            }
+
+            if (DateTime.UtcNow >= deadline) return null;
+            Thread.Sleep(backoff);
+            if (backoff < TimeSpan.FromMilliseconds(200)) backoff += TimeSpan.FromMilliseconds(25);
+        }
+    }
+
+    private sealed class Lease : IDisposable
+    {
+        private readonly IDatabase _db;
+        private readonly RedisKey _key;
+        private readonly RedisValue _token;
+        private bool _released;
+
+        public Lease(IDatabase db, RedisKey key, RedisValue token)
+        {
+            _db = db;
+            _key = key;
+            _token = token;
+        }
+
+        public void Dispose()
+        {
+            if (_released) return;
+            _released = true;
+            // Token-checked release, so a lease that already expired and was
+            // retaken by someone else is never deleted out from under them.
+            try { _db.LockRelease(_key, _token); }
+            catch { /* it expires on its own */ }
+        }
+    }
+
+    /// <summary>
     /// Readiness check: true when Redis is either not configured (single-instance
     /// mode is always ready) or configured and currently reachable. Used by the
     /// /health/ready probe so k8s stops routing to a pod that has lost Redis in

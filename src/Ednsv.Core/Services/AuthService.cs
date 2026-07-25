@@ -57,6 +57,34 @@ public sealed class AuthService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "users:head";
 
+    // Serialises the users.json read-modify-write across instances. users.json is
+    // rewritten whole, and the beacon CAS releases before that write lands, so two
+    // saves could interleave and one could silently drop the other's change — for
+    // a revoke, that means a token staying live.
+    private const string WriteLockName = "users:write";
+    private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Takes the cross-instance write lease, or null in single-instance mode where
+    /// the in-process lock already serialises everything.
+    ///
+    /// Acquired by callers <b>before</b> they take <c>_lock</c>: blocking on a
+    /// network round-trip while holding it would stall every authentication check
+    /// on this instance, since the read paths take the same lock. Held across the
+    /// whole retry loop, so under the lease the CAS should never lose — a loss
+    /// means the lease was broken, and the retry handles it.
+    /// </summary>
+    private IDisposable? AcquireWriteLease()
+    {
+        if (_redis == null) return null;
+        var lease = _redis.TryAcquireLock(WriteLockName, WriteLockTtl, WriteLockWait);
+        if (lease == null)
+            throw new StoreUnavailableException(
+                "Could not coordinate the user write with other instances (Redis unreachable or another write in progress). Retry shortly.");
+        return lease;
+    }
+
     public bool Disabled => _rootHash == null;
 
     public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null)
@@ -285,6 +313,7 @@ public sealed class AuthService
         if (newUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new IssueResult(IssueStatus.UsernameTaken);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)
@@ -336,6 +365,7 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new DeleteResult(DeleteStatus.NotAllowed);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)
@@ -376,6 +406,7 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new RevokeResult(RevokeStatus.NotAllowed);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)

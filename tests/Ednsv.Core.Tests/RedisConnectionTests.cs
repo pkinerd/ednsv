@@ -82,6 +82,42 @@ public sealed class RedisConnectionTests
         Assert.True(redis.Enabled);
     }
 
+    // ── Write leases ─────────────────────────────────────────────────────
+    // The lease serialises the config/user read-modify-write across instances.
+    // It is contention control layered over the existing compare-and-set, never
+    // a replacement for it, so "cannot acquire" must always be a refusal to
+    // write rather than a licence to proceed unprotected.
+
+    [Fact]
+    public void TryAcquireLock_Unconfigured_ReturnsNull()
+    {
+        using var redis = new RedisConnection(null);
+
+        // Single-instance mode: nothing to coordinate with, and the in-process
+        // lock already serialises writers. Callers treat null as "no lease needed".
+        Assert.Null(redis.TryAcquireLock("config:write",
+            TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(1)));
+    }
+
+    [Fact]
+    public void TryAcquireLock_Unreachable_ReturnsNullPromptly()
+    {
+        // Configured but nothing listening. A short connect timeout keeps this
+        // bounded; the point is that it reports failure instead of hanging or
+        // handing back a lease it does not hold.
+        using var redis = new RedisConnection(
+            "127.0.0.1:6399,connectTimeout=150,syncTimeout=150,connectRetry=0,abortConnect=false");
+        Assert.True(redis.Enabled);
+
+        var started = DateTime.UtcNow;
+        var lease = redis.TryAcquireLock("config:write",
+            TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(1));
+        var elapsed = DateTime.UtcNow - started;
+
+        Assert.Null(lease);
+        Assert.True(elapsed < TimeSpan.FromSeconds(10), $"took {elapsed.TotalSeconds:F1}s");
+    }
+
     [Fact]
     public async Task DeleteKeysByPrefix_Unconfigured_IsNoOp()
     {
