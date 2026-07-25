@@ -25,6 +25,25 @@ public class DiskCacheTests : IDisposable
             Directory.Delete(_cacheDir, true);
     }
 
+    /// <summary>Files holding a cache type. Each process writes its own
+    /// ("dns-queries.{instance}.json"), so tests match on the stem rather than an
+    /// exact name — while keeping "http-get" from matching "http-get-headers".</summary>
+    private string[] CacheFiles(string baseName)
+    {
+        if (!Directory.Exists(_cacheDir)) return Array.Empty<string>();
+        var stem = Path.GetFileNameWithoutExtension(baseName);
+        var ext = Path.GetExtension(baseName);
+        return Directory.GetFiles(_cacheDir, "*" + ext)
+            .Where(p =>
+            {
+                var n = Path.GetFileName(p);
+                return n == baseName
+                    || (n.StartsWith(stem + ".", StringComparison.Ordinal)
+                        && n.Length > stem.Length + 1 + ext.Length);
+            })
+            .ToArray();
+    }
+
     // ── Round-trip tests ─────────────────────────────────────────────────
 
     [Fact]
@@ -41,7 +60,7 @@ public class DiskCacheTests : IDisposable
         // Save to disk
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
         Assert.True(Directory.Exists(_cacheDir));
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
+        Assert.NotEmpty(CacheFiles("dns-queries.json"));
 
         // Load into fresh services
         var dns2 = new DnsResolverService();
@@ -174,8 +193,8 @@ public class DiskCacheTests : IDisposable
 
         await DiskCacheService.SaveAsync(_cacheDir, smtp, http, dns);
 
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "http-get.json")));
+        Assert.NotEmpty(CacheFiles("dns-queries.json"));
+        Assert.NotEmpty(CacheFiles("http-get.json"));
     }
 
     // ── Merge behavior ──────────────────────────────────────────────────

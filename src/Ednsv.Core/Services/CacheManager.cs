@@ -161,6 +161,9 @@ public sealed class CacheManager : IAsyncDisposable
         else
             await FlushAsync(); // final save even without a flusher
 
-        _diskLock.Dispose();
+        // _diskLock is deliberately not disposed. Nothing here ever touches its
+        // AvailableWaitHandle, so there is no handle to release, and disposing it
+        // would turn a late FlushAsync/ClearAllAsync arriving during shutdown into
+        // an ObjectDisposedException instead of the harmless save it used to be.
     }
 }

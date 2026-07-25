@@ -118,12 +118,17 @@ public sealed class AppConfig
 }
 
 /// <summary>Metadata for a revision, without the (potentially large) config body.
+///
 /// <paramref name="IsCorrupt"/> marks a quarantined copy of a config.json that
 /// failed to parse: it is listed so an admin can inspect it, but it is not a
 /// valid config and can only be read as raw text, never loaded into the editor.
-/// Quarantined entries carry negative ids so they cannot collide with real
-/// revision ids.</summary>
-public sealed record ConfigRevisionInfo(int Id, DateTime SavedAt, string SavedBy, bool IsCorrupt = false);
+/// Those entries are addressed by <paramref name="Key"/> — the content hash that
+/// names the quarantine file — rather than by <paramref name="Id"/>, which is 0
+/// for them. The key identifies the same artifact no matter what else has been
+/// quarantined since, so a client that lists and then fetches cannot be handed a
+/// different file by an intervening corruption.</summary>
+public sealed record ConfigRevisionInfo(
+    int Id, DateTime SavedAt, string SavedBy, bool IsCorrupt = false, string? Key = null);
 
 /// <summary>Thrown when a distributed write loses the beacon compare-and-set:
 /// another pod persisted a newer revision since the editor loaded. Maps to 409.</summary>
@@ -482,14 +487,17 @@ public sealed class ConfigService
     /// <summary>Quarantined corrupt configs, newest first. Discovered by listing
     /// the directory rather than tracked in the history index, so replicas never
     /// race to append index entries for the same event.</summary>
-    private List<(string Path, DateTime SavedAt)> EnumerateQuarantined()
+    private List<(string Key, string Path, DateTime SavedAt)> EnumerateQuarantined()
     {
-        var result = new List<(string, DateTime)>();
+        var result = new List<(string, string, DateTime)>();
         if (!Directory.Exists(_historyDir)) return result;
         try
         {
             foreach (var p in Directory.GetFiles(_historyDir, CorruptPrefix + "*.json"))
-                result.Add((p, File.GetLastWriteTimeUtc(p)));
+            {
+                var key = Path.GetFileNameWithoutExtension(p)[CorruptPrefix.Length..];
+                if (IsValidQuarantineKey(key)) result.Add((key, p, File.GetLastWriteTimeUtc(p)));
+            }
         }
         catch
         {
@@ -497,10 +505,38 @@ public sealed class ConfigService
         }
         result.Sort((a, b) =>
         {
-            var byTime = b.Item2.CompareTo(a.Item2);
+            var byTime = b.Item3.CompareTo(a.Item3);
             return byTime != 0 ? byTime : string.CompareOrdinal(b.Item1, a.Item1);
         });
         return result;
+    }
+
+    /// <summary>Keys come in from the API and are interpolated into a file name,
+    /// so only the shape this class generates is accepted — no separators, no
+    /// traversal, nothing but the lowercase hex of a content hash.</summary>
+    private static bool IsValidQuarantineKey(string? key)
+        => !string.IsNullOrEmpty(key)
+           && key.Length is > 0 and <= 32
+           && key.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    /// <summary>Raw text of a quarantined corrupt config, or null when the key is
+    /// unknown or malformed.</summary>
+    public string? GetQuarantinedRaw(string key)
+    {
+        if (!IsValidQuarantineKey(key)) return null;
+        var path = Path.Combine(_historyDir, $"{CorruptPrefix}{key}.json");
+        try
+        {
+            // Belt and braces after the key validation above: never read outside
+            // the history directory even if that check is ever loosened.
+            if (Path.GetDirectoryName(Path.GetFullPath(path)) != Path.GetFullPath(_historyDir))
+                return null;
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // ── Distributed coordination (beacon) ────────────────────────────────
@@ -573,8 +609,9 @@ public sealed class ConfigService
     }
 
     /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.
-    /// Any quarantined corrupt configs are listed first, with negative ids and
-    /// <see cref="ConfigRevisionInfo.IsCorrupt"/> set.</summary>
+    /// Any quarantined corrupt configs are listed first, carrying
+    /// <see cref="ConfigRevisionInfo.IsCorrupt"/> and a stable
+    /// <see cref="ConfigRevisionInfo.Key"/> instead of a revision id.</summary>
     public IReadOnlyList<ConfigRevisionInfo> ListRevisions()
     {
         EnsureFresh();
@@ -589,40 +626,25 @@ public sealed class ConfigService
                 .Where(r => File.Exists(RevisionPath(r.Id)))
                 .Reverse();
 
-            // Ids are assigned by position in the newest-first quarantine list, so
-            // they stay stable for as long as that set does — long enough for a
-            // list-then-fetch round trip, and corruption events are rare.
             var corrupt = EnumerateQuarantined()
-                .Select((q, i) => new ConfigRevisionInfo(-(i + 1), q.SavedAt, CorruptSavedBy, IsCorrupt: true));
+                .Select(q => new ConfigRevisionInfo(0, q.SavedAt, CorruptSavedBy, IsCorrupt: true, Key: q.Key));
 
             return corrupt.Concat(revisions).ToList();
         }
     }
 
     /// <summary>
-    /// The stored text of a revision body, or of a quarantined corrupt config when
-    /// <paramref name="id"/> is negative. Corrupt entries are readable only this
-    /// way — they are not valid configuration and <see cref="GetRevision"/> returns
-    /// null for them, so the editor is never asked to load one.
+    /// The stored text of a revision body. Quarantined corrupt configs are not
+    /// addressed here — they have no revision id and are read via
+    /// <see cref="GetQuarantinedRaw"/> instead.
     /// </summary>
     public string? GetRevisionRaw(int id)
     {
         EnsureFresh();
         lock (_lock)
         {
-            string path;
-            if (id < 0)
-            {
-                var quarantined = EnumerateQuarantined();
-                var index = -id - 1;
-                if (index >= quarantined.Count) return null;
-                path = quarantined[index].Path;
-            }
-            else
-            {
-                if (!_history.Any(r => r.Id == id)) return null;
-                path = RevisionPath(id);
-            }
+            if (!_history.Any(r => r.Id == id)) return null;
+            var path = RevisionPath(id);
 
             try
             {

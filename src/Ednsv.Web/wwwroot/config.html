@@ -359,7 +359,7 @@ async function loadHistory() {
   const sel = $('#revSelect');
   sel.innerHTML = '<option value="">— current (unsaved) —</option>' +
     revs.map(r => r.isCorrupt
-      ? `<option value="${r.id}" data-corrupt="1">⚠ ${esc(fmtDate(r.savedAt))} — quarantined corrupt config (inspect only)</option>`
+      ? `<option value="corrupt:${esc(r.key)}">⚠ ${esc(fmtDate(r.savedAt))} — quarantined corrupt config (inspect only)</option>`
       : `<option value="${r.id}">${esc(fmtDate(r.savedAt))} — ${esc(r.savedBy)}</option>`).join('');
   $('#historyPanel').style.display = revs.length ? '' : 'none';
 }
@@ -376,9 +376,12 @@ $('#revSelect')?.addEventListener('change', async e => {
   const opt = e.target.options[e.target.selectedIndex];
 
   // A quarantined config is not valid configuration, so it is never loaded into
-  // the form — it is fetched as raw text and shown for inspection only.
-  if (opt.dataset.corrupt === '1') {
-    const res = await fetch(`/api/config/history/${encodeURIComponent(id)}/raw`);
+  // the form — it is fetched as raw text and shown for inspection only. It is
+  // keyed by content hash, so the entry listed is the entry fetched even if
+  // another config was quarantined in between.
+  if (id.startsWith('corrupt:')) {
+    const key = id.slice('corrupt:'.length);
+    const res = await fetch(`/api/config/history/corrupt/${encodeURIComponent(key)}/raw`);
     if (!res.ok) { showMessage(`Could not load quarantined config: ${res.status}`); return; }
     $('#corruptBody').textContent = await res.text();
     $('#corruptPanel').style.display = '';

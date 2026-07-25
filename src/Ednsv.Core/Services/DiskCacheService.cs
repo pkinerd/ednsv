@@ -39,6 +39,99 @@ public class DiskCacheService
         AxfrResultsFile, RelayTestsFile, DomainResultsFile
     };
 
+    // ── Per-instance cache files ─────────────────────────────────────────
+    //
+    // Each process writes its OWN copy of every cache file
+    // ("dns-queries.{instance}.json") and reads all of them back merged. The
+    // shared DataDir is the same mount for every replica, so a single
+    // "dns-queries.json" meant N pods doing a read-modify-write of one file on
+    // their own flush timers, quietly dropping each other's entries — and no
+    // coordination covered it, since the Redis beacon only ever guarded config
+    // and user writes. Partitioning by writer removes the race outright rather
+    // than serialising it, which suits a cache: nothing needs to be atomic
+    // across pods, entries are independent, and the merge on load restores the
+    // shared view.
+    //
+    // The suffix is the pod name (HOSTNAME in Kubernetes), so it is stable
+    // across a pod's restarts and files don't accumulate per process. Two
+    // processes that share BOTH a hostname and a DataDir — a CLI run beside the
+    // web service on one machine — still share a file; that is last-write-wins
+    // rather than corruption, since every write goes through AtomicFile.
+    private static readonly string InstanceSuffix = ComputeInstanceSuffix();
+
+    private static string ComputeInstanceSuffix()
+    {
+        var raw = Environment.GetEnvironmentVariable("HOSTNAME");
+        if (string.IsNullOrWhiteSpace(raw)) raw = Environment.MachineName;
+        var cleaned = new string((raw ?? string.Empty)
+            .Where(char.IsAsciiLetterOrDigit).ToArray()).ToLowerInvariant();
+        if (cleaned.Length > 32) cleaned = cleaned[^32..];
+        return cleaned.Length > 0 ? cleaned : "local";
+    }
+
+    /// <summary>This process's file for a cache type, e.g. "dns-queries.pod7.json".</summary>
+    private static string OwnPath(string cacheDir, string filename) => Path.Combine(cacheDir,
+        $"{Path.GetFileNameWithoutExtension(filename)}.{InstanceSuffix}{Path.GetExtension(filename)}");
+
+    /// <summary>
+    /// Every on-disk file holding entries for a cache type: this and other
+    /// instances' files, plus the legacy un-suffixed file written before the
+    /// split (still read, never written, and swept once its entries have aged
+    /// past the TTL).
+    /// </summary>
+    private static IEnumerable<string> EnumerateVariants(string cacheDir, string filename)
+    {
+        var stem = Path.GetFileNameWithoutExtension(filename);
+        var ext = Path.GetExtension(filename);
+
+        string[] candidates;
+        try { candidates = Directory.GetFiles(cacheDir, "*" + ext); }
+        catch { yield break; }
+
+        foreach (var path in candidates)
+        {
+            var name = Path.GetFileName(path);
+            if (name.Equals(filename, StringComparison.Ordinal))
+            {
+                yield return path; // legacy shared file
+                continue;
+            }
+            // "{stem}.{suffix}{ext}" and nothing else — an explicit prefix test
+            // rather than a glob so "http-get" can't swallow "http-get-headers".
+            if (name.StartsWith(stem + ".", StringComparison.Ordinal)
+                && name.EndsWith(ext, StringComparison.Ordinal)
+                && name.Length > stem.Length + 1 + ext.Length)
+            {
+                yield return path;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deletes cache files belonging to instances that are gone, and the legacy
+    /// shared file, once they are older than the TTL. A file's entries were all
+    /// written no later than its mtime, so once that is past the cutoff every
+    /// entry in it would be discarded on load anyway. This process's own files
+    /// are never swept.
+    /// </summary>
+    private static void SweepExpiredVariants(string cacheDir, TimeSpan ttl)
+    {
+        var cutoff = DateTime.UtcNow - ttl;
+        foreach (var filename in AllCacheFiles)
+        {
+            var own = OwnPath(cacheDir, filename);
+            foreach (var path in EnumerateVariants(cacheDir, filename))
+            {
+                if (path.Equals(own, StringComparison.Ordinal)) continue;
+                try
+                {
+                    if (File.GetLastWriteTimeUtc(path) < cutoff) File.Delete(path);
+                }
+                catch { /* best effort */ }
+            }
+        }
+    }
+
     /// <summary>
     /// Deletes every on-disk cache file (and any leftover .tmp) in the cache
     /// directory. In-memory caches are cleared separately by the caller.
@@ -48,10 +141,16 @@ public class DiskCacheService
         if (!Directory.Exists(cacheDir)) return;
         foreach (var f in AllCacheFiles)
         {
-            var path = Path.Combine(cacheDir, f);
-            try { File.Delete(path); } catch { /* best effort */ }
-            // Unconditional: callers hold the flusher lock, so no write is in flight.
-            AtomicFile.DeleteAllTemps(path);
+            // Every instance's file, not just this one's — an admin cache-clear
+            // means the whole on-disk cache, however it is partitioned.
+            foreach (var path in EnumerateVariants(cacheDir, f).ToList())
+            {
+                try { File.Delete(path); } catch { /* best effort */ }
+                // Unconditional: callers hold the flusher lock, so no write is in flight.
+                AtomicFile.DeleteAllTemps(path);
+            }
+            // The base name may have no file yet but can still have stale temps.
+            AtomicFile.DeleteAllTemps(Path.Combine(cacheDir, f));
         }
     }
 
@@ -100,7 +199,15 @@ public class DiskCacheService
         // Clear out scratch files orphaned by a killed process. Age-gated, so a
         // temp belonging to a write that is in flight right now is left alone.
         foreach (var f in AllCacheFiles)
+        {
             AtomicFile.SweepStaleTemps(Path.Combine(cacheDir, f));
+            AtomicFile.SweepStaleTemps(OwnPath(cacheDir, f));
+        }
+
+        // Drop files left by replicas that are gone, and the pre-split shared
+        // file, once everything in them would have expired anyway. Startup is
+        // enough: a rolling deploy brings up new pods, and each one sweeps.
+        SweepExpiredVariants(cacheDir, ttl);
 
         var cutoff = DateTime.UtcNow - ttl;
 
@@ -202,7 +309,10 @@ public class DiskCacheService
     {
         if (newEntries.Count == 0) return;
 
-        var path = Path.Combine(cacheDir, filename);
+        // Only ever this instance's own file, so concurrent replicas never
+        // read-modify-write the same one. Merging with it preserves entries this
+        // process wrote before a restart.
+        var path = OwnPath(cacheDir, filename);
 
         // Read existing entries
         Dictionary<string, T>? existing = null;
@@ -249,26 +359,35 @@ public class DiskCacheService
     /// </summary>
     private static async Task<Dictionary<string, T>?> LoadFileAsync<T>(string cacheDir, string filename, DateTime cutoff) where T : ICacheEntry
     {
-        var path = Path.Combine(cacheDir, filename);
-        if (!File.Exists(path)) return null;
+        // Merge across every instance's file so the cache is shared on read even
+        // though each writer owns its own file. Freshest entry wins per key; an
+        // unreadable variant is skipped rather than failing the whole load.
+        var merged = new Dictionary<string, T>();
 
-        try
+        foreach (var path in EnumerateVariants(cacheDir, filename))
         {
-            var json = await File.ReadAllTextAsync(path);
-            var entries = JsonSerializer.Deserialize<Dictionary<string, T>>(json, JsonOptions);
-            if (entries == null) return null;
+            Dictionary<string, T>? entries;
+            try
+            {
+                var json = await File.ReadAllTextAsync(path);
+                entries = JsonSerializer.Deserialize<Dictionary<string, T>>(json, JsonOptions);
+            }
+            catch
+            {
+                continue; // corrupt or vanished variant
+            }
+            if (entries == null) continue;
 
-            // Filter by per-entry TTL
-            var valid = entries
-                .Where(kvp => kvp.Value.CachedAtUtc >= cutoff)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+            foreach (var kvp in entries)
+            {
+                if (kvp.Value.CachedAtUtc < cutoff) continue; // per-entry TTL
+                if (merged.TryGetValue(kvp.Key, out var seen) && seen.CachedAtUtc >= kvp.Value.CachedAtUtc)
+                    continue;
+                merged[kvp.Key] = kvp.Value;
+            }
+        }
 
-            return valid.Count > 0 ? valid : null;
-        }
-        catch
-        {
-            return null; // corrupt file
-        }
+        return merged.Count > 0 ? merged : null;
     }
 
     // ── Public result type ───────────────────────────────────────────────
@@ -297,7 +416,7 @@ public class DiskCacheService
     public static async Task SaveDomainResultAsync(string cacheDir, string domain, DomainResultSummary summary)
     {
         Directory.CreateDirectory(cacheDir);
-        var path = Path.Combine(cacheDir, DomainResultsFile);
+        var path = OwnPath(cacheDir, DomainResultsFile);
 
         await _domainResultsLock.WaitAsync();
         try
@@ -330,18 +449,33 @@ public class DiskCacheService
     /// </summary>
     public static async Task<Dictionary<string, DomainResultSummary>?> LoadDomainResultsAsync(string cacheDir)
     {
-        var path = Path.Combine(cacheDir, DomainResultsFile);
-        if (!File.Exists(path)) return null;
+        // Merged across instances, most recent validation per domain winning, so
+        // a recheck sees prior results regardless of which replica produced them.
+        var merged = new Dictionary<string, DomainResultSummary>();
 
-        try
+        foreach (var path in EnumerateVariants(cacheDir, DomainResultsFile))
         {
-            var json = await File.ReadAllTextAsync(path);
-            return JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+            Dictionary<string, DomainResultSummary>? entries;
+            try
+            {
+                var json = await File.ReadAllTextAsync(path);
+                entries = JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
+            }
+            catch
+            {
+                continue;
+            }
+            if (entries == null) continue;
+
+            foreach (var kvp in entries)
+            {
+                if (merged.TryGetValue(kvp.Key, out var seen) && seen.ValidatedAtUtc >= kvp.Value.ValidatedAtUtc)
+                    continue;
+                merged[kvp.Key] = kvp.Value;
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        return merged.Count > 0 ? merged : null;
     }
 }
 

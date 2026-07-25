@@ -70,9 +70,28 @@ public sealed class ConfigHistoryAndRevokeTests
         Assert.Equal("text/plain", res.Content.Headers.ContentType?.MediaType);
         Assert.Contains("raw.test", await res.Content.ReadAsStringAsync());
 
-        // Negative ids address quarantined corrupt configs; there are none here.
-        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/config/history/-1/raw")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/config/history/999999/raw")).StatusCode);
+    }
+
+    [Fact]
+    public async Task QuarantinedConfigRawRejectsUnknownAndMalformedKeys()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        // No config has been quarantined in this instance.
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync("/api/config/history/corrupt/deadbeef/raw")).StatusCode);
+
+        // Keys are interpolated into a file name, so anything that isn't a
+        // content hash must be refused rather than reaching the filesystem.
+        foreach (var bad in new[] { "..%2F..%2Fconfig", "%2Fetc%2Fpasswd", "ABCDEF", "zz" })
+        {
+            var res = await client.GetAsync($"/api/config/history/corrupt/{bad}/raw");
+            Assert.True(res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest,
+                $"key '{bad}' returned {(int)res.StatusCode}");
+        }
     }
 
     [Fact]

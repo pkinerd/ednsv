@@ -69,12 +69,49 @@ public sealed class ConfigServiceTests : IDisposable
 
         var corrupt = svc.ListRevisions().Where(r => r.IsCorrupt).ToList();
         var entry = Assert.Single(corrupt);
-        Assert.True(entry.Id < 0, "quarantined entries must not collide with real revision ids");
+        Assert.NotNull(entry.Key);
+        Assert.Equal(0, entry.Id); // addressed by key, never by a revision id
 
         // Readable as raw text, and byte-identical to what was on disk.
-        Assert.Equal(Corrupt, svc.GetRevisionRaw(entry.Id));
+        Assert.Equal(Corrupt, svc.GetQuarantinedRaw(entry.Key!));
         // But never offered to the editor as configuration.
         Assert.Null(svc.GetRevision(entry.Id));
+    }
+
+    [Fact]
+    public void QuarantineKeyIsStableAcrossLaterCorruptions()
+    {
+        // The bug this replaces: positional ids meant a second corruption
+        // renumbered the first, so a client that listed then fetched could be
+        // handed a different artifact than the one it selected.
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+        var first = svc.ListRevisions().Single(r => r.IsCorrupt).Key!;
+
+        // A second, different corruption arrives.
+        File.WriteAllText(Path.Combine(_dir, "config.json"), "{ a completely different mess");
+        var reopened = new ConfigService(_dir);
+        reopened.LoadOrSeed(Seed());
+
+        var keys = reopened.ListRevisions().Where(r => r.IsCorrupt).Select(r => r.Key).ToList();
+        Assert.Equal(2, keys.Count);
+        Assert.Contains(first, keys);
+        // The original key still resolves to the original content.
+        Assert.Equal(Corrupt, reopened.GetQuarantinedRaw(first));
+    }
+
+    [Theory]
+    [InlineData("../../../etc/passwd")]
+    [InlineData("..%2Fconfig")]
+    [InlineData("abc/def")]
+    [InlineData("ABCDEF12")]   // keys are lowercase hex
+    [InlineData("zzzzzzzz")]
+    [InlineData("")]
+    public void GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(string key)
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());
+        Assert.Null(svc.GetQuarantinedRaw(key));
     }
 
     [Fact]
@@ -129,7 +166,7 @@ public sealed class ConfigServiceTests : IDisposable
         var cfg = svc.LoadOrSeed(Seed());
 
         Assert.True(cfg.EnableSmtpProbes);
-        Assert.Equal("null", svc.GetRevisionRaw(svc.ListRevisions().First(r => r.IsCorrupt).Id));
+        Assert.Equal("null", svc.GetQuarantinedRaw(svc.ListRevisions().First(r => r.IsCorrupt).Key!));
     }
 
     [Fact]
@@ -138,8 +175,8 @@ public sealed class ConfigServiceTests : IDisposable
         var svc = new ConfigService(_dir);
         svc.LoadOrSeed(Seed());
 
-        Assert.Null(svc.GetRevisionRaw(-1));    // no quarantined configs
-        Assert.Null(svc.GetRevisionRaw(9999));  // no such revision
+        Assert.Null(svc.GetRevisionRaw(9999));       // no such revision
+        Assert.Null(svc.GetQuarantinedRaw("deadbeef")); // no such quarantined config
     }
 
     [Fact]

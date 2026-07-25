@@ -1136,9 +1136,7 @@ app.MapGet("/api/config/history/{id:int}", (int id, HttpContext ctx, AuthService
 .WithName("GetConfigRevision")
 .WithTags("Config");
 
-// GET /api/config/history/{id}/raw — the stored text of a revision, or of a
-// quarantined corrupt config (negative id). Served as text because a quarantined
-// body is by definition not valid config JSON and could not be returned as one.
+// GET /api/config/history/{id}/raw — the stored text of a revision.
 app.MapGet("/api/config/history/{id:int}/raw", (int id, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
 {
     if (!RequireAdmin(ctx, auth, out var err)) return err!;
@@ -1148,6 +1146,21 @@ app.MapGet("/api/config/history/{id:int}/raw", (int id, HttpContext ctx, AuthSer
         : Results.Text(raw, "text/plain");
 })
 .WithName("GetConfigRevisionRaw")
+.WithTags("Config");
+
+// GET /api/config/history/corrupt/{key}/raw — a quarantined config.json that
+// failed to parse, addressed by the content hash that names it. Served as text
+// because it is by definition not valid config JSON. The key is validated in
+// ConfigService before it reaches the filesystem.
+app.MapGet("/api/config/history/corrupt/{key}/raw", (string key, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    var raw = cfgSvc.GetQuarantinedRaw(key);
+    return raw == null
+        ? Results.NotFound(new { error = "quarantined config not found" })
+        : Results.Text(raw, "text/plain");
+})
+.WithName("GetQuarantinedConfigRaw")
 .WithTags("Config");
 
 // ── Debug / diagnostics (admin-only) ─────────────────────────────────────
