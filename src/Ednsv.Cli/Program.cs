@@ -646,10 +646,10 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save domain result + flush cache to disk (non-blocking)
+        // Save the domain result (non-blocking). Probe caches reach disk on the
+        // flusher's own timer and its final flush on dispose.
         if (cachePath != null)
             _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
-        cacheFlusher?.RequestFlush();
 
         // Per-domain summary
         AnsiConsole.WriteLine();
@@ -933,10 +933,10 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save domain result + flush cache to disk (non-blocking)
+        // Save the domain result (non-blocking). Probe caches reach disk on the
+        // flusher's own timer and its final flush on dispose.
         if (cachePath != null)
             _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
-        cacheFlusher?.RequestFlush();
 
         if (showProgress)
         {
@@ -1149,10 +1149,10 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save domain result + flush cache to disk (non-blocking)
+        // Save the domain result (non-blocking). Probe caches reach disk on the
+        // flusher's own timer and its final flush on dispose.
         if (cachePath != null)
             _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
-        cacheFlusher?.RequestFlush();
 
         // Write individual domain file immediately
         var filename = $"{SanitizeFilename(domain)}.{ext}";

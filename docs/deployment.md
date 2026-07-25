@@ -230,10 +230,6 @@ Returns DNS cache statistics:
 }
 ```
 
-#### POST /api/cache/flush
-
-Triggers an immediate disk cache flush.
-
 #### GET /api/checks
 
 Returns the list of check category descriptions (from `CheckDescriptions.Categories`).
@@ -245,7 +241,6 @@ Beyond the core validation flow above, the service exposes configuration, cache-
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
 | `GET /api/defaults` | none | Effective server-side default `ValidationOptions` used to pre-populate the UI |
-| `POST /api/cache/clear` | admin | Clear the on-disk + in-memory cache |
 | `GET /api/config` | admin | Read the live runtime config (toggles, DKIM selectors, probe data lists) |
 | `PUT /api/config` | admin | Update the live runtime config (writes a new revision) |
 | `GET /api/config/history` | admin | List config revision history |

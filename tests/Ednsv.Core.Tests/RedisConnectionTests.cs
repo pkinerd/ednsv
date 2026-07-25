@@ -118,12 +118,4 @@ public sealed class RedisConnectionTests
         Assert.True(elapsed < TimeSpan.FromSeconds(10), $"took {elapsed.TotalSeconds:F1}s");
     }
 
-    [Fact]
-    public async Task DeleteKeysByPrefix_Unconfigured_IsNoOp()
-    {
-        using var redis = new RedisConnection(null);
-
-        // No connection string → nothing to clear, and must not throw.
-        Assert.Equal(0, await redis.DeleteKeysByPrefixAsync("cache:"));
-    }
 }

@@ -133,22 +133,6 @@ public sealed class DiskCachePerInstanceTests : IDisposable
     }
 
     [Fact]
-    public void Clear_RemovesEveryInstancesFiles()
-    {
-        WriteDomainResults("domain-results.poda1.json", "a.example", DateTime.UtcNow);
-        WriteDomainResults("domain-results.podb.json", "b.example", DateTime.UtcNow);
-        WriteDomainResults("domain-results.json", "legacy.example", DateTime.UtcNow);
-        File.WriteAllText(Path.Combine(_dir, "dns-queries.podc.json"), "{}");
-        File.WriteAllText(Path.Combine(_dir, "unrelated.json"), "keep me");
-
-        DiskCacheService.Clear(_dir);
-
-        Assert.Empty(Directory.GetFiles(_dir, "domain-results*.json"));
-        Assert.Empty(Directory.GetFiles(_dir, "dns-queries*.json"));
-        Assert.True(File.Exists(Path.Combine(_dir, "unrelated.json")));
-    }
-
-    [Fact]
     public async Task VariantMatching_RequiresADotAfterTheCacheTypeName()
     {
         // A variant is "{type}.{instance}.json" and nothing else. Prefix-only

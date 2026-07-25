@@ -206,12 +206,6 @@ public class HttpProbeService
     }
 
     /// <summary>Evicts all cached HTTP GET results.</summary>
-    public void ClearCache()
-    {
-        _getCache.Clear();
-        _getWithHeadersCache.Clear();
-    }
-
     // ── Cache export/import for disk persistence ─────────────────────────
 
     public Dictionary<string, HttpGetCacheEntry> ExportGetCache()

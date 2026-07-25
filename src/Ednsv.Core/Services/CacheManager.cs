@@ -16,7 +16,6 @@ public sealed class CacheManager : IAsyncDisposable
     private readonly DnsResolverService _dns;
     private readonly SmtpProbeService _smtp;
     private readonly HttpProbeService _http;
-    private readonly RedisConnection? _redis;
 
     private BackgroundCacheFlusher? _flusher;
     private ConcurrentDictionary<string, DomainResultSummary> _previousResults = new();
@@ -30,15 +29,13 @@ public sealed class CacheManager : IAsyncDisposable
         TimeSpan ttl,
         DnsResolverService dns,
         SmtpProbeService smtp,
-        HttpProbeService http,
-        RedisConnection? redis = null)
+        HttpProbeService http)
     {
         _cacheDir = cacheDir;
         _ttl = ttl;
         _dns = dns;
         _smtp = smtp;
         _http = http;
-        _redis = redis != null && redis.Enabled ? redis : null;
     }
 
     /// <summary>
@@ -80,45 +77,6 @@ public sealed class CacheManager : IAsyncDisposable
         await _diskLock.WaitAsync();
         try { await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns); }
         finally { _diskLock.Release(); }
-    }
-
-    private async Task ClearDirectAsync()
-    {
-        await _diskLock.WaitAsync();
-        try { DiskCacheService.Clear(_cacheDir); }
-        finally { _diskLock.Release(); }
-    }
-
-    /// <summary>
-    /// Requests a non-blocking background flush. Safe to call frequently.
-    /// </summary>
-    public void RequestFlush() => _flusher?.RequestFlush();
-
-    /// <summary>
-    /// Wipes every cache — the in-memory DNS/SMTP/HTTP probe caches, the
-    /// in-memory recheck summaries, all on-disk cache files, and (in distributed
-    /// mode) the shared Redis probe-cache L2. Subsequent validations re-fetch
-    /// everything from scratch (slower until re-warmed). In-memory is cleared
-    /// first, then the disk files are deleted under the flusher's lock: clearing
-    /// memory alone is not enough, because a flush that already sampled the caches
-    /// would write those pre-clear entries back after the delete. Other replicas'
-    /// in-memory L1 is not cleared remotely; those copies expire on their own TTL.
-    /// </summary>
-    public async Task ClearAllAsync()
-    {
-        _dns.ClearCache();
-        _smtp.ClearCache();
-        _http.ClearCache();
-        _previousResults.Clear();
-        if (_flusher != null)
-            await _flusher.ClearAsync();
-        else
-            await ClearDirectAsync();
-        // In distributed mode also wipe the shared probe-cache L2, otherwise the
-        // just-cleared local memory refills from stale Redis entries immediately.
-        // Jobs and coordination beacons use different prefixes and are left intact.
-        if (_redis != null)
-            await _redis.DeleteKeysByPrefixAsync("cache:");
     }
 
     /// <summary>
@@ -163,7 +121,7 @@ public sealed class CacheManager : IAsyncDisposable
 
         // _diskLock is deliberately not disposed. Nothing here ever touches its
         // AvailableWaitHandle, so there is no handle to release, and disposing it
-        // would turn a late FlushAsync/ClearAllAsync arriving during shutdown into
-        // an ObjectDisposedException instead of the harmless save it used to be.
+        // would turn a late FlushAsync arriving during shutdown into an
+        // ObjectDisposedException instead of the harmless save it used to be.
     }
 }

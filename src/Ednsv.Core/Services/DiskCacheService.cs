@@ -133,28 +133,6 @@ public class DiskCacheService
     }
 
     /// <summary>
-    /// Deletes every on-disk cache file (and any leftover .tmp) in the cache
-    /// directory. In-memory caches are cleared separately by the caller.
-    /// </summary>
-    public static void Clear(string cacheDir)
-    {
-        if (!Directory.Exists(cacheDir)) return;
-        foreach (var f in AllCacheFiles)
-        {
-            // Every instance's file, not just this one's — an admin cache-clear
-            // means the whole on-disk cache, however it is partitioned.
-            foreach (var path in EnumerateVariants(cacheDir, f).ToList())
-            {
-                try { File.Delete(path); } catch { /* best effort */ }
-                // Unconditional: callers hold the flusher lock, so no write is in flight.
-                AtomicFile.DeleteAllTemps(path);
-            }
-            // The base name may have no file yet but can still have stale temps.
-            AtomicFile.DeleteAllTemps(Path.Combine(cacheDir, f));
-        }
-    }
-
-    /// <summary>
     /// Saves current service caches to disk, merging with any existing entries.
     /// </summary>
     public static async Task SaveAsync(string cacheDir, SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns)
@@ -633,37 +611,6 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         {
             _lock.Release();
         }
-    }
-
-    /// <summary>
-    /// Deletes the on-disk cache files under the same lock the flush path uses.
-    /// A flush that sampled the in-memory caches before they were cleared is still
-    /// holding the lock while it writes, so waiting here guarantees the delete
-    /// lands after that write rather than before it — otherwise the clear would
-    /// appear to succeed and the stale entries would reappear on disk moments later.
-    /// Unlike <see cref="FlushAsync"/> this waits for the lock instead of skipping:
-    /// a clear that silently did nothing would be worse than a slow one.
-    /// </summary>
-    public async Task ClearAsync()
-    {
-        await _lock.WaitAsync();
-        try
-        {
-            DiskCacheService.Clear(_cacheDir);
-        }
-        finally
-        {
-            _lock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Triggers a non-blocking flush. Returns immediately; the flush runs in the background.
-    /// Safe to call frequently — skips if a flush is already in progress.
-    /// </summary>
-    public void RequestFlush()
-    {
-        _ = FlushInBackground();
     }
 
     public async ValueTask DisposeAsync()

@@ -520,14 +520,6 @@ public class SmtpProbeService
     }
 
     /// <summary>Evicts all cached SMTP probe/port/RCPT/relay results.</summary>
-    public void ClearCache()
-    {
-        _probeCache.Clear();
-        _portCache.Clear();
-        _rcptCache.Clear();
-        _relayCache.Clear();
-    }
-
     // ── Cache export/import for disk persistence ─────────────────────────
 
     /// <summary>Convert a probe result to its serialisable DTO (certs → base64).

@@ -256,7 +256,7 @@ var DomainPattern = new Regex(
 bool IsPlausibleDomain(string d) => !string.IsNullOrEmpty(d) && DomainPattern.IsMatch(d);
 
 // ── Cache manager ────────────────────────────────────────────────────────
-var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http, redis);
+var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────
@@ -997,7 +997,6 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
             "Validation completed: endpoint=sync durationSec={Duration:F2} pass={Pass} warning={Warning} error={Error} critical={Critical}",
             report.Duration.TotalSeconds, report.PassCount, report.WarningCount, report.ErrorCount, report.CriticalCount);
         _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
-        cache.RequestFlush();
         return Results.Ok(report);
     }
     catch (OperationCanceledException)
@@ -1021,30 +1020,6 @@ app.MapGet("/api/cache/stats", (DnsResolverService dnsSvc) =>
 .WithName("GetCacheStats")
 .WithTags("Cache");
 
-// POST /api/cache/flush
-app.MapPost("/api/cache/flush", async (HttpContext ctx, CacheManager cache) =>
-{
-    await cache.FlushAsync();
-    auditLogger.LogInformation("Cache flushed by={User}",
-        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
-    return Results.Ok(new { flushed = true });
-})
-.WithName("FlushCache")
-.WithTags("Cache");
-
-// POST /api/cache/clear — admin-only. Wipes ALL caches (in-memory DNS/SMTP/HTTP
-// probe caches + recheck summaries + on-disk cache files). Every probe is
-// re-fetched afterwards, so this degrades performance until caches re-warm.
-app.MapPost("/api/cache/clear", async (HttpContext ctx, AuthService auth, CacheManager cache) =>
-{
-    if (!RequireAdmin(ctx, auth, out var err)) return err!;
-    await cache.ClearAllAsync();
-    auditLogger.LogWarning("Cache CLEARED (memory + disk) by={User}",
-        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
-    return Results.Ok(new { cleared = true });
-})
-.WithName("ClearCache")
-.WithTags("Cache");
 
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories))
@@ -1812,7 +1787,6 @@ class ValidationTracker : IDisposable
                     dnsHits, dnsMisses);
 
                 _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
-                cache.RequestFlush();
             }
             catch (Exception ex)
             {
