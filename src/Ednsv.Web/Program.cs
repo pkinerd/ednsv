@@ -54,6 +54,9 @@ var cacheDir = Path.Combine(dataDir, "cache");
 var authDir = Path.Combine(dataDir, "auth");
 var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
 var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
+// Upper bound on the shutdown cache flush, so a slow mount cannot push the
+// process past its termination grace period.
+var shutdownFlushSeconds = builder.Configuration.GetValue<int>("CacheShutdownFlushSeconds", 5);
 
 // ── Distributed mode (opt-in) ─────────────────────────────────────────────
 // Redis is OPT-IN: unset connection string keeps the single-instance behaviour
@@ -483,6 +486,38 @@ if (cacheResult != null)
 
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
+
+// ── Graceful shutdown ────────────────────────────────────────────────────
+// These singletons are registered as pre-created instances, and the DI
+// container only disposes what it constructs itself — so nothing here is
+// disposed on shutdown unless we do it. Without this the final cache flush
+// never runs and everything gathered since the last periodic flush is lost on
+// every deploy.
+//
+// Best-effort and time-gated: a slow or wedged mount must not hold the process
+// past its termination grace period. If the flush overruns we abandon the wait
+// and let the process exit; the cache is disposable by design.
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    var budget = TimeSpan.FromSeconds(shutdownFlushSeconds);
+    try
+    {
+        var flush = Task.Run(async () => await cacheManager.DisposeAsync());
+        if (flush.Wait(budget))
+            app.Logger.LogInformation("Cache flushed on shutdown.");
+        else
+            app.Logger.LogWarning(
+                "Shutdown cache flush did not finish within {Budget}s; abandoning it so termination is not delayed.",
+                budget.TotalSeconds);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Shutdown cache flush failed.");
+    }
+
+    try { validationTracker.Dispose(); } catch { /* best effort */ }
+    try { redis.Dispose(); } catch { /* best effort */ }
+});
 
 // Fail closed: an instance with NO auth method enabled (no token hash, no
 // OIDC SSO, no JWT bearer) may only run when it is bound to loopback
