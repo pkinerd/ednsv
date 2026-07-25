@@ -61,6 +61,11 @@ public sealed class AuthService
     // rewritten whole, and the beacon CAS releases before that write lands, so two
     // saves could interleave and one could silently drop the other's change — for
     // a revoke, that means a token staying live.
+    // How long a beacon read is reused by the authentication path. Bounds how
+    // stale a peer's revocation can be here; zero means check every request.
+    private readonly TimeSpan _freshnessWindow;
+    private long _lastFreshCheckTicks;
+
     private const string WriteLockName = "users:write";
     private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
@@ -87,11 +92,13 @@ public sealed class AuthService
 
     public bool Disabled => _rootHash == null;
 
-    public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null)
+    public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null,
+        TimeSpan? freshnessWindow = null)
     {
         _authDir = authDir;
         _filePath = Path.Combine(authDir, "users.json");
         _redis = redis != null && redis.Enabled ? redis : null;
+        _freshnessWindow = freshnessWindow ?? TimeSpan.FromSeconds(1);
 
         if (string.IsNullOrWhiteSpace(rootTokenHash) ||
             rootTokenHash.Equals(DisabledMarker, StringComparison.OrdinalIgnoreCase))
@@ -157,7 +164,72 @@ public sealed class AuthService
 
     private const int MaxWriteAttempts = 5;
 
-    /// <summary>Reload users.json if another pod advanced the beacon. Must hold _lock.</summary>
+    /// <summary>
+    /// Freshness check for READ paths (authentication, listing). Must be called
+    /// WITHOUT <c>_lock</c> held.
+    ///
+    /// Two things keep authentication off the network. First, the beacon is read
+    /// at most once per <see cref="_freshnessWindow"/> — every authenticated
+    /// request runs this, and a round-trip each time is not affordable. Second,
+    /// the read happens outside <c>_lock</c>, which is taken only for the
+    /// in-memory comparison and any reload: holding it across a blocking Redis
+    /// call serialises every concurrent authentication behind that call, and
+    /// under load the resulting convoy is orders of magnitude worse than the
+    /// round-trip itself.
+    ///
+    /// The cost is propagation delay: a revocation on another instance becomes
+    /// visible here within the window rather than on the very next request. Set
+    /// the window to zero to check every time.
+    /// </summary>
+    private void EnsureFresh()
+    {
+        if (_redis == null) return;
+        if (!DueForFreshnessCheck()) return;
+
+        var db = _redis.GetDatabase();
+        if (db == null) return; // Redis down — keep serving the last-known local copy.
+        var beacon = _redis.Key(BeaconSuffix);
+
+        RedisValue v;
+        try { v = db.StringGet(beacon); }
+        catch { return; }
+
+        if (v.IsNullOrEmpty)
+        {
+            string head;
+            lock (_lock) head = _headGuid;
+            try { db.StringSet(beacon, head, when: When.NotExists); } catch { /* best effort */ }
+            return;
+        }
+
+        string remote = v!;
+        lock (_lock)
+        {
+            if (remote == _headGuid) return;
+            ReloadUsersFromDiskLocked();
+            _headGuid = remote;
+        }
+    }
+
+    /// <summary>True at most once per freshness window. Racing callers may both
+    /// pass, which only costs a duplicate read of the same key.</summary>
+    private bool DueForFreshnessCheck()
+    {
+        if (_freshnessWindow <= TimeSpan.Zero) return true;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastFreshCheckTicks) < (long)_freshnessWindow.TotalMilliseconds)
+            return false;
+        Interlocked.Exchange(ref _lastFreshCheckTicks, now);
+        return true;
+    }
+
+    /// <summary>Records that local state is known-current, so read paths don't
+    /// immediately re-read a beacon this instance just set.</summary>
+    private void MarkFresh() => Interlocked.Exchange(ref _lastFreshCheckTicks, Environment.TickCount64);
+
+    /// <summary>Unconditional freshness check for WRITE paths, which must see the
+    /// true state before mutating and are rare enough to afford the round-trip
+    /// under the lock. Must hold _lock.</summary>
     private void EnsureFreshLocked()
     {
         if (_redis == null) return;
@@ -167,6 +239,7 @@ public sealed class AuthService
         RedisValue v;
         try { v = db.StringGet(beacon); }
         catch { return; }
+        MarkFresh();
         if (v.IsNullOrEmpty)
         {
             try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
@@ -264,9 +337,9 @@ public sealed class AuthService
             return ConstantTimeEquals(presented, _rootHash!) ? RootUser() : null;
         }
 
+        EnsureFresh(); // outside the lock: never block other auth checks on Redis
         lock (_lock)
         {
-            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (!u.Username.Equals(username, StringComparison.OrdinalIgnoreCase)) continue;
@@ -287,9 +360,9 @@ public sealed class AuthService
         // Compare against root first
         if (ConstantTimeEquals(presented, _rootHash!)) return RootUser();
 
+        EnsureFresh(); // outside the lock: never block other auth checks on Redis
         lock (_lock)
         {
-            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (u.Revoked) continue;
@@ -449,9 +522,9 @@ public sealed class AuthService
     public IReadOnlyList<User> ListVisibleTo(string requestedBy)
     {
         if (Disabled) return Array.Empty<User>();
+        EnsureFresh();
         lock (_lock)
         {
-            EnsureFreshLocked();
             if (requestedBy.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
                 return _users.Select(Clone).ToList();
             return GetDescendantsLocked(requestedBy).Select(Clone).ToList();

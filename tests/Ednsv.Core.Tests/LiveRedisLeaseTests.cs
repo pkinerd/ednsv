@@ -177,4 +177,96 @@ public sealed class LiveRedisLeaseTests
             try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
         }
     }
+
+    // ── Read paths must stay off the network ─────────────────────────────
+
+    [Fact]
+    public void ConcurrentAuthenticationIsNotSerialisedBehindRedis()
+    {
+        if (!Ready()) return;
+        var dir = TempDir();
+        var ns = FreshNamespace();
+
+        try
+        {
+            var auth = new AuthService(dir, AuthService.Hash("root"), Connect(ns));
+            auth.Load();
+            var token = auth.Issue("alice", isAdmin: false, "ednsv", null).Token!;
+
+            const int checks = 300;
+            var started = DateTime.UtcNow;
+            Parallel.For(0, checks, _ => Assert.NotNull(auth.AuthenticateBearer(token)));
+            var elapsed = DateTime.UtcNow - started;
+
+            // A beacon read per authentication, taken while holding the users
+            // lock, convoys every concurrent request behind it — this same loop
+            // measured over a hundred seconds before the read moved off the lock
+            // and behind the freshness window. The bound is deliberately loose;
+            // it is guarding against the collapse, not asserting a latency.
+            Assert.True(elapsed < TimeSpan.FromSeconds(10),
+                $"{checks} concurrent authentications took {elapsed.TotalSeconds:F1}s — read path is blocking on Redis");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public void RevocationOnAnotherInstanceLandsWithinTheFreshnessWindow()
+    {
+        if (!Ready()) return;
+        var dir = TempDir();
+        var ns = FreshNamespace();
+        var window = TimeSpan.FromMilliseconds(300);
+
+        try
+        {
+            var issuer = new AuthService(dir, AuthService.Hash("root"), Connect(ns), window);
+            issuer.Load();
+            var token = issuer.Issue("alice", isAdmin: false, "ednsv", null).Token!;
+
+            var peer = new AuthService(dir, AuthService.Hash("root"), Connect(ns), window);
+            peer.Load();
+            Assert.NotNull(peer.AuthenticateBearer(token));
+
+            issuer.Revoke("alice", "ednsv");
+
+            // The cost of not reading the beacon per request: the peer may serve a
+            // cached answer for up to one window, then must reject.
+            Thread.Sleep(window + TimeSpan.FromMilliseconds(400));
+            Assert.Null(peer.AuthenticateBearer(token));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
+    public void ZeroFreshnessWindowPropagatesRevocationImmediately()
+    {
+        if (!Ready()) return;
+        var dir = TempDir();
+        var ns = FreshNamespace();
+
+        try
+        {
+            // For deployments that will not accept any revocation lag.
+            var issuer = new AuthService(dir, AuthService.Hash("root"), Connect(ns), TimeSpan.Zero);
+            issuer.Load();
+            var token = issuer.Issue("alice", isAdmin: false, "ednsv", null).Token!;
+
+            var peer = new AuthService(dir, AuthService.Hash("root"), Connect(ns), TimeSpan.Zero);
+            peer.Load();
+            Assert.NotNull(peer.AuthenticateBearer(token));
+
+            issuer.Revoke("alice", "ednsv");
+            Assert.Null(peer.AuthenticateBearer(token));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
 }

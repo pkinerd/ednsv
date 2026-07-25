@@ -64,6 +64,11 @@ var redisConnString = builder.Configuration.GetValue<string>("Redis:ConnectionSt
 var redisInstanceName = builder.Configuration.GetValue<string>("Redis:InstanceName") ?? "ednsv";
 var redisAccessKey = builder.Configuration.GetValue<string>("Redis:AccessKey");
 var jobRetentionMinutes = builder.Configuration.GetValue<int>("JobRetentionMinutes", 5);
+// How long a config/users beacon read is reused by read paths. These run on the
+// hot path of every request, so a Redis round-trip per read is not affordable.
+// Bounds how stale a peer's config change or token revocation can be. 0 = always check.
+var freshnessWindow = TimeSpan.FromMilliseconds(
+    builder.Configuration.GetValue<int>("Redis:FreshnessCheckMs", 1000));
 var redis = new RedisConnection(redisConnString, redisInstanceName, redisAccessKey);
 builder.Services.AddSingleton(redis);
 
@@ -177,7 +182,7 @@ string? Disp(string? value) =>
 // On first run, seed from env vars + DkimSelectorsCheck.CommonSelectors so an
 // out-of-the-box install matches built-in behavior. After that the file is the
 // source of truth and admins edit it via the web UI.
-var configService = new ConfigService(dataDir, redis);
+var configService = new ConfigService(dataDir, redis, freshnessWindow);
 var seedConfig = new AppConfig
 {
     EnableSmtpProbes = defaultEnableSmtpProbes,
@@ -252,7 +257,7 @@ var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours),
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────
-var authService = new AuthService(authDir, authTokenHash, redis);
+var authService = new AuthService(authDir, authTokenHash, redis, freshnessWindow);
 authService.Load();
 builder.Services.AddSingleton(authService);
 

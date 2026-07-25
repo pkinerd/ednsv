@@ -198,12 +198,18 @@ public sealed class ConfigService
     // Serialises the config read-modify-write across instances. The TTL bounds
     // how long a writer that dies mid-save can block others; the wait bounds how
     // long a save blocks before reporting 503 rather than hanging the request.
+    // How long a beacon read is reused by config reads. Bounds how stale another
+    // instance's config change can be here; zero means check on every read.
+    private readonly TimeSpan _freshnessWindow;
+    private long _lastFreshCheckTicks;
+
     private const string WriteLockName = "config:write";
     private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
 
-    public ConfigService(string dataDir, RedisConnection? redis = null)
+    public ConfigService(string dataDir, RedisConnection? redis = null, TimeSpan? freshnessWindow = null)
     {
+        _freshnessWindow = freshnessWindow ?? TimeSpan.FromSeconds(1);
         _dataDir = dataDir;
         _filePath = Path.Combine(dataDir, "config.json");
         _historyIndexPath = Path.Combine(dataDir, "config-history.json");
@@ -388,8 +394,9 @@ public sealed class ConfigService
             // Adopt the cluster's current head (and history / next-id) before
             // writing. Inside the lease this is now meaningful: the previous
             // writer finished its files before releasing, so the beacon and the
-            // durable state agree.
-            EnsureFresh();
+            // durable state agree. Forced past the freshness window — a writer
+            // must rebase on the true head, not one up to a window old.
+            EnsureFresh(force: true);
             var db = _redis.GetDatabase();
             if (db == null)
                 throw new StoreUnavailableException("Redis is unreachable; refusing to persist config to avoid divergence across pods.");
@@ -563,18 +570,41 @@ public sealed class ConfigService
 
     // ── Distributed coordination (beacon) ────────────────────────────────
 
+    /// <summary>True at most once per freshness window. Snapshot() runs on the hot
+    /// path of every config-consuming request, so the beacon is read at most once
+    /// per window rather than once per read; the cost is that another instance's
+    /// change becomes visible within the window instead of on the next read.
+    /// Racing callers may both pass, which only costs a duplicate read.</summary>
+    private bool DueForFreshnessCheck()
+    {
+        if (_freshnessWindow <= TimeSpan.Zero) return true;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastFreshCheckTicks) < (long)_freshnessWindow.TotalMilliseconds)
+            return false;
+        Interlocked.Exchange(ref _lastFreshCheckTicks, now);
+        return true;
+    }
+
+    private void MarkFresh() => Interlocked.Exchange(ref _lastFreshCheckTicks, Environment.TickCount64);
+
     /// <summary>On-demand staleness check: if another pod advanced the beacon,
     /// reload the shared config file and history so this pod serves current data.
     /// No-op in single-instance mode or when Redis is unreachable (serves local).</summary>
-    public void EnsureFresh()
+    /// <param name="force">Bypass the freshness window. Writers pass true — they
+    /// must see the true head before rebasing — while reads accept a value up to
+    /// one window old.</param>
+    public void EnsureFresh(bool force = false)
     {
         if (_redis == null) return;
+        if (!force && !DueForFreshnessCheck()) return;
+
         var db = _redis.GetDatabase();
         if (db == null) return; // Redis down — keep serving the last-known local copy.
         var beacon = _redis.Key(BeaconSuffix);
         RedisValue v;
         try { v = db.StringGet(beacon); }
         catch { return; }
+        MarkFresh();
         if (v.IsNullOrEmpty)
         {
             // Beacon absent (never set or flushed): publish our head so peers converge.
