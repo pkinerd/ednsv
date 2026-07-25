@@ -132,6 +132,14 @@ public sealed class StoreUnavailableException : Exception
     public StoreUnavailableException(string message) : base(message) { }
 }
 
+/// <summary>Thrown at startup when config.json exists but cannot be read or parsed.
+/// Deliberately fatal: seeding defaults over a config that is merely unreadable
+/// right now would overwrite the operator's saved settings.</summary>
+public sealed class ConfigUnreadableException : Exception
+{
+    public ConfigUnreadableException(string message, Exception? inner = null) : base(message, inner) { }
+}
+
 public sealed class ConfigService
 {
     private static readonly JsonSerializerOptions JsonOpts = new()
@@ -194,36 +202,62 @@ public sealed class ConfigService
     /// Loads config.json if it exists, otherwise initializes from <paramref name="seed"/>
     /// (typically env-var defaults) and writes the seeded file. Returns the active config.
     /// </summary>
+    /// <exception cref="ConfigUnreadableException">config.json exists but could not be
+    /// read or parsed. Seeding is deliberately NOT attempted in that case: the seed
+    /// path writes to disk, so treating a transient read failure — a flaky shared
+    /// mount, a sharing violation, an I/O error — as "no config yet" would replace
+    /// the operator's saved settings with env-var defaults and record that as a
+    /// revision. Failing startup keeps the file intact and surfaces the problem.</exception>
     public AppConfig LoadOrSeed(AppConfig seed)
     {
         LoadHistory();
+        AtomicFile.SweepStaleTemps(_filePath);
+        AtomicFile.SweepStaleTemps(_historyIndexPath);
 
         if (File.Exists(_filePath))
         {
+            string json;
             try
             {
-                var json = File.ReadAllText(_filePath);
-                if (!string.IsNullOrWhiteSpace(json))
-                {
-                    var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
-                    if (parsed != null)
-                    {
-                        // Normalize keys: lowercase, trim trailing dot
-                        parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
-                        parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
-                        lock (_lock)
-                        {
-                            _current = parsed;
-                            SeedBaselineRevisionLocked();
-                            InitBeaconLocked();
-                        }
-                        return Snapshot();
-                    }
-                }
+                json = File.ReadAllText(_filePath);
             }
-            catch
+            catch (Exception ex)
             {
-                // Fall through to seeding if file is unreadable / malformed.
+                throw new ConfigUnreadableException(
+                    $"Could not read {_filePath}: {ex.Message}. Refusing to start rather than " +
+                    "overwrite the existing configuration with defaults.", ex);
+            }
+
+            // An empty file carries nothing to lose, so it still seeds. Anything
+            // non-empty that fails to parse is real content we must not clobber.
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                AppConfig? parsed;
+                try
+                {
+                    parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+                }
+                catch (Exception ex)
+                {
+                    throw new ConfigUnreadableException(
+                        $"{_filePath} is not valid configuration JSON: {ex.Message}. Refusing to " +
+                        "start rather than overwrite it with defaults. Fix or remove the file.", ex);
+                }
+                if (parsed == null)
+                    throw new ConfigUnreadableException(
+                        $"{_filePath} parsed to no configuration. Refusing to start rather than " +
+                        "overwrite it with defaults. Fix or remove the file.");
+
+                // Normalize keys: lowercase, trim trailing dot
+                parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
+                lock (_lock)
+                {
+                    _current = parsed;
+                    SeedBaselineRevisionLocked();
+                    InitBeaconLocked();
+                }
+                return Snapshot();
             }
         }
 
@@ -444,9 +478,7 @@ public sealed class ConfigService
     {
         Directory.CreateDirectory(_dataDir);
         var json = JsonSerializer.Serialize(_current, JsonOpts);
-        var tmp = _filePath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _filePath, overwrite: true);
+        AtomicFile.WriteAllText(_filePath, json);
     }
 
     // ── Revision history ──────────────────────────────────────────────────
@@ -503,10 +535,7 @@ public sealed class ConfigService
     {
         Directory.CreateDirectory(_historyDir);
         var json = JsonSerializer.Serialize(config, JsonOpts);
-        var path = RevisionPath(id);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, path, overwrite: true);
+        AtomicFile.WriteAllText(RevisionPath(id), json);
     }
 
     private void TryDeleteRevisionBody(int id)
@@ -519,9 +548,7 @@ public sealed class ConfigService
         Directory.CreateDirectory(_dataDir);
         var index = new HistoryIndex { NextId = _nextRevisionId, Revisions = _history };
         var json = JsonSerializer.Serialize(index, JsonOpts);
-        var tmp = _historyIndexPath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _historyIndexPath, overwrite: true);
+        AtomicFile.WriteAllText(_historyIndexPath, json);
     }
 
     private static AppConfig CloneConfig(AppConfig c) => new()

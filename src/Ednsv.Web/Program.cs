@@ -190,7 +190,18 @@ var seedConfig = new AppConfig
             .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
         : DkimSelectorsCheck.CommonSelectors.ToList()
 };
-configService.LoadOrSeed(seedConfig);
+try
+{
+    configService.LoadOrSeed(seedConfig);
+}
+catch (ConfigUnreadableException ex)
+{
+    // Fail closed. Starting anyway would mean seeding env-var defaults over a
+    // config.json that may be perfectly good and merely unreadable this second,
+    // silently discarding the operator's settings.
+    Console.Error.WriteLine($"FATAL: {ex.Message}");
+    throw;
+}
 builder.Services.AddSingleton(configService);
 
 // Default validation options track the live config snapshot. Endpoints that

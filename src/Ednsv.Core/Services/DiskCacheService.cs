@@ -50,7 +50,8 @@ public class DiskCacheService
         {
             var path = Path.Combine(cacheDir, f);
             try { File.Delete(path); } catch { /* best effort */ }
-            try { File.Delete(path + ".tmp"); } catch { /* best effort */ }
+            // Unconditional: callers hold the flusher lock, so no write is in flight.
+            AtomicFile.DeleteAllTemps(path);
         }
     }
 
@@ -95,6 +96,11 @@ public class DiskCacheService
     {
         if (!Directory.Exists(cacheDir))
             return null;
+
+        // Clear out scratch files orphaned by a killed process. Age-gated, so a
+        // temp belonging to a write that is in flight right now is left alone.
+        foreach (var f in AllCacheFiles)
+            AtomicFile.SweepStaleTemps(Path.Combine(cacheDir, f));
 
         var cutoff = DateTime.UtcNow - ttl;
 
@@ -235,9 +241,7 @@ public class DiskCacheService
         }
 
         var output = JsonSerializer.Serialize(merged, JsonOptions);
-        var tmp = path + ".tmp";
-        await File.WriteAllTextAsync(tmp, output);
-        File.Move(tmp, path, overwrite: true);
+        await AtomicFile.WriteAllTextAsync(path, output);
     }
 
     /// <summary>
@@ -313,9 +317,7 @@ public class DiskCacheService
             merged[domain.ToLowerInvariant()] = summary;
 
             var output = JsonSerializer.Serialize(merged, JsonOptions);
-            var tmp = path + ".tmp";
-            await File.WriteAllTextAsync(tmp, output);
-            File.Move(tmp, path, overwrite: true);
+            await AtomicFile.WriteAllTextAsync(path, output);
         }
         finally
         {
@@ -492,6 +494,28 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         try
         {
             await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Deletes the on-disk cache files under the same lock the flush path uses.
+    /// A flush that sampled the in-memory caches before they were cleared is still
+    /// holding the lock while it writes, so waiting here guarantees the delete
+    /// lands after that write rather than before it — otherwise the clear would
+    /// appear to succeed and the stale entries would reappear on disk moments later.
+    /// Unlike <see cref="FlushAsync"/> this waits for the lock instead of skipping:
+    /// a clear that silently did nothing would be worse than a slow one.
+    /// </summary>
+    public async Task ClearAsync()
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            DiskCacheService.Clear(_cacheDir);
         }
         finally
         {

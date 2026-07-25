@@ -13,15 +13,19 @@ public sealed class DiskCacheClearTests
         {
             File.WriteAllText(Path.Combine(dir, "dns-queries.json"), "{}");
             File.WriteAllText(Path.Combine(dir, "domain-results.json"), "{}");
-            File.WriteAllText(Path.Combine(dir, "http-get.json.tmp"), "{}"); // leftover temp
+            File.WriteAllText(Path.Combine(dir, "http-get.json.tmp"), "{}"); // legacy fixed-name temp
+            File.WriteAllText(Path.Combine(dir, "http-get.json.a1b2c3d4.tmp"), "{}"); // unique-name temp
             File.WriteAllText(Path.Combine(dir, "unrelated.txt"), "keep me");
+            File.WriteAllText(Path.Combine(dir, "unrelated.json.deadbeef.tmp"), "keep me too");
 
             DiskCacheService.Clear(dir);
 
             Assert.False(File.Exists(Path.Combine(dir, "dns-queries.json")));
             Assert.False(File.Exists(Path.Combine(dir, "domain-results.json")));
             Assert.False(File.Exists(Path.Combine(dir, "http-get.json.tmp")));
+            Assert.False(File.Exists(Path.Combine(dir, "http-get.json.a1b2c3d4.tmp")));
             Assert.True(File.Exists(Path.Combine(dir, "unrelated.txt"))); // only cache files removed
+            Assert.True(File.Exists(Path.Combine(dir, "unrelated.json.deadbeef.tmp")));
         }
         finally
         {

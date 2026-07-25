@@ -22,6 +22,9 @@ public sealed class CacheManager : IAsyncDisposable
     private ConcurrentDictionary<string, DomainResultSummary> _previousResults = new();
     private bool _disposed;
 
+    // Serialises direct disk access on the no-flusher path (see SaveDirectAsync).
+    private readonly SemaphoreSlim _diskLock = new(1, 1);
+
     public CacheManager(
         string cacheDir,
         TimeSpan ttl,
@@ -66,7 +69,25 @@ public sealed class CacheManager : IAsyncDisposable
     /// </summary>
     public Task FlushAsync() => _flusher != null
         ? _flusher.FlushAsync()
-        : DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns);
+        : SaveDirectAsync();
+
+    // Without a background flusher (CLI single-shot runs) there is no shared lock
+    // to route through, so serialise here instead: MergeSaveAsync is a
+    // read-modify-write per cache file, and two interleaved saves drop whichever
+    // entries the loser had merged in.
+    private async Task SaveDirectAsync()
+    {
+        await _diskLock.WaitAsync();
+        try { await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns); }
+        finally { _diskLock.Release(); }
+    }
+
+    private async Task ClearDirectAsync()
+    {
+        await _diskLock.WaitAsync();
+        try { DiskCacheService.Clear(_cacheDir); }
+        finally { _diskLock.Release(); }
+    }
 
     /// <summary>
     /// Requests a non-blocking background flush. Safe to call frequently.
@@ -78,9 +99,10 @@ public sealed class CacheManager : IAsyncDisposable
     /// in-memory recheck summaries, all on-disk cache files, and (in distributed
     /// mode) the shared Redis probe-cache L2. Subsequent validations re-fetch
     /// everything from scratch (slower until re-warmed). In-memory is cleared
-    /// before disk so a concurrent flush can only ever re-persist an already-empty
-    /// cache. Other replicas' in-memory L1 is not cleared remotely; those copies
-    /// expire on their own TTL.
+    /// first, then the disk files are deleted under the flusher's lock: clearing
+    /// memory alone is not enough, because a flush that already sampled the caches
+    /// would write those pre-clear entries back after the delete. Other replicas'
+    /// in-memory L1 is not cleared remotely; those copies expire on their own TTL.
     /// </summary>
     public async Task ClearAllAsync()
     {
@@ -88,7 +110,10 @@ public sealed class CacheManager : IAsyncDisposable
         _smtp.ClearCache();
         _http.ClearCache();
         _previousResults.Clear();
-        DiskCacheService.Clear(_cacheDir);
+        if (_flusher != null)
+            await _flusher.ClearAsync();
+        else
+            await ClearDirectAsync();
         // In distributed mode also wipe the shared probe-cache L2, otherwise the
         // just-cleared local memory refills from stale Redis entries immediately.
         // Jobs and coordination beacons use different prefixes and are left intact.
@@ -135,5 +160,7 @@ public sealed class CacheManager : IAsyncDisposable
             await _flusher.DisposeAsync();
         else
             await FlushAsync(); // final save even without a flusher
+
+        _diskLock.Dispose();
     }
 }

@@ -18,6 +18,76 @@ public sealed class ConfigServiceTests : IDisposable
 
     private static AppConfig Seed() => new() { EnableSmtpProbes = true, KnownDomains = new() { "example.com" } };
 
+    // ── Guarding an existing config.json against the seed path ──────────────
+    // LoadOrSeed's seed branch writes to disk. Treating an unreadable file as
+    // "no config yet" would replace the operator's saved settings with env-var
+    // defaults, so anything that exists and has content must abort startup instead.
+
+    [Fact]
+    public void LoadOrSeed_MalformedConfigThrowsAndLeavesFileIntact()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "config.json");
+        const string original = "{ this is not valid json";
+        File.WriteAllText(path, original);
+
+        var svc = new ConfigService(_dir);
+        Assert.Throws<ConfigUnreadableException>(() => svc.LoadOrSeed(Seed()));
+        Assert.Equal(original, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void LoadOrSeed_ConfigParsingToNullThrowsAndLeavesFileIntact()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "config.json");
+        File.WriteAllText(path, "null");
+
+        var svc = new ConfigService(_dir);
+        Assert.Throws<ConfigUnreadableException>(() => svc.LoadOrSeed(Seed()));
+        Assert.Equal("null", File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void LoadOrSeed_EmptyConfigStillSeeds()
+    {
+        // Nothing to lose in a zero-byte file, so this keeps the self-healing path.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "config.json"), "   ");
+
+        var svc = new ConfigService(_dir);
+        var cfg = svc.LoadOrSeed(Seed());
+
+        Assert.True(cfg.EnableSmtpProbes);
+        Assert.Contains("example.com", cfg.KnownDomains);
+    }
+
+    [Fact]
+    public void LoadOrSeed_ValidConfigIsPreferredOverSeed()
+    {
+        var first = new ConfigService(_dir);
+        first.LoadOrSeed(Seed());
+        first.Replace(new AppConfig { EnableSmtpProbes = false }, "alice@contoso.com");
+
+        var reopened = new ConfigService(_dir);
+        var cfg = reopened.LoadOrSeed(Seed());
+
+        Assert.False(cfg.EnableSmtpProbes); // saved value wins, seed is ignored
+    }
+
+    [Fact]
+    public void LoadOrSeed_SweepsStaleTempFiles()
+    {
+        Directory.CreateDirectory(_dir);
+        var stale = Path.Combine(_dir, "config.json.deadbeef.tmp");
+        File.WriteAllText(stale, "orphaned by a killed writer");
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-2));
+
+        new ConfigService(_dir).LoadOrSeed(Seed());
+
+        Assert.False(File.Exists(stale));
+    }
+
     [Fact]
     public void SeedsBaselineRevisionOnFirstLoad()
     {

@@ -79,6 +79,7 @@ public sealed class AuthService
     public void Load()
     {
         if (Disabled) return;
+        AtomicFile.SweepStaleTemps(_filePath);
         InitBeacon(); // publish/adopt the cluster head before reading the file
         if (!File.Exists(_filePath)) return;
 
@@ -121,9 +122,7 @@ public sealed class AuthService
         Directory.CreateDirectory(_authDir);
         var file = new UsersFile { Users = _users };
         var json = JsonSerializer.Serialize(file, JsonOpts);
-        var tmp = _filePath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _filePath, overwrite: true);
+        AtomicFile.WriteAllText(_filePath, json);
     }
 
     // ── Distributed coordination (beacon) ────────────────────────────────
