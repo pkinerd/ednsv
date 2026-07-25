@@ -86,12 +86,12 @@ public class ProbeCache<TValue> where TValue : class
     private readonly TimeSpan? _ttl;
     // Optional shared L2 (Redis). Null in single-instance mode.
     private readonly ProbeCacheL2<TValue>? _l2;
-    // Write-through log for disk export — never read during cache lookups.
-    // Each entry carries the time its value was obtained (a fresh network fetch
-    // stamps DateTime.UtcNow via Set; an entry loaded from disk keeps its original
-    // disk timestamp via the Import overload) so disk persistence can age entries
-    // from when they were actually fetched, not from first-ever cache or save time.
-    private readonly ConcurrentDictionary<string, (TValue Value, DateTime CachedAtUtc)> _exportLog = new();
+    // Results this process fetched fresh and has not yet written to disk. Never
+    // read during cache lookups. Entries imported from disk and values read from
+    // the shared Redis L2 deliberately do NOT land here — they are already
+    // persisted, and re-persisting them is what made every flush rewrite the whole
+    // cache. A flush drains this and removes exactly what it wrote.
+    private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
     // In-flight query deduplication — concurrent callers for the same key share one Task.
     // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
     // factory on multiple threads, only one Lazy is stored and only its .Value (which
@@ -201,15 +201,17 @@ public class ProbeCache<TValue> where TValue : class
                 if (l2v != null)
                 {
                     Trace?.Invoke($"[CACHE] L2 HIT {key}");
-                    Set(key, l2v);
+                    // Memory only: another instance fetched and persisted this, so
+                    // writing it out again would duplicate their work on our disk.
+                    SetMemoryOnly(key, l2v);
                     return l2v;
                 }
             }
 
             var result = await factory();
             // Always cache in MemoryCache (avoids repeated network calls within a run).
-            // Only add to _exportLog / L2 when shouldPersist approves (transient
-            // errors stay L1-only and never poison disk or the shared L2).
+            // Only queue for persistence / push to L2 when shouldPersist approves
+            // (transient errors stay L1-only and never poison disk or the shared L2).
             if (shouldPersist == null || shouldPersist(result))
             {
                 Set(key, result);
@@ -225,8 +227,8 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a value in MemoryCache and the disk export log, stamping it
-    /// with the current time (a fresh fetch).</summary>
+    /// <summary>Store a freshly fetched value in MemoryCache and queue it for
+    /// persistence.</summary>
     public void Set(string key, TValue value)
     {
         if (_ttl.HasValue)
@@ -234,13 +236,16 @@ public class ProbeCache<TValue> where TValue : class
         else
             _cache.Set(key, value);
 
-        _exportLog[key] = (value, DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
     }
 
     /// <summary>
-    /// Store a value in MemoryCache only — NOT added to the disk export log.
-    /// Used for error/timeout results that should be available within the current
-    /// process (avoiding repeated network calls) but not persisted across restarts.
+    /// Store a value in MemoryCache only, without queueing it for persistence.
+    /// Used for three cases that must not be written back: transient errors that
+    /// should not outlive the process, values read from the shared Redis L2 (another
+    /// instance already persisted them), and entries imported from disk (they are
+    /// on disk by definition).
     /// </summary>
     private void SetMemoryOnly(string key, TValue value)
     {
@@ -250,47 +255,43 @@ public class ProbeCache<TValue> where TValue : class
             _cache.Set(key, value);
     }
 
-    /// <summary>Import an entry from disk, stamping it with the current time.
-    /// Prefer the overload that preserves the original fetch timestamp.</summary>
+    /// <summary>Import an entry read from disk into MemoryCache. It is not queued
+    /// for persistence: it came from disk, so writing it back is the redundancy this
+    /// design exists to remove.</summary>
     public void Import(string key, TValue value)
     {
-        Set(key, value);
+        SetMemoryOnly(key, value);
     }
 
-    /// <summary>Import an entry from disk, preserving its original fetch timestamp
-    /// so per-entry TTL continues to age from when the value was fetched.</summary>
+    /// <summary>Import an entry read from disk, carrying its original fetch time.
+    /// Same rule as the other overload — MemoryCache only, never the bag.</summary>
     public void Import(string key, TValue value, DateTime cachedAtUtc)
     {
-        if (_ttl.HasValue)
-            _cache.Set(key, value, _ttl.Value);
-        else
-            _cache.Set(key, value);
-
-        _exportLog[key] = (value, cachedAtUtc);
+        _ = cachedAtUtc; // the on-disk record already carries it
+        SetMemoryOnly(key, value);
     }
 
-    /// <summary>Export all entries that are still alive in MemoryCache.</summary>
+    /// <summary>Values awaiting persistence that are still live in MemoryCache.</summary>
     public Dictionary<string, TValue> Export()
     {
         var result = new Dictionary<string, TValue>();
-        foreach (var kvp in _exportLog)
+        foreach (var kvp in _bag)
         {
-            // Only export entries still alive in MemoryCache (not expired)
             if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
                 result[kvp.Key] = val;
         }
         return result;
     }
 
-    /// <summary>Export live entries together with the time each value was fetched,
-    /// so disk persistence can age entries from their real fetch time.</summary>
+    /// <summary>Values awaiting persistence with the time each was fetched, so disk
+    /// records age from the real fetch rather than from when they were written.</summary>
     public Dictionary<string, (TValue Value, DateTime CachedAtUtc)> ExportTimed()
     {
         var result = new Dictionary<string, (TValue, DateTime)>();
-        foreach (var kvp in _exportLog)
+        foreach (var kvp in _bag)
         {
             if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
-                result[kvp.Key] = (val, kvp.Value.CachedAtUtc);
+                result[kvp.Key] = (val, kvp.Value.WrittenUtc);
         }
         return result;
     }
@@ -298,17 +299,20 @@ public class ProbeCache<TValue> where TValue : class
     /// <summary>Remove entries matching a predicate.</summary>
     public void Remove(Func<string, bool> predicate)
     {
-        foreach (var key in _exportLog.Keys)
+        foreach (var key in _bag.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
-                _exportLog.TryRemove(key, out _);
+                _bag.TryRemove(key, out _);
             }
         }
     }
 
-    public int Count => _exportLog.Count;
+    /// <summary>Live entries held in memory. Reported as the cache size, so it
+    /// tracks what is actually cached rather than what is queued for writing —
+    /// the bag is usually near-empty just after a flush.</summary>
+    public int Count => _cache.Count;
 }
 
 /// <summary>
@@ -319,7 +323,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
 {
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
-    private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
+    // See ProbeCache<T>._bag — values this process fetched and has yet to persist.
+    private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
     /// <summary>
@@ -416,7 +421,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
         else
             _cache.Set(key, box);
 
-        _exportLog[key] = value;
+        var now = DateTime.UtcNow;
+        _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
     }
 
     private void SetMemoryOnly(string key, TValue value)
@@ -428,15 +434,16 @@ public class ProbeCacheValue<TValue> where TValue : struct
             _cache.Set(key, box);
     }
 
+    /// <summary>Import from disk into MemoryCache only — never the bag.</summary>
     public void Import(string key, TValue value)
     {
-        Set(key, value);
+        SetMemoryOnly(key, value);
     }
 
     public Dictionary<string, TValue> Export()
     {
         var result = new Dictionary<string, TValue>();
-        foreach (var kvp in _exportLog)
+        foreach (var kvp in _bag)
         {
             if (_cache.TryGetValue(kvp.Key, out Box? box) && box != null)
                 result[kvp.Key] = box.Value;
@@ -446,15 +453,16 @@ public class ProbeCacheValue<TValue> where TValue : struct
 
     public void Remove(Func<string, bool> predicate)
     {
-        foreach (var key in _exportLog.Keys)
+        foreach (var key in _bag.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
-                _exportLog.TryRemove(key, out _);
+                _bag.TryRemove(key, out _);
             }
         }
     }
 
-    public int Count => _exportLog.Count;
+    /// <summary>Live entries held in memory — see ProbeCache&lt;T&gt;.Count.</summary>
+    public int Count => _cache.Count;
 }

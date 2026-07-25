@@ -1,0 +1,162 @@
+using Ednsv.Core.Services;
+
+namespace Ednsv.Core.Tests;
+
+/// <summary>
+/// The bag holds only what this process fetched fresh and has yet to write out.
+/// The point of the change is what it <i>excludes</i>: entries imported from disk
+/// used to go straight back into the export log, so every flush re-serialised and
+/// rewrote the entire cache — including everything read from disk at startup — for
+/// the life of the process.
+/// </summary>
+public sealed class ProbeCacheBagTests
+{
+    private static Task<string> Fresh(string v) => Task.FromResult(v);
+
+    [Fact]
+    public async Task AFreshFetchIsQueuedForPersistence()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+
+        await cache.GetOrCreateAsync("k", () => Fresh("value"));
+
+        Assert.Equal(new[] { "k" }, cache.Export().Keys);
+    }
+
+    [Fact]
+    public void AnImportedEntryIsReadableButNotQueued()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+
+        cache.Import("k", "from-disk");
+
+        Assert.True(cache.TryGet("k", out var got));
+        Assert.Equal("from-disk", got);
+        Assert.Empty(cache.Export()); // already on disk — never write it back
+    }
+
+    [Fact]
+    public void TheTimestampedImportOverloadIsAlsoMemoryOnly()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+
+        cache.Import("k", "from-disk", DateTime.UtcNow.AddHours(-3));
+
+        Assert.True(cache.TryGet("k", out _));
+        Assert.Empty(cache.Export());
+    }
+
+    [Fact]
+    public async Task ReadingAnImportedEntryDoesNotQueueIt()
+    {
+        // A cache hit must not resurrect a disk entry into the write path — that
+        // would reintroduce the rewrite-everything behaviour one key at a time.
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        cache.Import("k", "from-disk");
+
+        var got = await cache.GetOrCreateAsync("k", () => Fresh("should-not-run"));
+
+        Assert.Equal("from-disk", got);
+        Assert.Empty(cache.Export());
+    }
+
+    [Fact]
+    public async Task TransientResultsAreStillExcludedByShouldPersist()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+
+        await cache.GetOrCreateAsync("bad", () => Fresh("transient"),
+            shouldPersist: v => v != "transient");
+
+        Assert.True(cache.TryGet("bad", out _)); // cached in memory
+        Assert.Empty(cache.Export());            // but never persisted
+    }
+
+    [Fact]
+    public async Task ExportTimedCarriesTheFetchTime()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        var before = DateTime.UtcNow;
+
+        await cache.GetOrCreateAsync("k", () => Fresh("v"));
+
+        var stamped = cache.ExportTimed()["k"];
+        Assert.Equal("v", stamped.Value);
+        Assert.InRange(stamped.CachedAtUtc, before.AddSeconds(-1), DateTime.UtcNow.AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task CountTracksWhatIsCachedNotWhatIsQueued()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        cache.Import("imported", "a");
+        await cache.GetOrCreateAsync("fetched", () => Fresh("b"));
+
+        // Both are cached; only the fetched one is queued for writing.
+        Assert.Equal(2, cache.Count);
+        Assert.Single(cache.Export());
+    }
+
+    [Fact]
+    public async Task RemoveClearsBothTheCacheAndTheQueue()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        await cache.GetOrCreateAsync("drop:1", () => Fresh("a"));
+        await cache.GetOrCreateAsync("keep:1", () => Fresh("b"));
+
+        cache.Remove(k => k.StartsWith("drop:"));
+
+        Assert.False(cache.TryGet("drop:1", out _));
+        Assert.Equal(new[] { "keep:1" }, cache.Export().Keys);
+    }
+
+    // ── Value-type variant ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task ValueCache_FreshFetchQueuedAndImportIsNot()
+    {
+        var cache = new ProbeCacheValue<bool>(TimeSpan.FromMinutes(10));
+
+        await cache.GetOrCreateAsync("fetched", () => Task.FromResult(true));
+        cache.Import("imported", false);
+
+        Assert.Equal(new[] { "fetched" }, cache.Export().Keys);
+        Assert.True(cache.TryGet("imported", out var v));
+        Assert.False(v);
+    }
+
+    // ── BagEntry equality ────────────────────────────────────────────────
+
+    [Fact]
+    public void BagEntryEqualityIsReferenceIdentity()
+    {
+        // A flush removes written entries with TryRemove(KeyValuePair), which
+        // compares values via EqualityComparer<T>.Default. If BagEntry ever gained
+        // value equality — by becoming a record, say — a flush could delete a newer
+        // entry that replaced the one it persisted, silently.
+        var value = "same";
+        var written = new BagEntry<string>(value, DateTime.UtcNow, DateTime.MaxValue);
+        var newer = new BagEntry<string>(value, written.WrittenUtc, written.ExpiresUtc);
+
+        Assert.False(written.Equals(newer), "BagEntry must not use value equality");
+        Assert.True(written.Equals(written));
+        Assert.NotEqual(written.GetHashCode(), newer.GetHashCode());
+    }
+
+    [Fact]
+    public void AStaleBagEntryCannotEvictANewerOne()
+    {
+        var bag = new System.Collections.Concurrent.ConcurrentDictionary<string, BagEntry<string>>();
+        var written = new BagEntry<string>("v", DateTime.UtcNow, DateTime.MaxValue);
+        bag["k"] = written;
+
+        // A newer fetch lands for the same key while the flush is writing.
+        var newer = new BagEntry<string>("v", DateTime.UtcNow, DateTime.MaxValue);
+        bag["k"] = newer;
+
+        // The flush removes exactly what it persisted, and misses.
+        Assert.False(bag.TryRemove(new KeyValuePair<string, BagEntry<string>>("k", written)));
+        Assert.True(bag.ContainsKey("k"));
+        Assert.Same(newer, bag["k"]);
+    }
+}
