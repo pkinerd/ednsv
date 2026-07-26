@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph Tier3["Tier 3: Disk Persistence"]
         direction TB
-        DCACHE["DiskCacheService<br/><i>one JSONL file per flush,<br/>under CacheDir/{instance}/</i>"]
+        DCACHE["DiskCacheService<br/><i>one JSONL file per flush,<br/>under CacheDir/&lt;instance&gt;/</i>"]
     end
 
     CHECK["Check requests data"] --> SMTPC

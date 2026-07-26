@@ -1521,9 +1521,9 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
     writer.Write(sb.ToString());
 }
 
-// --cache-ttl 0 already meant "ignore what is on disk" here, since the load cutoff
-// becomes now. Passing null rather than zero keeps this run's own results usable in
-// memory instead of stamping them as expired the moment they are recorded.
+// --cache-ttl 0 means "no cap", matching CacheTtlHours=0 on the web side. Null rather
+// than zero is what expresses that downstream: a zero TimeSpan would stamp every entry
+// as expired the moment it was recorded.
 static TimeSpan? CacheTtlOrNull(TimeSpan ttl) => ttl > TimeSpan.Zero ? ttl : null;
 
 static DomainResultSummary BuildDomainResultSummary(ValidationReport report)
