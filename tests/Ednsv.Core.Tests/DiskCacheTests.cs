@@ -188,8 +188,11 @@ public class DiskCacheTests : IDisposable
     [Fact]
     public async Task LoadAsync_CorruptFile_ReturnsNull()
     {
-        Directory.CreateDirectory(_cacheDir);
-        await File.WriteAllTextAsync(Path.Combine(_cacheDir, "dns-queries.json"), "this is not valid json {{{");
+        var dir = DiskCacheService.InstanceFolder(_cacheDir);
+        Directory.CreateDirectory(dir);
+        // Stamped now, so the sweep leaves it and the parse is what rejects it.
+        var name = $"cache.{DateTime.UtcNow:yyyyMMdd'T'HHmmssfff}Z.deadbeef.jsonl";
+        await File.WriteAllTextAsync(Path.Combine(dir, name), "this is not valid json {{{");
 
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();

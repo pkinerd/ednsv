@@ -278,23 +278,4 @@ public class HttpProbeService
                 new HttpGetWithHeadersCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode, ContentType = r.ContentType }));
     }
 
-    public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
-    {
-        foreach (var kvp in entries)
-            _getCache.Import(kvp.Key, new GetResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode });
-    }
-
-    public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)
-    {
-        foreach (var kvp in entries)
-            _getWithHeadersCache.Import(kvp.Key, new GetWithHeadersResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType });
-    }
-
-    // ── Cache entry removal ───────────────────────────────────────────────
-
-    public void RemoveGetEntries(Func<string, bool> predicate)
-        => _getCache.Remove(predicate);
-
-    public void RemoveGetWithHeadersEntries(Func<string, bool> predicate)
-        => _getWithHeadersCache.Remove(predicate);
 }

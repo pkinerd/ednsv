@@ -27,50 +27,16 @@ namespace Ednsv.Core.Services;
 ///
 /// <para>Each line is a self-describing <see cref="CacheRecord"/> carrying its own
 /// type tag, fetch time and expiry, so a load merges every instance's files with the
-/// later fetch winning per key. Files written by the previous one-file-per-cache-type
-/// model are still read, so an upgrade does not cold-start, and age out via the
-/// sweep.</para>
+/// later fetch winning per key.</para>
 /// </summary>
 public class DiskCacheService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     /// <summary>Record serialisation. Compact — one line per record, no indenting —
     /// and property names come from the <c>[JsonPropertyName]</c> attributes on
     /// <see cref="CacheRecord"/> rather than a naming policy.</summary>
     private static readonly JsonSerializerOptions RecordOptions = new()
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
-    // ── Legacy per-type files ────────────────────────────────────────────
-    //
-    // Read, never written. Everything below this block exists so an upgrade finds
-    // the cache it already had; the sweep deletes these once they are past the TTL.
-
-    private const string SmtpProbesFile = "smtp-probes.json";
-    private const string PortProbesFile = "port-probes.json";
-    private const string RcptProbesFile = "rcpt-probes.json";
-    private const string HttpGetFile = "http-get.json";
-    private const string HttpGetWithHeadersFile = "http-get-headers.json";
-    private const string UnreachableServersFile = "unreachable-servers.json";
-    private const string PtrLookupsFile = "ptr-lookups.json";
-    private const string DnsQueriesFile = "dns-queries.json";
-    private const string DnsServerQueriesFile = "dns-server-queries.json";
-    private const string AxfrResultsFile = "axfr-results.json";
-    private const string RelayTestsFile = "relay-tests.json";
-    private const string DomainResultsFile = "domain-results.json";
-
-    private static readonly string[] AllCacheFiles =
-    {
-        SmtpProbesFile, PortProbesFile, RcptProbesFile, HttpGetFile, HttpGetWithHeadersFile,
-        UnreachableServersFile, PtrLookupsFile, DnsQueriesFile, DnsServerQueriesFile,
-        AxfrResultsFile, RelayTestsFile, DomainResultsFile
     };
 
     // ── Per-instance folder ──────────────────────────────────────────────
@@ -107,38 +73,6 @@ public class DiskCacheService
 
     /// <summary>This process's folder within the cache directory.</summary>
     public static string InstanceFolder(string cacheDir) => Path.Combine(cacheDir, InstanceSuffix);
-
-    /// <summary>
-    /// Every file holding entries for a legacy cache type: the pre-split shared file
-    /// and any per-instance variants of it. Read only — nothing writes these now.
-    /// </summary>
-    private static IEnumerable<string> EnumerateVariants(string cacheDir, string filename)
-    {
-        var stem = Path.GetFileNameWithoutExtension(filename);
-        var ext = Path.GetExtension(filename);
-
-        string[] candidates;
-        try { candidates = Directory.GetFiles(cacheDir, "*" + ext); }
-        catch { yield break; }
-
-        foreach (var path in candidates)
-        {
-            var name = Path.GetFileName(path);
-            if (name.Equals(filename, StringComparison.Ordinal))
-            {
-                yield return path; // legacy shared file
-                continue;
-            }
-            // "{stem}.{suffix}{ext}" and nothing else — an explicit prefix test
-            // rather than a glob so "http-get" can't swallow "http-get-headers".
-            if (name.StartsWith(stem + ".", StringComparison.Ordinal)
-                && name.EndsWith(ext, StringComparison.Ordinal)
-                && name.Length > stem.Length + 1 + ext.Length)
-            {
-                yield return path;
-            }
-        }
-    }
 
     // ── Record files ─────────────────────────────────────────────────────
 
@@ -244,9 +178,8 @@ public class DiskCacheService
     }
 
     /// <summary>
-    /// Deletes record files whose contents would all be discarded on load, the legacy
-    /// per-type files once they are equally stale, and the folders of instances that
-    /// are gone.
+    /// Deletes record files whose contents would all be discarded on load, and the
+    /// folders of instances that are gone.
     ///
     /// <para>The rule for a record file is filename arithmetic alone — every entry in
     /// it was written no later than the file was, so once <c>fileTime + ttl</c> is
@@ -273,23 +206,11 @@ public class DiskCacheService
         var now = DateTime.UtcNow;
         var cutoff = now - EffectiveRetention(ttl);
 
-        // Only files this service is known to have written, matched by name rather
-        // than by a "*.json" glob. The cache directory is configurable, and an
-        // operator who points it somewhere shared must not have unrelated JSON — or,
-        // if pointed at the data directory itself, config.json and users.json —
-        // deleted out from under them.
-        foreach (var filename in AllCacheFiles)
-        {
-            foreach (var path in EnumerateVariants(cacheDir, filename))
-            {
-                try
-                {
-                    if (File.GetLastWriteTimeUtc(path) < cutoff) File.Delete(path);
-                }
-                catch { /* best effort */ }
-            }
-        }
-
+        // Only ever this service's own record files, inside instance folders, matched
+        // by extension there rather than anywhere under the cache directory. The
+        // directory is configurable, and an operator who points it at something
+        // shared — or at the data directory itself, alongside config.json and
+        // users.json — must not have unrelated files deleted out from under them.
         string[] folders;
         try { folders = Directory.GetDirectories(cacheDir); }
         catch { return; }
@@ -331,13 +252,10 @@ public class DiskCacheService
     /// Loads caches from disk and primes the services. Returns null if the
     /// directory doesn't exist or contains no usable entries.
     ///
-    /// <para>Record files are read first and the legacy per-type files second. Every
-    /// import is add-if-absent, so first writer wins and the ordering settles two
-    /// things at once: a record file beats a legacy file for the same key — the
-    /// legacy ones were frozen at upgrade — and a value fetched from the network
-    /// while this load runs beats both. Within the record files the entry with the
-    /// latest fetch time wins, which is what merges several instances' folders into
-    /// one view.</para>
+    /// <para>Every import is add-if-absent, so a value fetched from the network while
+    /// this load runs beats the copy on disk rather than being overwritten by it. The
+    /// entry with the latest fetch time wins between files, which is what merges
+    /// several instances' folders into one view.</para>
     /// </summary>
     public static async Task<CacheLoadResult?> LoadAsync(string cacheDir, TimeSpan ttl, SmtpProbeService smtp,
         HttpProbeService http, DnsResolverService dns, bool retryErrors = false,
@@ -346,12 +264,10 @@ public class DiskCacheService
         if (!Directory.Exists(cacheDir))
             return null;
 
-        // Clear out scratch files orphaned by a killed process, drop record files
-        // whose contents have all expired, and remove folders left by instances that
-        // are gone. Startup is enough for the folder work: a rolling deploy brings up
-        // new pods and each one sweeps.
-        foreach (var f in AllCacheFiles)
-            AtomicFile.SweepStaleTemps(Path.Combine(cacheDir, f));
+        // Drop record files whose contents have all expired, clear out scratch files
+        // orphaned by a killed process, and remove folders left by instances that are
+        // gone. Startup is enough for the folder work: a rolling deploy brings up new
+        // pods and each one sweeps.
         Sweep(cacheDir, ttl);
 
         // A non-positive TTL means "no cap", which is what CacheTtlHours=0 has always
@@ -361,24 +277,9 @@ public class DiskCacheService
         // the record TTLs govern and only the floor applies.
         var cutoff = ttl > TimeSpan.Zero ? DateTime.UtcNow - ttl : DateTime.MinValue;
 
-        var (records, recordOldest) = await LoadRecordFilesAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
-        var (legacy, legacyOldest) = await LoadLegacyAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
+        var (result, oldest) = await LoadRecordFilesAsync(
+            cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
 
-        // Summed rather than de-duplicated. A key present in both models is counted
-        // twice, which overstates the startup log line by however much overlap an
-        // upgrade happens to have; it is a report, not a cache invariant, and the
-        // legacy files disappear on their own within one TTL.
-        var result = new CacheLoadResult
-        {
-            SmtpProbes = legacy.SmtpProbes + records.SmtpProbes,
-            PortProbes = legacy.PortProbes + records.PortProbes,
-            RcptProbes = legacy.RcptProbes + records.RcptProbes,
-            HttpRequests = legacy.HttpRequests + records.HttpRequests,
-            DnsQueries = legacy.DnsQueries + records.DnsQueries,
-            PtrLookups = legacy.PtrLookups + records.PtrLookups
-        };
-
-        var oldest = legacyOldest < recordOldest ? legacyOldest : recordOldest;
         if (oldest != DateTime.MaxValue)
             result.Age = DateTime.UtcNow - oldest;
 
@@ -562,10 +463,9 @@ public class DiskCacheService
     }
 
     /// <summary>
-    /// The record-file equivalent of the <c>retryErrors</c> filtering the legacy
-    /// loader applies: entries that look like a transient failure are left out so
-    /// they get refetched. Deserialises the payload a second time for the survivors,
-    /// which is only paid on the explicit retry path.
+    /// The <c>retryErrors</c> filter: entries that look like a transient failure are
+    /// left out so they get refetched. Deserialises the payload a second time for the
+    /// survivors, which is only paid on the explicit retry path.
     /// </summary>
     private static bool PassesRetryFilter(string type, JsonNode? value)
     {
@@ -617,144 +517,6 @@ public class DiskCacheService
         catch { return false; }
     }
 
-    /// <summary>
-    /// Reads the one-file-per-cache-type layout written before the record files.
-    /// Read-only: nothing writes these any more, and the sweep removes them once
-    /// they are past the TTL.
-    /// </summary>
-    private static async Task<(CacheLoadResult, DateTime)> LoadLegacyAsync(string cacheDir, DateTime cutoff,
-        SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns,
-        DomainResultStore? domainResults, bool retryErrors)
-    {
-        var smtpProbes = await LoadFileAsync<SmtpProbeCacheEntry>(cacheDir, SmtpProbesFile, cutoff);
-        var portProbes = await LoadFileAsync<PortProbeCacheEntry>(cacheDir, PortProbesFile, cutoff);
-        var rcptProbes = await LoadFileAsync<RcptCacheEntry>(cacheDir, RcptProbesFile, cutoff);
-        var httpGet = await LoadFileAsync<HttpGetCacheEntry>(cacheDir, HttpGetFile, cutoff);
-        var httpGetHeaders = await LoadFileAsync<HttpGetWithHeadersCacheEntry>(cacheDir, HttpGetWithHeadersFile, cutoff);
-        var unreachable = await LoadFileAsync<UnreachableServerCacheEntry>(cacheDir, UnreachableServersFile, cutoff);
-        var ptr = await LoadFileAsync<PtrCacheEntry>(cacheDir, PtrLookupsFile, cutoff);
-        var dnsQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsQueriesFile, cutoff);
-        var dnsServerQueries = await LoadFileAsync<DnsCacheEntry>(cacheDir, DnsServerQueriesFile, cutoff);
-        var axfrResults = await LoadFileAsync<AxfrCacheEntry>(cacheDir, AxfrResultsFile, cutoff);
-        var relayTests = await LoadFileAsync<RelayCacheEntry>(cacheDir, RelayTestsFile, cutoff);
-
-        if (retryErrors)
-        {
-            smtpProbes = smtpProbes?.Where(kvp =>
-                    kvp.Value.Error == null &&
-                    kvp.Value.Connected &&
-                    // Retry probes with empty banner (likely transient read timeout)
-                    !string.IsNullOrEmpty(kvp.Value.Banner) &&
-                    // Retry probes where TLS was expected but cert wasn't obtained (transient TLS failure)
-                    !(kvp.Value.SupportsStartTls && kvp.Value.CertSubject == null) &&
-                    // Retry probes with cert metadata but missing raw bytes (upgrades old cache format)
-                    !(kvp.Value.CertSubject != null && kvp.Value.CertRawBase64 == null))
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            portProbes = portProbes?.Where(kvp => kvp.Value.Open)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            rcptProbes = rcptProbes?.Where(kvp => kvp.Value.Accepted)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            httpGet = httpGet?.Where(kvp => kvp.Value.Success)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            httpGetHeaders = httpGetHeaders?.Where(kvp => kvp.Value.Success)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            relayTests = relayTests?.Where(kvp => !kvp.Value.Description.StartsWith("Error:") && !kvp.Value.Description.StartsWith("Connection timed out"))
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            unreachable = null; // let unreachable servers be retried
-            dnsQueries = dnsQueries?.Where(kvp => !kvp.Value.HasError)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            dnsServerQueries = dnsServerQueries?.Where(kvp => !kvp.Value.HasError)
-                .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-        }
-
-        // Convert new DTO types to the dictionary types the services expect
-        if (smtpProbes?.Count > 0) smtp.ImportProbeCache(smtpProbes.ToDictionary(kvp => kvp.Key, kvp => (SmtpProbeCacheEntry)kvp.Value));
-        if (portProbes?.Count > 0) smtp.ImportPortCache(portProbes.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Open));
-        if (rcptProbes?.Count > 0) smtp.ImportRcptCache(rcptProbes.ToDictionary(kvp => kvp.Key, kvp => (RcptCacheEntry)kvp.Value));
-        if (httpGet?.Count > 0) http.ImportGetCache(httpGet.ToDictionary(kvp => kvp.Key, kvp => (HttpGetCacheEntry)kvp.Value));
-        if (httpGetHeaders?.Count > 0) http.ImportGetWithHeadersCache(httpGetHeaders.ToDictionary(kvp => kvp.Key, kvp => (HttpGetWithHeadersCacheEntry)kvp.Value));
-        if (unreachable?.Count > 0) dns.ImportUnreachableServers(unreachable.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.FailCount));
-        if (ptr?.Count > 0) dns.ImportPtrCache(ptr.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Names));
-        if (dnsQueries?.Count > 0) dns.ImportQueryCache(dnsQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
-        if (dnsServerQueries?.Count > 0) dns.ImportServerQueryCache(dnsServerQueries.ToDictionary(kvp => kvp.Key, kvp => (DnsCacheEntry)kvp.Value));
-        if (relayTests?.Count > 0) smtp.ImportRelayCache(relayTests.ToDictionary(kvp => kvp.Key, kvp => (RelayCacheEntry)kvp.Value));
-        if (axfrResults?.Count > 0) dns.ImportAxfrCache(axfrResults.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Vulnerable));
-
-        if (domainResults != null)
-        {
-            foreach (var kvp in await LoadLegacyDomainResultsAsync(cacheDir, cutoff))
-                domainResults.Import(kvp.Key, kvp.Value);
-        }
-
-        var result = new CacheLoadResult
-        {
-            SmtpProbes = smtpProbes?.Count ?? 0,
-            PortProbes = portProbes?.Count ?? 0,
-            RcptProbes = rcptProbes?.Count ?? 0,
-            HttpRequests = (httpGet?.Count ?? 0) + (httpGetHeaders?.Count ?? 0),
-            DnsQueries = (dnsQueries?.Count ?? 0) + (dnsServerQueries?.Count ?? 0),
-            PtrLookups = ptr?.Count ?? 0
-        };
-
-        // Determine age from the oldest entry across all cache files
-        var allTimestamps = new List<DateTime>();
-        void CollectTimestamps<T>(Dictionary<string, T>? dict) where T : ICacheEntry
-        {
-            if (dict != null)
-                foreach (var entry in dict.Values)
-                    allTimestamps.Add(entry.CachedAtUtc);
-        }
-        CollectTimestamps(smtpProbes);
-        CollectTimestamps(portProbes);
-        CollectTimestamps(rcptProbes);
-        CollectTimestamps(httpGet);
-        CollectTimestamps(httpGetHeaders);
-        CollectTimestamps(unreachable);
-        CollectTimestamps(ptr);
-        CollectTimestamps(dnsQueries);
-        CollectTimestamps(dnsServerQueries);
-
-        return (result, allTimestamps.Count > 0 ? allTimestamps.Min() : DateTime.MaxValue);
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Loads entries from a cache file, filtering out entries older than cutoff.
-    /// </summary>
-    private static async Task<Dictionary<string, T>?> LoadFileAsync<T>(string cacheDir, string filename, DateTime cutoff) where T : ICacheEntry
-    {
-        // Merge across every instance's file so the cache is shared on read even
-        // though each writer owns its own file. Freshest entry wins per key; an
-        // unreadable variant is skipped rather than failing the whole load.
-        var merged = new Dictionary<string, T>();
-
-        foreach (var path in EnumerateVariants(cacheDir, filename))
-        {
-            Dictionary<string, T>? entries;
-            try
-            {
-                var json = await File.ReadAllTextAsync(path);
-                entries = JsonSerializer.Deserialize<Dictionary<string, T>>(json, JsonOptions);
-            }
-            catch
-            {
-                continue; // corrupt or vanished variant
-            }
-            if (entries == null) continue;
-
-            foreach (var kvp in entries)
-            {
-                if (kvp.Value.CachedAtUtc < cutoff) continue; // per-entry TTL
-                if (merged.TryGetValue(kvp.Key, out var seen) && seen.CachedAtUtc >= kvp.Value.CachedAtUtc)
-                    continue;
-                merged[kvp.Key] = kvp.Value;
-            }
-        }
-
-        return merged.Count > 0 ? merged : null;
-    }
-
     // ── Public result type ───────────────────────────────────────────────
 
     public class CacheLoadResult
@@ -769,60 +531,16 @@ public class DiskCacheService
         public int Total => SmtpProbes + PortProbes + RcptProbes + HttpRequests + DnsQueries + PtrLookups;
     }
 
-    // ── Legacy domain results ───────────────────────────────────────────
-
-    /// <summary>
-    /// Reads domain summaries from the pre-record-file layout, most recent validation
-    /// per domain winning. Now TTL-filtered, which the old reader never was — it fed
-    /// recheck decisions from records of any age.
-    /// </summary>
-    private static async Task<Dictionary<string, DomainResultSummary>> LoadLegacyDomainResultsAsync(
-        string cacheDir, DateTime cutoff)
-    {
-        var merged = new Dictionary<string, DomainResultSummary>();
-
-        foreach (var path in EnumerateVariants(cacheDir, DomainResultsFile))
-        {
-            Dictionary<string, DomainResultSummary>? entries;
-            try
-            {
-                var json = await File.ReadAllTextAsync(path);
-                entries = JsonSerializer.Deserialize<Dictionary<string, DomainResultSummary>>(json, JsonOptions);
-            }
-            catch
-            {
-                continue;
-            }
-            if (entries == null) continue;
-
-            foreach (var kvp in entries)
-            {
-                if (kvp.Value.ValidatedAtUtc < cutoff) continue;
-                if (merged.TryGetValue(kvp.Key, out var seen) && seen.ValidatedAtUtc >= kvp.Value.ValidatedAtUtc)
-                    continue;
-                merged[kvp.Key] = kvp.Value;
-            }
-        }
-
-        return merged;
-    }
 }
 
-// ── Cache entry interface ────────────────────────────────────────────────
+// ── Serializable DTOs for cache payloads ─────────────────────────────────
+//
+// The `v` half of a CacheRecord, and the same shapes the Redis L2 stores. They
+// carry no timestamp of their own: the record envelope holds the fetch time and
+// expiry, and duplicating either inside the payload would let the two disagree.
 
-/// <summary>
-/// All cache entries must carry a timestamp for per-entry TTL expiry.
-/// </summary>
-public interface ICacheEntry
+public class SmtpProbeCacheEntry
 {
-    DateTime CachedAtUtc { get; set; }
-}
-
-// ── Serializable DTOs for cache entries ──────────────────────────────────
-
-public class SmtpProbeCacheEntry : ICacheEntry
-{
-    public DateTime CachedAtUtc { get; set; }
     public bool Connected { get; set; }
     public string Banner { get; set; } = "";
     public bool SupportsStartTls { get; set; }
@@ -844,59 +562,31 @@ public class SmtpProbeCacheEntry : ICacheEntry
     public string? Error { get; set; }
 }
 
-public class PortProbeCacheEntry : ICacheEntry
+public class RcptCacheEntry
 {
-    public DateTime CachedAtUtc { get; set; }
-    public bool Open { get; set; }
-}
-
-public class RcptCacheEntry : ICacheEntry
-{
-    public DateTime CachedAtUtc { get; set; }
     public bool Accepted { get; set; }
     public string Response { get; set; } = "";
 }
 
-public class HttpGetCacheEntry : ICacheEntry
+public class HttpGetCacheEntry
 {
-    public DateTime CachedAtUtc { get; set; }
     public bool Success { get; set; }
     public string Content { get; set; } = "";
     public int StatusCode { get; set; }
 }
 
-public class HttpGetWithHeadersCacheEntry : ICacheEntry
+public class HttpGetWithHeadersCacheEntry
 {
-    public DateTime CachedAtUtc { get; set; }
     public bool Success { get; set; }
     public string Content { get; set; } = "";
     public int StatusCode { get; set; }
     public string? ContentType { get; set; }
 }
 
-public class UnreachableServerCacheEntry : ICacheEntry
+public class RelayCacheEntry
 {
-    public DateTime CachedAtUtc { get; set; }
-    public int FailCount { get; set; }
-}
-
-public class AxfrCacheEntry : ICacheEntry
-{
-    public DateTime CachedAtUtc { get; set; }
-    public bool Vulnerable { get; set; }
-}
-
-public class RelayCacheEntry : ICacheEntry
-{
-    public DateTime CachedAtUtc { get; set; }
     public bool IsRelay { get; set; }
     public string Description { get; set; } = "";
-}
-
-public class PtrCacheEntry : ICacheEntry
-{
-    public DateTime CachedAtUtc { get; set; }
-    public List<string> Names { get; set; } = new();
 }
 
 /// <summary>

@@ -139,7 +139,7 @@ What the bag *excludes* is the point of its design. Three kinds of value are cac
 - values read from the shared **Redis L2** — whichever instance fetched them has already written them to its own disk, and persisting them here duplicates that work onto ours;
 - entries **imported from disk at startup** — they are on disk by definition.
 
-That last exclusion is the one that mattered. Imports used to feed straight back into `_exportLog`, the bag's predecessor, so every entry read at startup was re-serialised and rewritten on every flush for the life of the process.
+That last exclusion is the one that mattered: an import that fed back into the write queue would have every entry read at startup re-serialised and rewritten on every flush for the life of the process — which is the amplification this design exists to remove.
 
 A flush snapshots the bag, writes those records, and removes **exactly what it wrote**, matched by reference. Nothing leaves the bag until the file has landed, so a failed write simply retries next tick, and a fresher value that arrived for the same key mid-write survives. `BagEntry` states its reference equality explicitly rather than inheriting it: `ConcurrentDictionary.TryRemove(KeyValuePair)` compares values with `EqualityComparer<T>.Default`, so any value-based equality there would let a flush silently delete the newer entry that replaced the one it persisted.
 
@@ -243,7 +243,7 @@ An idle process writes nothing at all, because the bags are empty.
 
 Runs on the background load and on each flush tick, best-effort.
 
-Record files are deleted by **filename arithmetic alone**: every entry in a file was written no later than the file was, so once `fileTime + CacheTtlHours` is past, nothing in it can still be live. The rule applies to this instance's files exactly as to any other's. Legacy per-type files are deleted by mtime, matched by name rather than by a `*.json` glob so an operator's unrelated files are never taken with them.
+Record files are deleted by **filename arithmetic alone**: every entry in a file was written no later than the file was, so once `fileTime + CacheTtlHours` is past, nothing in it can still be live. The rule applies to this instance's files exactly as to any other's. Only `*.jsonl` inside an instance folder is ever considered, so an operator who points `CacheDir` at a shared location — or at the data directory itself, alongside `config.json` and `users.json` — never has unrelated files taken with them.
 
 A **folder** is removed only when it is empty, is not ours, and its own mtime is past the cutoff. The age gate makes this safe against an instance that has just started and not yet flushed — creating the folder sets a fresh mtime. Note the timing: removing the last file updates the parent's mtime, so the clock only starts once the folder is already empty, and a dead instance's folder lingers for roughly twice the TTL. Every flush calls `Directory.CreateDirectory` regardless, because a *live* instance idle longer than the TTL writes no files, ages out, and has its folder legitimately removed.
 
@@ -267,12 +267,6 @@ Only *retention* is capped. Reading stays uncapped, so whatever survives on disk
 ### File count
 
 Live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` — **13 at the defaults** (2h / 600s). Across ten replicas that is ~130 files in ten folders. An operator running `CacheTtlHours=24` with 30-minute flushes gets 49 per instance. Total opens grow with replicas × retention; that product is the number to watch.
-
-### Legacy format
-
-Files written by the previous one-file-per-cache-type layout (`dns-queries.json`, `smtp-probes.json`, …, including per-instance variants such as `dns-queries.pod7.json`) are still **read**, so an upgrade does not cold-start. Nothing writes them any more, and the sweep removes them once they are past the TTL. Record files are read first and legacy files second, so with add-if-absent imports a record always beats a legacy copy of the same key.
-
-`domain-results` now expires on load like everything else. The old reader had no TTL filter at all, so recheck decisions could rest on month-old records.
 
 ### Optional Redis L2 (distributed mode)
 
@@ -390,17 +384,9 @@ Startup logs a warning when `CacheDir=none` **and** no Redis is configured. That
 
 With Redis configured it is not a warning — it logs at Information, because `none` is then the **recommended** multi-pod shape. The shared-cache watch still runs, so an emptied Redis is republished from memory; see [horizontal-scaling.md](horizontal-scaling.md) → *Skip the disk cache once Redis is present*.
 
-### Removed: the cache-clear and cache-flush endpoints
-
-`POST /api/cache/flush` and `POST /api/cache/clear` are gone, along with `RequestFlush()`.
-
-Flushing sooner than the timer now only fragments storage. Clearing was worse: on a multi-pod deployment it returned 200 and audit-logged *"Cache CLEARED (memory + disk)"* while N-1 pods kept serving warm L1 — a control that reported success without doing the thing. **Recheck-all** covers the real need better: targeted, pod-agnostic, no admin rights, and it writes fresh results back. The 2-hour TTL is what makes that trade safe; at 24 hours the lack of a lever would have been too long.
-
-Both are breaking API changes for anyone scripting them. A manual purge now means deleting the files and restarting.
-
 ## Recheck System
 
-The recheck feature allows re-running previously failing checks with fresh data, without clearing the entire cache.
+The recheck feature re-runs previously failing checks against fresh data, leaving every other cached result in place.
 
 ```mermaid
 flowchart LR
@@ -426,7 +412,6 @@ flowchart LR
 
 5. **Write back**: The fresh result is stored in MemoryCache, and — when `shouldPersist` returns true — queued in the write bag and written through to the shared L2. Other concurrent validations benefit immediately, and the next non-recheck request serves the new value from cache.
 
-> **CLI now uses the same mechanism as the web API.** Earlier versions physically deleted matching entries from MemoryCache for CLI rechecks (`ClearImportedEntriesForDomain`). That code path was removed; CLI rechecks now go through the same AsyncLocal bypass as the web API by setting `validator.RecheckDeps`. Fresh results overwrite the old entries on write-back.
 
 ### CacheDep Flags
 
