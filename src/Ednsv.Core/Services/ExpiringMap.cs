@@ -8,20 +8,27 @@ namespace Ednsv.Core.Services;
 /// responses, unreachable-server counts, domain result summaries and the per-server
 /// <c>LookupClient</c> pool.
 ///
-/// <para><b>Why not just use MemoryCache.</b> Three of those callers need something
-/// MemoryCache does not offer: an atomic read-modify-write (the unreachable-server
-/// counter), a non-string key (the AXFR caches are keyed by an
-/// <c>(ip, domain)</c> tuple), and enumeration of what is live (the domain summaries).
-/// A <see cref="ConcurrentDictionary{TKey,TValue}"/> of value-plus-expiry gives all
-/// three, and it is what these caches already were — minus the expiry.</para>
+/// <para><b>Why not just use MemoryCache.</b> Two of those callers need something it
+/// does not offer on .NET 8: an atomic read-modify-write (the unreachable-server
+/// counter, which increments a value derived from the one already cached) and
+/// enumeration of what is live (the domain summaries — <c>MemoryCache</c> exposes
+/// <c>Count</c> and nothing else until <c>Keys</c> arrives in .NET 9, which is why
+/// <see cref="ProbeCache{T}"/> has to keep a parallel key index of its own). A
+/// <see cref="ConcurrentDictionary{TKey,TValue}"/> of value-plus-expiry gives both, and
+/// it is what these caches already were — minus the expiry.</para>
 ///
-/// <para><b>Expiry is enforced on read, not by a timer.</b> An entry past its expiry
-/// is treated as absent and removed on the spot, so the TTL is honoured exactly
-/// whether or not anything has swept. The sweep — <see cref="Prune"/>, run
-/// automatically every <see cref="PruneEvery"/> writes — exists only to bound
-/// <i>memory</i>, for keys that are written once and never read again. Tying it to
-/// writes rather than a timer means a map nobody is writing to needs no upkeep, since
-/// it cannot be growing either.</para>
+/// <para><b>Maintenance follows MemoryCache's own design rather than inventing one.</b>
+/// Expiry is enforced on read: an entry past its expiry is treated as absent and
+/// removed on the spot, so the TTL is honoured exactly whether or not anything has
+/// swept. That leaves keys written once and never read again, which is what
+/// <see cref="Prune"/> is for — and the sweep is <i>triggered</i> by a write,
+/// <i>rate-limited</i> to one per <see cref="PruneInterval"/>, and <i>run on the thread
+/// pool</i> rather than on the caller. MemoryCache does the same three things:
+/// <c>StartScanForExpiredItemsIfNeeded</c> runs on cache operations, gated by
+/// <c>ExpirationScanFrequency</c> (also a minute by default), and hands
+/// <c>ScanForExpiredItems</c> to <c>TaskScheduler.Default</c>. Triggering on a write
+/// rather than a timer is what makes an idle map free: it cannot be growing, so it
+/// needs no upkeep, and there is no timer to own or dispose.</para>
 ///
 /// <para>A null TTL means no expiry, the same thing <c>CacheTtlHours=0</c> means
 /// everywhere else: entries then live for the process, bounded by the number of
@@ -42,14 +49,35 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     private readonly ConcurrentDictionary<TKey, Entry> _map = new();
     private readonly TimeSpan? _ttl;
 
-    /// <summary>Writes between automatic prunes. Small enough that overshoot is
-    /// negligible against the caches this holds, large enough that the scan is
-    /// amortised to nothing.</summary>
-    private const int PruneEvery = 256;
+    /// <summary>Shortest gap between automatic prunes. A minute, matching
+    /// <c>MemoryCacheOptions.ExpirationScanFrequency</c>'s default: expired entries stay
+    /// unreadable throughout, so the only thing the interval bounds is how long their
+    /// memory is held.</summary>
+    private static readonly TimeSpan PruneInterval = TimeSpan.FromMinutes(1);
 
-    private int _writesSincePrune;
+    private readonly TimeSpan _pruneInterval;
 
-    public ExpiringMap(TimeSpan? ttl) => _ttl = ttl;
+    // Monotonic, so a clock change cannot stall or storm the sweep.
+    private long _lastPruneTicks = Environment.TickCount64;
+
+    // 0 = nothing scheduled, 1 = a prune is queued or running.
+    //
+    // The interval check below already stops a burst of writers queueing a scan each,
+    // and in practice it stops all of them — a test releasing 64 threads at once cannot
+    // get a second one through the window, and MemoryCache ships with this same race and
+    // no gate at all. This makes it a guarantee rather than a very high probability, and
+    // covers the one case no time gate can: a scan that outlives its own interval, where
+    // the next write would otherwise queue a second scan over the same entries.
+    private int _pruneScheduled;
+
+    /// <param name="ttl">Entry lifetime, or null for no expiry.</param>
+    /// <param name="pruneInterval">Overrides <see cref="PruneInterval"/>. For tests: the
+    /// default is a minute, which no test should be waiting out.</param>
+    public ExpiringMap(TimeSpan? ttl, TimeSpan? pruneInterval = null)
+    {
+        _ttl = ttl;
+        _pruneInterval = pruneInterval ?? PruneInterval;
+    }
 
     private DateTime Expiry() => _ttl.HasValue ? DateTime.UtcNow + _ttl.Value : DateTime.MaxValue;
 
@@ -58,6 +86,16 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     /// the memory actually released, and the number to look at when asking whether this
     /// map can grow without bound.</summary>
     public int AllocatedCount => _map.Count;
+
+    /// <summary>
+    /// Sweeps that have run. Only a diagnostic, but it is what makes the two claims
+    /// about the maintenance path assertable rather than merely intended: that a burst
+    /// of concurrent writes schedules <i>one</i> sweep between them, and that the
+    /// interval — not the write count — is what paces them.
+    /// </summary>
+    public int PruneRuns => Volatile.Read(ref _pruneRuns);
+
+    private int _pruneRuns;
 
     /// <summary>Live entries. Expired ones are excluded whether or not they have been
     /// pruned yet, so this is the cache size rather than the allocation size.</summary>
@@ -124,7 +162,7 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     public bool TryAdd(TKey key, TValue value, DateTime expiresUtc)
     {
         if (expiresUtc <= DateTime.UtcNow) return false;
-        CountWrite();
+        SchedulePruneIfDue();
 
         while (true)
         {
@@ -140,7 +178,7 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     /// <summary>Store a value, replacing whatever is there.</summary>
     public void Set(TKey key, TValue value)
     {
-        CountWrite();
+        SchedulePruneIfDue();
         _map[key] = new Entry(value, Expiry());
     }
 
@@ -152,7 +190,7 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     /// </summary>
     public TValue AddOrUpdate(TKey key, TValue add, Func<TValue, TValue> update)
     {
-        CountWrite();
+        SchedulePruneIfDue();
         var expires = Expiry();
         var entry = _map.AddOrUpdate(key,
             _ => new Entry(add, expires),
@@ -191,21 +229,55 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
                 yield return new KeyValuePair<TKey, TValue>(kv.Key, kv.Value.Value);
     }
 
-    /// <summary>Drop every expired entry. Called automatically as writes accumulate;
-    /// public so a caller with a natural maintenance point can do it sooner.</summary>
+    /// <summary>
+    /// Drop every expired entry. Scheduled automatically after a write; public because a
+    /// caller with a natural maintenance point can do it sooner, and because a test
+    /// should be able to force it rather than wait.
+    ///
+    /// <para>Removals match the whole entry, so a value written while this is running is
+    /// never taken with the expired one it replaced. Enumerating a
+    /// <see cref="ConcurrentDictionary{TKey,TValue}"/> while removing from it is
+    /// supported and does not throw, so no snapshot copy is needed.</para>
+    /// </summary>
     public void Prune()
     {
+        Interlocked.Increment(ref _pruneRuns);
+
         var now = DateTime.UtcNow;
-        foreach (var kv in _map.ToArray())
+        foreach (var kv in _map)
             if (kv.Value.ExpiresUtc <= now)
                 _map.TryRemove(kv);
     }
 
-    private void CountWrite()
+    /// <summary>
+    /// Called after every write. Cheap on the hot path — two reads and, at most once a
+    /// minute, one <c>CompareExchange</c> and a thread-pool queue — because the scan
+    /// itself must not land on the caller. These writes are completed by probe threads
+    /// finishing a network round-trip, and walking a few thousand entries is not their
+    /// work.
+    /// </summary>
+    private void SchedulePruneIfDue()
     {
-        if (Interlocked.Increment(ref _writesSincePrune) < PruneEvery) return;
+        var now = Environment.TickCount64;
+        if (now - Volatile.Read(ref _lastPruneTicks) < _pruneInterval.TotalMilliseconds) return;
 
-        Interlocked.Exchange(ref _writesSincePrune, 0);
-        Prune();
+        // Single-flight: whoever wins the gate owns the next scan, and everyone else
+        // returns immediately. Released in PruneAndRelease.
+        if (Interlocked.CompareExchange(ref _pruneScheduled, 1, 0) != 0) return;
+
+        Volatile.Write(ref _lastPruneTicks, now);
+
+        // Unsafe = does not capture the ExecutionContext, which is the point as well as
+        // the saving: a sweep has no business inheriting the recheck flags or the trace
+        // sink of whichever validation happened to trigger it.
+        ThreadPool.UnsafeQueueUserWorkItem(
+            static state => state.PruneAndRelease(), this, preferLocal: false);
+    }
+
+    private void PruneAndRelease()
+    {
+        try { Prune(); }
+        catch { /* a cache sweep must never take the process down */ }
+        finally { Volatile.Write(ref _pruneScheduled, 0); }
     }
 }

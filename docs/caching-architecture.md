@@ -347,18 +347,52 @@ this service holds, kept per `(nameserver, domain)` — and `_serverClients` hel
 `LookupClient`, and its socket pool, per nameserver IP ever queried.
 
 `ExpiringMap<K,V>` is a `ConcurrentDictionary` of value-plus-expiry. It is not a
-`MemoryCache` because three of those callers need something MemoryCache does not offer:
-an atomic read-modify-write (the unreachable-server counter), a non-string key (the AXFR
-caches are keyed by a tuple), and enumeration of what is live (the domain summaries).
+`MemoryCache` because two of those callers need something MemoryCache does not offer on
+.NET 8: an **atomic read-modify-write** (the unreachable-server counter increments a value
+derived from the one already cached) and **enumeration of the live set** (the domain
+summaries — `MemoryCache` exposes `Count` and nothing else until `Keys` lands in .NET 9,
+which is exactly why `ProbeCache` has to keep a parallel key index of its own). Tuple
+keys are *not* a reason: `MemoryCache` keys are `object` and a `ValueTuple` round-trips
+through it correctly.
 
 Two mechanisms, doing two different jobs:
 
 - **Expiry is enforced on read.** An entry past its expiry is a miss and is removed as it
   is found, so the TTL holds exactly whether or not anything has swept. Read-side removal
   matches the whole entry, so a fresher value written in between survives.
-- **A prune every 256 writes bounds memory**, for keys written once and never read again.
-  Tying it to writes rather than a timer means a map nobody writes to needs no upkeep,
-  since it cannot be growing either. `AllocatedCount` minus `Count` is the resulting lag.
+- **A sweep bounds memory**, for keys written once and never read again — the ones the
+  read path never revisits. `AllocatedCount` minus `Count` is the resulting lag.
+
+### How the sweep is paced
+
+Deliberately the same three decisions `MemoryCache` makes, because this is its problem
+too and it is not worth solving differently:
+
+| | `ExpiringMap` | `MemoryCache` (.NET 8) |
+|---|---|---|
+| Triggered by | a write | any cache operation (`StartScanForExpiredItemsIfNeeded`) |
+| Rate limited to | one per minute | one per `ExpirationScanFrequency` (default one minute) |
+| Runs on | the thread pool (`ThreadPool.UnsafeQueueUserWorkItem`) | the thread pool (`TaskScheduler.Default`) |
+
+The reasoning behind each:
+
+- **Triggered by a write, not a timer.** A map nobody writes to cannot be growing, so it
+  needs no upkeep — and there is no timer to own, plumb through startup, or dispose. The
+  cost is that a map written once and then left alone holds that entry's memory
+  indefinitely; it stays correctly *unreadable* throughout, and one entry is not a leak.
+- **Rate limited**, or a heavy validation burst would walk the map every few
+  milliseconds. Expired entries are unreadable the whole time, so the interval bounds
+  only how long their memory is held.
+- **Off the caller's thread.** The writes here are completed by probe threads coming back
+  from a network round-trip; walking a few thousand entries is not their work.
+  `UnsafeQueueUserWorkItem` also declines to capture the `ExecutionContext`, so the sweep
+  cannot inherit the recheck flags or trace sink of whichever validation triggered it.
+
+A `CompareExchange` gate keeps it single-flight. The interval check already prevents a
+burst of writers scheduling a scan each — reliably enough that a test releasing 64 threads
+at once cannot get a second one through, and `MemoryCache` ships with the same race and no
+gate — so the gate is what makes it a guarantee rather than a near-certainty, and it is
+the only thing covering a scan that outlives its own interval.
 
 An import keeps the expiry stamped on its record rather than getting a fresh full TTL, so
 a nearly-dead entry is not resurrected — and one already past its expiry is refused. A
