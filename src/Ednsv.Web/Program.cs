@@ -508,11 +508,22 @@ if (!diskCacheEnabled)
             + "every probe result is refetched from the network on each start. Reasonable for a dev box, "
             + "almost certainly a misconfiguration in production.");
 }
-else
+else if (cacheTtlHours > 0)
 {
     app.Logger.LogInformation(
         "Disk cache at {CacheDir} (TTL {Ttl}h, flush every {Interval}s).",
         cacheDir, cacheTtlHours, flushIntervalSeconds);
+}
+else
+{
+    // Worth saying out loud rather than leaving an operator to infer it from a file
+    // listing: expiry off still bounds the files, because an append-only directory
+    // with nothing sweeping it grows for ever even while memory stays flat.
+    app.Logger.LogInformation(
+        "Disk cache at {CacheDir} with expiry disabled (CacheTtlHours=0), flush every {Interval}s. "
+        + "Cached values do not expire in memory, but files are still swept after {Floor}h — "
+        + "each flush appends a new file, so without a retention floor the directory would grow without bound.",
+        cacheDir, flushIntervalSeconds, DiskCacheService.UncappedRetention.TotalHours);
 }
 
 // ── Load cache from disk, in the background ──────────────────────────────

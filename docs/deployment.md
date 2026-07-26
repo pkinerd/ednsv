@@ -49,7 +49,7 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 | `--mask-trace` / `--no-mask-trace` | Privacy masking for trace output (default: on) |
 | `--mask-salt <salt>` | Deterministic hash salt for consistent masks |
 | `--cache [dir]` / `-c` | Persist probe cache between runs (default dir: `.ednsv-cache/`) |
-| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24). `0` means no cap |
+| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24). `0` disables expiry, but cache files are still swept after 24h |
 | `--recheck warning\|error\|critical` | Re-validate previously failing checks (bypasses stale cache only) |
 | `--retry` | Double retry counts for unreliable networks |
 | `--retry-errors` | With `--cache`, re-probe previously failed checks, keep successful cached results |
@@ -105,7 +105,7 @@ Environment variables or command-line configuration. See [configuration.md](conf
 |---------|---------|-------------|
 | `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` by default |
 | `CacheDir` | `{DataDir}/cache` | Where probe results are persisted. `none` disables the disk tier. With Redis and multiple pods, point this at a pod-local volume — see below. |
-| `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` = no cap |
+| `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` disables expiry; files are still swept after 24h |
 | `FlushIntervalSeconds` | 600 | Flush interval, and the cache-file granularity |
 | `CacheShutdownFlushSeconds` | 5 | Bound on the final flush at shutdown |
 | `DnsCacheMinTtlSeconds` | 0 | `0` = off; above zero, bound DNS entries by their record TTLs |

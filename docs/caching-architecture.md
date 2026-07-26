@@ -232,6 +232,19 @@ Directory mtime is reliable on POSIX but not on SMB/Azure Files, where servers m
 
 Pod-name reuse is not a hazard in either direction: Deployment names are never reused, so an orphaned folder is definitively dead; StatefulSet names are, and a restarting pod simply finds its own still-valid entries.
 
+### Turning expiry off
+
+`CacheTtlHours=0` disables expiry: values never expire in memory, per-entry expiry is not stamped, and the load reads whatever is on disk without a staleness cutoff.
+
+**Files are still swept, after a 24-hour floor.** The two tiers are not symmetric, and the difference is easy to miss:
+
+- **Memory is self-bounding.** `MemoryCache` is keyed, so the working set is the number of *distinct* keys — bounded by the domains checked. Refetching a key replaces its entry.
+- **Disk is append-only by design.** Every flush writes a new immutable file, so a key fetched again later appears *again* in a later file rather than replacing anything. Rechecks refetch on purpose, and each instance writes its own copy of what it fetched. Nothing collapses those duplicates — the sweep is the only thing that ever removes them.
+
+So switching the sweep off along with expiry would grow the directory without bound while memory stayed flat. `DiskCacheService.UncappedRetention` is the floor that prevents it; at a ten-minute flush that is 145 files per instance, which is where the file-count arithmetic below still lands comfortably. Startup logs the floor rather than leaving it to be discovered from a file listing.
+
+Only *retention* is capped. Reading stays uncapped, so whatever survives on disk is loaded in full.
+
 ### File count
 
 Live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` — **13 at the defaults** (2h / 600s). Across ten replicas that is ~130 files in ten folders. An operator running `CacheTtlHours=24` with 30-minute flushes gets 49 per instance. Total opens grow with replicas × retention; that product is the number to watch.

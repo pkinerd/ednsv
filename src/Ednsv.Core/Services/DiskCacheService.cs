@@ -149,6 +149,35 @@ public class DiskCacheService
     /// the sweep reads the timestamp out of the name rather than opening the file.</summary>
     private const string FileTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
+    /// <summary>
+    /// How long record files are kept when no TTL is configured (<c>CacheTtlHours=0</c>,
+    /// or the CLI's <c>--cache-ttl 0</c>).
+    ///
+    /// <para><b>"Disables expiry" cannot mean "keeps everything forever" on disk.</b>
+    /// The two tiers are not symmetric. MemoryCache is keyed, so its working set is
+    /// the number of <i>distinct</i> keys and a refetch replaces the entry it had.
+    /// Disk is append-only by design: every flush writes a new immutable file, so a
+    /// key fetched again later appears <i>again</i> in a later file rather than
+    /// replacing anything. Rechecks refetch on purpose, and each instance writes its
+    /// own copy of what it fetched. Nothing collapses those duplicates — the sweep is
+    /// the only thing that removes them, so switching it off makes the directory grow
+    /// without bound even though memory stays flat.</para>
+    ///
+    /// <para>A day is chosen because it is the retention the design was sized against
+    /// before the default dropped to two hours, and because the file-count arithmetic
+    /// (<c>retention / flushInterval + 1</c>) stays comfortable there: 145 files per
+    /// instance at a ten-minute flush.</para>
+    ///
+    /// <para>Only <i>retention</i> is capped. Reading stays uncapped, so whatever
+    /// survives on disk is still loaded in full.</para>
+    /// </summary>
+    public static readonly TimeSpan UncappedRetention = TimeSpan.FromHours(24);
+
+    /// <summary>The retention actually applied: the configured TTL, or the floor above
+    /// when expiry is switched off.</summary>
+    public static TimeSpan EffectiveRetention(TimeSpan ttl)
+        => ttl > TimeSpan.Zero ? ttl : UncappedRetention;
+
     private static string NewRecordFileName(DateTime nowUtc) =>
         $"{RecordFilePrefix}{nowUtc.ToString(FileTimeFormat, CultureInfo.InvariantCulture)}"
         + $".{Guid.NewGuid().ToString("N")[..8]}{RecordFileExtension}";
@@ -238,13 +267,11 @@ public class DiskCacheService
     /// </summary>
     public static void Sweep(string cacheDir, TimeSpan ttl)
     {
-        // A non-positive TTL means "no expiry", not "everything expired" — without
-        // this the cutoff would be now and the sweep would delete the whole cache on
-        // the first tick.
-        if (ttl <= TimeSpan.Zero) return;
-
+        // A non-positive TTL means "no expiry", not "everything expired" — taking it
+        // literally would put the cutoff at now and delete the whole cache on the
+        // first tick. It does not mean "never sweep" either: see UncappedRetention.
         var now = DateTime.UtcNow;
-        var cutoff = now - ttl;
+        var cutoff = now - EffectiveRetention(ttl);
 
         // Only files this service is known to have written, matched by name rather
         // than by a "*.json" glob. The cache directory is configurable, and an
@@ -910,8 +937,12 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
     private readonly SemaphoreSlim _lock = new(1, 1);
     private bool _disposed;
 
+    /// <param name="ttl">Retention for the sweep. Required rather than optional: it
+    /// decides what gets deleted, and a silently defaulted zero would apply the
+    /// <see cref="DiskCacheService.UncappedRetention"/> floor to a directory the
+    /// caller never meant to have swept.</param>
     public BackgroundCacheFlusher(string cacheDir, SmtpProbeService smtp, HttpProbeService http,
-        DnsResolverService dns, TimeSpan interval, TimeSpan ttl = default,
+        DnsResolverService dns, TimeSpan interval, TimeSpan ttl,
         DomainResultStore? domainResults = null)
     {
         _cacheDir = cacheDir;
@@ -936,9 +967,11 @@ public sealed class BackgroundCacheFlusher : IAsyncDisposable
         try
         {
             await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns, _domainResults);
-            // Cheap when there is nothing to do, and it is the only thing that
-            // removes files and folders once a process stops restarting.
-            if (_ttl > TimeSpan.Zero) DiskCacheService.Sweep(_cacheDir, _ttl);
+            // Cheap when there is nothing to do, and it is the only thing that removes
+            // files and folders once a process stops restarting. Runs unconditionally:
+            // a zero TTL falls back to a retention floor rather than switching the
+            // sweep off, or an append-only directory would grow for ever.
+            DiskCacheService.Sweep(_cacheDir, _ttl);
         }
         finally
         {

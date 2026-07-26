@@ -546,13 +546,121 @@ public sealed class DiskCacheRecordFileTests : IDisposable
     }
 
     [Fact]
-    public void SweepDeletesNothingWhenTheTtlIsZero()
+    public void AZeroTtlKeepsFilesInsideTheRetentionFloor()
     {
-        var stale = WriteForeignFile("deadpod", DateTime.UtcNow.AddDays(-365));
+        // Zero means "no expiry", not "everything expired" — taking it literally would
+        // put the cutoff at now and delete the whole cache on the first sweep.
+        var recent = WriteForeignFile("livepod", DateTime.UtcNow.AddHours(-1));
 
         DiskCacheService.Sweep(_dir, TimeSpan.Zero);
 
-        Assert.True(File.Exists(stale));
+        Assert.True(File.Exists(recent));
+    }
+
+    [Fact]
+    public void AZeroTtlStillSweepsAtTheRetentionFloor()
+    {
+        // ...and it does not mean "never sweep" either. Memory is keyed, so a refetch
+        // replaces its entry and the working set stays flat. Disk is append-only: the
+        // same key fetched again lands in a *later* file rather than replacing
+        // anything, and every recheck and every instance adds more. The sweep is the
+        // only thing that removes them, so switching it off grows the directory
+        // without bound.
+        var inside = WriteForeignFile("livepod",
+            DateTime.UtcNow - DiskCacheService.UncappedRetention + TimeSpan.FromHours(1));
+        var beyond = WriteForeignFile("deadpod",
+            DateTime.UtcNow - DiskCacheService.UncappedRetention - TimeSpan.FromHours(1));
+
+        DiskCacheService.Sweep(_dir, TimeSpan.Zero);
+
+        Assert.True(File.Exists(inside), "a file inside the floor should be kept");
+        Assert.False(File.Exists(beyond), "a file past the floor should be swept");
+    }
+
+    [Fact]
+    public async Task AZeroTtlBoundsHowManyFilesAccumulate()
+    {
+        // The end-to-end shape of the same thing: flush repeatedly with expiry off,
+        // back-date the files as an instance running for days would, and check the
+        // directory does not simply keep everything.
+        for (var i = 0; i < 5; i++)
+            await SaveAsync(StoreWith($"d{i}.example"));
+
+        var files = RecordFiles();
+        Assert.Equal(5, files.Length);
+
+        // Age three of them past the floor, as they would be after a couple of days.
+        foreach (var path in files.Take(3))
+        {
+            var aged = Path.Combine(Path.GetDirectoryName(path)!,
+                $"cache.{DateTime.UtcNow - DiskCacheService.UncappedRetention - TimeSpan.FromHours(1):yyyyMMdd'T'HHmmssfff}Z"
+                + $".{Guid.NewGuid().ToString("N")[..8]}.jsonl");
+            File.Move(path, aged);
+        }
+
+        DiskCacheService.Sweep(_dir, TimeSpan.Zero);
+
+        Assert.Equal(2, RecordFiles().Length);
+    }
+
+    // ── The flusher's sweep ──────────────────────────────────────────────
+    //
+    // The load sweeps once, at startup. After that the flush timer is the only thing
+    // that ever removes a file, so a long-running instance depends entirely on it.
+
+    private async Task RunFlusherUntilAsync(TimeSpan ttl, Func<bool> done, DomainResultStore? store = null)
+    {
+        var flusher = new BackgroundCacheFlusher(_dir, _smtp, _http, _dns,
+            TimeSpan.FromMilliseconds(50), ttl, store);
+        try
+        {
+            for (var i = 0; i < 100 && !done(); i++) await Task.Delay(50);
+        }
+        finally
+        {
+            await flusher.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task TheFlusherSweepsOnItsTimer()
+    {
+        var stale = WriteForeignFile("deadpod", DateTime.UtcNow.AddHours(-48));
+
+        await RunFlusherUntilAsync(TimeSpan.FromHours(24), () => !File.Exists(stale),
+            StoreWith("something.example"));
+
+        Assert.False(File.Exists(stale));
+    }
+
+    [Fact]
+    public async Task TheFlusherSweepsEvenWithNothingToWrite()
+    {
+        // The save returns early when no bag has anything queued. The sweep must not
+        // ride on that: an instance that has gone quiet still has to clear out the
+        // files it wrote earlier, and the folders of instances that have gone.
+        var stale = WriteForeignFile("deadpod", DateTime.UtcNow.AddHours(-48));
+
+        await RunFlusherUntilAsync(TimeSpan.FromHours(24), () => !File.Exists(stale));
+
+        Assert.False(File.Exists(stale));
+        Assert.Empty(RecordFiles());
+    }
+
+    [Fact]
+    public async Task TheFlusherStillSweepsWhenExpiryIsDisabled()
+    {
+        // The case this whole floor exists for: a long-running instance with
+        // CacheTtlHours=0. Nothing else would ever delete a file between restarts,
+        // and each flush appends another one.
+        var stale = WriteForeignFile("deadpod",
+            DateTime.UtcNow - DiskCacheService.UncappedRetention - TimeSpan.FromHours(1));
+        var live = WriteForeignFile("livepod", DateTime.UtcNow.AddHours(-1));
+
+        await RunFlusherUntilAsync(TimeSpan.Zero, () => !File.Exists(stale));
+
+        Assert.False(File.Exists(stale), "expiry off must not mean the sweep is off");
+        Assert.True(File.Exists(live), "a file inside the floor should survive");
     }
 
     [Fact]

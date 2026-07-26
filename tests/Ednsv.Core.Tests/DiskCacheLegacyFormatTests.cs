@@ -142,15 +142,19 @@ public sealed class DiskCacheLegacyFormatTests : IDisposable
     }
 
     [Fact]
-    public async Task Sweep_KeepsEverythingWhenTheTtlIsZero()
+    public async Task Sweep_WithAZeroTtlKeepsRecentFilesButStillClearsAncientOnes()
     {
-        // Zero means "no expiry", not "everything expired". Treating the cutoff as
-        // now would delete the whole cache on the first sweep.
-        var legacy = WriteDomainResults("domain-results.json", "legacy.example", DateTime.UtcNow);
-        File.SetLastWriteTimeUtc(legacy, DateTime.UtcNow.AddDays(-365));
+        // Zero means "no expiry", not "everything expired" — and not "never sweep"
+        // either, or an append-only cache directory would grow for ever. A retention
+        // floor applies instead; see DiskCacheService.UncappedRetention.
+        var recent = WriteDomainResults("domain-results.poda.json", "recent.example", DateTime.UtcNow);
+        var ancient = WriteDomainResults("domain-results.json", "ancient.example", DateTime.UtcNow);
+        File.SetLastWriteTimeUtc(recent, DateTime.UtcNow.AddHours(-1));
+        File.SetLastWriteTimeUtc(ancient, DateTime.UtcNow.AddDays(-365));
 
         await LoadAsync(TimeSpan.Zero);
 
-        Assert.True(File.Exists(legacy));
+        Assert.True(File.Exists(recent), "a file inside the retention floor should be kept");
+        Assert.False(File.Exists(ancient), "a file far past the floor should be swept");
     }
 }
