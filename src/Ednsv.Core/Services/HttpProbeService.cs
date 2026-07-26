@@ -48,7 +48,10 @@ public class HttpProbeService
     /// </param>
     /// <param name="timeoutSeconds">Per-request HTTP timeout. Default 10s.</param>
     /// <param name="maxConcurrency">Cap on simultaneous outbound requests. Default 20.</param>
-    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10, int maxConcurrency = 20, RedisConnection? redis = null)
+    /// <param name="persistToDisk">False when no cache directory is configured — see
+    /// <see cref="SmtpProbeService"/>.</param>
+    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10,
+        int maxConcurrency = 20, RedisConnection? redis = null, bool persistToDisk = true)
     {
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         ProbeCacheL2<GetResult>? getL2 =
@@ -71,8 +74,8 @@ public class HttpProbeService
                         return e == null ? null : new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType };
                     })
                 : null;
-        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2);
-        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl, getHeadersL2);
+        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2, persistToDisk);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl, getHeadersL2, persistToDisk);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true

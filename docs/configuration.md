@@ -20,8 +20,11 @@ same name (top-level keys map directly — e.g. `DataDir` → `DataDir`).
 | Key                    | Type     | Default          | Notes |
 |------------------------|----------|------------------|-------|
 | `DataDir`              | path     | `.ednsv-data`    | Root directory for persistent state. `cache/` and `auth/` are created underneath it. |
-| `CacheTtlHours`        | int      | `24`             | TTL for the in-memory and on-disk DNS/SMTP/HTTP probe caches. `0` disables expiry. |
-| `FlushIntervalSeconds` | int      | `120`            | How often the cache manager flushes pending writes to `DataDir/cache/`. |
+| `CacheDir`             | path     | `{DataDir}/cache`| Where probe results are persisted. Set to `none` to turn the disk tier off entirely (memory + Redis only). On a multi-pod deployment **with Redis**, point it at a pod-local volume instead — see [caching-architecture.md](caching-architecture.md) and [horizontal-scaling.md](horizontal-scaling.md). Blank resolves to the default, not to off. |
+| `CacheTtlHours`        | int      | `2`              | TTL for the in-memory and on-disk DNS/SMTP/HTTP probe caches. `0` means no cap. Was 24; lowered because the cache no longer rewrites everything it knows on every flush, so a shorter retention costs little and bounds both file count and staleness. |
+| `FlushIntervalSeconds` | int      | `600`            | How often newly-fetched results are written out. The **only** flush trigger, and each flush writes one immutable file, so it is also the file granularity: live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` (13 at the defaults). An ungraceful crash loses at most one interval. |
+| `CacheShutdownFlushSeconds` | int | `5`              | Upper bound on the final flush at shutdown, so a slow or wedged mount cannot hold the process past its termination grace period. |
+| `DnsCacheMinTtlSeconds`| int      | `0`              | `0` = off: every cached DNS answer gets the full `CacheTtlHours`. Above zero, answers are bounded by their own record TTLs as `clamp(minimum record TTL, this floor, CacheTtlHours)`. |
 | `DnsServer`            | string   | OS resolvers     | Comma-separated list of DNS resolver IPs (e.g. `1.1.1.1,8.8.8.8`). Invalid entries are ignored; if none parse, OS resolvers are used. |
 | `DkimSelectors`        | string   | built-in list    | Comma-separated default DKIM selectors used when seeding `config.json` on first run. After first run the persisted config wins. |
 | `EnableSmtpProbes`     | bool     | `true`           | Server-wide **default** for the validator UI — surfaced via `/api/defaults`. POST `/api/validate` request body overrides; new web sessions inherit this when the user hasn't ticked anything. |

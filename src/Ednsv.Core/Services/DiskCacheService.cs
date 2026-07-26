@@ -327,7 +327,12 @@ public class DiskCacheService
             AtomicFile.SweepStaleTemps(Path.Combine(cacheDir, f));
         Sweep(cacheDir, ttl);
 
-        var cutoff = DateTime.UtcNow - ttl;
+        // A non-positive TTL means "no cap", which is what CacheTtlHours=0 has always
+        // been documented as and what the in-memory cache already did with it. Taking
+        // it literally would put the cutoff at now and discard the entire cache on
+        // every load. Entries are still bounded by their own expiry, so with gating on
+        // the record TTLs govern and only the floor applies.
+        var cutoff = ttl > TimeSpan.Zero ? DateTime.UtcNow - ttl : DateTime.MinValue;
 
         var (records, recordOldest) = await LoadRecordFilesAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
         var (legacy, legacyOldest) = await LoadLegacyAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);

@@ -137,7 +137,7 @@ public class DiskCacheTests : IDisposable
     // ── Per-entry TTL expiry ────────────────────────────────────────────
 
     [Fact]
-    public async Task LoadAsync_ExpiredEntries_FilteredOut()
+    public async Task LoadAsync_EntriesOlderThanTheTtl_FilteredOut()
     {
         var dns1 = new DnsResolverService();
         var smtp1 = new SmtpProbeService();
@@ -146,13 +146,29 @@ public class DiskCacheTests : IDisposable
         await dns1.QueryAsync("example.com", QueryType.A);
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
+        // A one-tick TTL: everything on disk was written before the cutoff.
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromTicks(1),
+            new SmtpProbeService(), new HttpProbeService(), new DnsResolverService());
 
-        // Load with zero TTL — all entries should be expired
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.Zero, smtp2, http2, dns2);
         Assert.Null(loadResult);
+    }
+
+    [Fact]
+    public async Task LoadAsync_ZeroTtl_MeansNoCapNotEverythingExpired()
+    {
+        // CacheTtlHours=0 is documented as "no expiry" and is honoured that way in
+        // memory. Taking it literally on disk would put the cutoff at now and discard
+        // the whole cache on every load.
+        var dns1 = new DnsResolverService();
+        await dns1.QueryAsync("example.com", QueryType.A);
+        await DiskCacheService.SaveAsync(_cacheDir, new SmtpProbeService(), new HttpProbeService(), dns1);
+
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.Zero,
+            new SmtpProbeService(), new HttpProbeService(), new DnsResolverService());
+
+        Assert.NotNull(loadResult);
+        Assert.True(loadResult!.DnsQueries > 0);
+        Assert.NotEmpty(RecordFiles()); // and the sweep did not delete them either
     }
 
     [Fact]

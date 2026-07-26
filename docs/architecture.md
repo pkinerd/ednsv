@@ -60,7 +60,7 @@ graph TD
     DNS --> PC
     SMTP --> PC
     HTTP --> PC
-    PC -->|export log| FLUSH
+    PC -->|write bag| FLUSH
     FLUSH --> DISK
     CM --> FLUSH
     CM --> DISK

@@ -50,10 +50,26 @@ else
 
 // ── Configuration ────────────────────────────────────────────────────────
 var dataDir = builder.Configuration.GetValue<string>("DataDir") ?? ".ednsv-data";
-var cacheDir = Path.Combine(dataDir, "cache");
+// Defaults to {DataDir}/cache, so an existing deployment is unchanged. Set it to a
+// pod-local volume to keep cache traffic off a shared mount — the recommended shape
+// alongside Redis — or to "none" to turn the disk tier off entirely.
+//
+// Blank resolves to the default rather than to "off". It has to: GetValue<string>
+// returns the empty string for a JSON null, so anything looser would disable the disk
+// cache for every deployment whose settings file so much as mentions the key.
+var cacheDirSetting = builder.Configuration.GetValue<string>("CacheDir");
+var cacheDir = string.IsNullOrWhiteSpace(cacheDirSetting)
+    ? Path.Combine(dataDir, "cache")
+    : cacheDirSetting.Trim();
+var diskCacheEnabled = !CacheManager.IsDisabled(cacheDir);
 var authDir = Path.Combine(dataDir, "auth");
-var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
-var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
+// 2h rather than 24h. With the disk cache no longer rewriting everything it knows on
+// every flush, a shorter retention costs little and bounds both the file count and
+// how stale a served answer can be. 0 still means "no cap".
+var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 2);
+// The flush timer is now the only writer, so the interval is also the file
+// granularity: live files per instance are TTL / interval + 1, or 13 at the defaults.
+var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 600);
 // Upper bound on the shutdown cache flush, so a slow mount cannot push the
 // process past its termination grace period.
 var shutdownFlushSeconds = builder.Configuration.GetValue<int>("CacheShutdownFlushSeconds", 5);
@@ -154,19 +170,19 @@ if (!string.IsNullOrEmpty(dnsServerStr))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
     dns = dnsServers.Count > 0
-        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis)
-        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled);
 }
-var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis);
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis, persistToDisk: diskCacheEnabled);
 // HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
 // BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
 // isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
 var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis, persistToDisk: diskCacheEnabled);
 if (!validateHttpsCerts)
     Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
@@ -479,6 +495,25 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 var app = builder.Build();
+
+// ── Disk cache posture ───────────────────────────────────────────────────
+if (!diskCacheEnabled)
+{
+    if (redis.Enabled)
+        app.Logger.LogInformation(
+            "Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only.");
+    else
+        app.Logger.LogWarning(
+            "Disk cache disabled (CacheDir=none) and no Redis is configured, so nothing survives a restart: "
+            + "every probe result is refetched from the network on each start. Reasonable for a dev box, "
+            + "almost certainly a misconfiguration in production.");
+}
+else
+{
+    app.Logger.LogInformation(
+        "Disk cache at {CacheDir} (TTL {Ttl}h, flush every {Interval}s).",
+        cacheDir, cacheTtlHours, flushIntervalSeconds);
+}
 
 // ── Load cache from disk, in the background ──────────────────────────────
 //

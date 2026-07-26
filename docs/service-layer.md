@@ -125,7 +125,7 @@ fixed — their whole point is a short skip-if-slow ceiling.
 | `_axfrResponseCache` | `ConcurrentDictionary` | `(ip, domain)` tuple |
 | `_unreachableServerCounts` | `ConcurrentDictionary` | server-IP, value `(count, lastFailure)` |
 
-`shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk export log while still caching them in MemoryCache for the rest of the current process.
+`shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk write bag while still caching them in MemoryCache for the rest of the current process.
 
 ### Unreachable-server decay
 

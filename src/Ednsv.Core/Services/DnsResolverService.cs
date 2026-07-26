@@ -135,16 +135,19 @@ public class DnsResolverService
     /// Creates a resolver using the specified DNS server(s).
     /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
-    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null, RedisConnection? redis = null)
-        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning, redis) { }
+    public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null,
+        RedisConnection? redis = null, bool persistToDisk = true)
+        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning, redis, persistToDisk) { }
 
     /// <summary>
     /// Creates a resolver that uses the OS-configured DNS resolvers.
     /// </summary>
-    public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null, RedisConnection? redis = null)
-        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning, redis);
+    public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null,
+        RedisConnection? redis = null, bool persistToDisk = true)
+        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning, redis, persistToDisk);
 
-    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl, DnsTuning? tuning, RedisConnection? redis = null)
+    private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl,
+        DnsTuning? tuning, RedisConnection? redis = null, bool persistToDisk = true)
     {
         var t = tuning ?? new DnsTuning();
         _queryTimeout = TimeSpan.FromSeconds(t.QueryTimeoutSeconds);
@@ -207,8 +210,8 @@ public class DnsResolverService
         // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
         _dnsMinTtl = t.CacheMinTtlSeconds > 0 ? TimeSpan.FromSeconds(t.CacheMinTtlSeconds) : TimeSpan.Zero;
-        _unreachableBag = new WriteBag<int>(cacheTtl);
-        _axfrBag = new WriteBag<bool>(cacheTtl);
+        _unreachableBag = new WriteBag<int>(cacheTtl, persistToDisk);
+        _axfrBag = new WriteBag<bool>(cacheTtl, persistToDisk);
         ProbeCacheL2<IDnsQueryResponse>? DnsL2(string type) =>
             redis != null && redis.Enabled
                 ? new ProbeCacheL2<IDnsQueryResponse>(redis, type, cacheTtl,
@@ -229,9 +232,9 @@ public class DnsResolverService
                     list => JsonSerializer.Serialize(list),
                     json => JsonSerializer.Deserialize<List<string>>(json))
                 : null;
-        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns"));
-        _ptrCache = new ProbeCache<List<string>>(cacheTtl, ptrL2);
-        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"));
+        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns"), persistToDisk);
+        _ptrCache = new ProbeCache<List<string>>(cacheTtl, ptrL2, persistToDisk);
+        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"), persistToDisk);
     }
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)

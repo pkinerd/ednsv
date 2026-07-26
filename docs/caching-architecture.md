@@ -20,7 +20,7 @@ flowchart TD
 
     subgraph Tier3["Tier 3: Disk Persistence"]
         direction TB
-        DCACHE["DiskCacheService<br/><i>JSON files under DataDir/cache/</i>"]
+        DCACHE["DiskCacheService<br/><i>one JSONL file per flush,<br/>under CacheDir/{instance}/</i>"]
     end
 
     CHECK["Check requests data"] --> SMTPC
@@ -28,12 +28,12 @@ flowchart TD
     PC -->|miss| DEDUP
     DEDUP -->|miss| NET["Network Request<br/><i>DNS / SMTP / HTTP</i>"]
     NET -->|result| PC
-    PC -->|"export log<br/>(only if shouldPersist)"| DCACHE
+    PC -->|"write bag<br/>(only if shouldPersist)"| BG
 
-    CM["CacheManager"] -->|LoadAsync| DCACHE
-    DCACHE -->|Import| PC
-    CM -->|FlushAsync / RequestFlush| BG["BackgroundCacheFlusher<br/><i>SemaphoreSlim-serialised</i>"]
-    BG --> DCACHE
+    CM["CacheManager"] -->|"LoadAsync<br/><i>background, at startup</i>"| DCACHE
+    DCACHE -->|"Import<br/><i>add-if-absent</i>"| PC
+    CM -->|StartBackgroundFlusher| BG["BackgroundCacheFlusher<br/><i>timer only</i>"]
+    BG -->|"drain bags → one new file"| DCACHE
 
     RH["RecheckHelper.CurrentRecheckDeps<br/><i>AsyncLocal&lt;CacheDep&gt;</i>"] -.->|bypass flag| PC
 
@@ -86,7 +86,7 @@ When multiple checks request the same DNS record simultaneously, only **one** ne
 
 ### `shouldPersist` Predicate (Always-Cache, Maybe-Persist)
 
-`GetOrCreateAsync` accepts an optional `shouldPersist: Func<TValue, bool>` predicate that decides whether the result is added to the **disk export log**. The predicate does **not** control in-memory caching — every successful factory result is written to MemoryCache so duplicate calls within the same process are still deduped:
+`GetOrCreateAsync` accepts an optional `shouldPersist: Func<TValue, bool>` predicate that decides whether the result is added to the **write bag**. The predicate does **not** control in-memory caching — every successful factory result is written to MemoryCache so duplicate calls within the same process are still deduped:
 
 | `shouldPersist` returns | MemoryCache | Export log (disk) |
 |-------------------------|-------------|-------------------|
@@ -110,9 +110,21 @@ Predicates that aren't supplied (`AXFR`, in-flight RCPT/relay caches that use ra
 
 `GetOrCreateAsync` also accepts an optional `onHit: Action`. Services use it to drive the cumulative `CacheHits` counter — wiring the increment into the cache itself avoids miscounts when callers (e.g. `QuerySpeculativeAsync`) bypass `GetOrCreateAsync` and call `TryGet` directly.
 
-### Export Log
+### Write Bag
 
-A separate `ConcurrentDictionary<string, TValue>` tracks values eligible for disk persistence. It's **write-through** in the persisted path (`Set()` writes to both MemoryCache and the export log). `SetMemoryOnly()` writes only to MemoryCache, so the export log records only entries that should survive a process restart. The export log is read on flush; expired MemoryCache entries are filtered out at export time.
+A separate `ConcurrentDictionary<string, BagEntry<TValue>>` holds values **queued for the next flush**. `Set()` writes to both MemoryCache and the bag; `SetMemoryOnly()` writes only to MemoryCache.
+
+What the bag *excludes* is the point of its design. Three kinds of value are cached but never queued:
+
+- results that fail `shouldPersist` (transient errors, which must not outlive the process);
+- values read from the shared **Redis L2** — whichever instance fetched them has already written them to its own disk, and persisting them here duplicates that work onto ours;
+- entries **imported from disk at startup** — they are on disk by definition.
+
+That last exclusion is the one that mattered. Imports used to feed straight back into the export log, so every entry read at startup was re-serialised and rewritten on every flush for the life of the process.
+
+A flush snapshots the bag, writes those records, and removes **exactly what it wrote**, matched by reference. Nothing leaves the bag until the file has landed, so a failed write simply retries next tick, and a fresher value that arrived for the same key mid-write survives. `BagEntry` states its reference equality explicitly rather than inheriting it: `ConcurrentDictionary.TryRemove(KeyValuePair)` compares values with `EqualityComparer<T>.Default`, so any value-based equality there would let a flush silently delete the newer entry that replaced the one it persisted.
+
+The four caches that live in plain dictionaries rather than a `ProbeCache` — RCPT probes, relay tests, AXFR results and unreachable-server counts — carry a `WriteBag<T>` for the same reason. Serialising them whole on each flush would mean a flush always found something to write, which defeats the dirty-flag behaviour below.
 
 ### Value-Type Variant
 
@@ -130,36 +142,105 @@ This tier exists because during recheck mode, the service-level ProbeCache is by
 
 ## Tier 3: Disk Persistence
 
-`DiskCacheService` (`src/Ednsv.Core/Services/DiskCacheService.cs`) persists cache to JSON files under `<DataDir>/cache/` (`DataDir` defaults to `.ednsv-data`):
+`DiskCacheService` (`src/Ednsv.Core/Services/DiskCacheService.cs`) persists probe results under `CacheDir` (defaults to `<DataDir>/cache`; `DataDir` itself defaults to `.ednsv-data`).
 
-| File | Contents |
-|------|----------|
-| `dns-queries.json` | Standard DNS query responses |
-| `dns-server-queries.json` | Server-specific DNS queries |
-| `ptr-lookups.json` | Reverse DNS (PTR) lookups |
-| `smtp-probes.json` | SMTP handshake results |
-| `port-probes.json` | Port reachability results |
-| `rcpt-probes.json` | RCPT (address verification) results |
-| `relay-tests.json` | Open relay test results |
-| `http-get.json` | HTTP GET response bodies |
-| `http-get-headers.json` | HTTP GET responses with Content-Type |
-| `axfr-results.json` | Zone transfer results |
-| `unreachable-servers.json` | Servers that failed MaxRetries (counter only — decay timestamp is recomputed on import) |
-| `domain-results.json` | Per-domain validation summaries (for recheck decisions) |
+### One immutable file per flush
 
-Each entry includes a `CachedAtUtc` timestamp. On load, entries older than the configured TTL (`CacheTtlHours`, default 24 hours) are discarded.
+Each flush writes everything queued since the last one into a single new file:
 
-**Merge strategy**: On save, new entries are merged with existing disk cache entries. Older entries are preserved — only updated if a newer entry exists for the same key. `SaveDomainResultAsync` performs an atomic read-modify-write under a static `SemaphoreSlim(1, 1)` and writes via `temp file → File.Move(overwrite)` to keep concurrent web validations from clobbering each other.
+```
+<CacheDir>/<instance>/cache.<utc>.<nonce>.jsonl
+```
 
-### Concurrent flush serialisation
+written once via `AtomicFile` (temp + rename) and never touched again. There are no appends, no rotation and no compaction — nothing is re-serialised on a later flush just because it is still cached.
 
-`BackgroundCacheFlusher` owns a `SemaphoreSlim(1, 1)` and exposes:
+`<instance>` is the pod name (`HOSTNAME`, falling back to the machine name), so replicas sharing a mount never write the same file. That matters: a single file per cache type meant N pods doing a read-modify-write of one file on their own timers, quietly dropping each other's entries, with no coordination covering it.
 
-- `FlushAsync()` — acquires the lock with `WaitAsync(0)` (non-blocking try-acquire) and returns immediately when a flush is already in progress, so timer ticks and on-completion flushes don't pile up.
-- `RequestFlush()` — fire-and-forget background flush; safe to call from request paths (`/api/validate` calls it after each domain).
-- `DisposeAsync()` — disposes the timer and performs one final blocking flush under the lock.
+Consequences, all of which remove work rather than adding it:
 
-`CacheManager.FlushAsync()` routes through the flusher's lock when one is active; otherwise it calls `DiskCacheService.SaveAsync` directly. This guarantees there is at most one in-flight disk write at any time across all paths (timer, manual flush, dispose), eliminating concurrent-write races on the JSON files.
+- no torn or interleaved lines — every file is written whole and atomically;
+- no conflict when a CLI run shares a hostname with the web service; they write different filenames;
+- exactly one line per key per file, because the bag dedupes within a flush;
+- the sweep needs no exception for "the file being written right now" — there isn't one.
+
+### Record format
+
+One self-describing record per line, so all cache types share a file:
+
+```json
+{"t":"dns","k":"q:example.com:MX","w":"2026-07-25T02:00:00Z","e":"2026-07-25T02:30:00Z","v":{…}}
+```
+
+| field | meaning |
+|-------|---------|
+| `t` | cache type — `dns`, `dns-srv`, `ptr`, `smtp`, `port`, `rcpt`, `relay`, `http-get`, `http-get-headers`, `axfr`, `unreachable`, `domain-results` |
+| `k` | the cache's own key, written and read back verbatim |
+| `w` | when the value was fetched — orders entries across instances on merge |
+| `e` | when it stops being usable |
+| `v` | the serialised value |
+
+**Both timestamps are needed.** `w` orders; `e` decides liveness. They cannot be collapsed into one, because with DNS TTL gating a value fetched later can expire sooner than one fetched earlier. And `w` must be per-record rather than taken from the filename: two instances flushing at different moments can hold entries fetched in the opposite order.
+
+### DNS record-TTL gating
+
+By default every cached DNS answer gets the full `CacheTtlHours`, regardless of what the zone published — so a domain rotating records every thirty seconds is served from cache for hours.
+
+Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR caches instead bound each entry by `clamp(minimum record TTL, DnsCacheMinTtlSeconds, CacheTtlHours)`. The floor stops short-TTL domains forcing a refetch on nearly every validation; the cap must remain the ceiling, because the sweep deletes a record file at `fileTime + CacheTtlHours` and a longer-lived entry could be swept while still considered live.
+
+An **empty answer section** falls back to the floor. That is not an edge case to shrug at: NXDOMAIN and NODATA are real responses, they are cached, and their answer sections are always empty. The minimum comes from `InitialTimeToLive`, not `TimeToLive` — the latter counts down while DnsClient holds the record, which would shorten every entry by however long the response sat around.
+
+**It ships off** (`DnsCacheMinTtlSeconds=0`). This release is "stop rewriting everything, and 2 hours instead of 24"; gating is a second, separately observable change to enable once the effect of the shorter cap has been seen on its own.
+
+### Load
+
+The load runs on a **background task**, not before the app starts serving — awaiting it made startup latency scale with replica count, since on a shared mount every instance reads every other instance's folder and a rolling deploy has all of them doing it at once. `/health/ready` deliberately does not wait; the first validations after a deploy run cold.
+
+Every `*.jsonl` under the cache directory is scanned, keeping the entry with the latest `w` per `(t, k)`. Two expiry rules apply: a record is dropped if its own `e` has passed, and equally if `w` is older than the reader's configured `CacheTtlHours` — a process running without a TTL stamps no expiry of its own, and the reader's setting must still bound how stale a value it accepts.
+
+The scan reads each line's envelope with a `Utf8JsonReader` and **skips the `v` payload**, so scanning is O(all lines) in cheap work while the expensive part — `DnsCacheSerializer.DeserializeResponse` rebuilding a full `IDnsQueryResponse`, which dominates the load — is O(live keys).
+
+Imports are **add-if-absent**. Because the instance is already serving, a validation can fetch and cache a key before the loader reaches it; that value came off the network just now and the disk copy did not. A fetch still in flight counts as present. Imported entries carry their own `e` into MemoryCache rather than getting a fresh TTL, so a nearly-dead entry is not resurrected for another full period.
+
+When Redis is configured, each imported entry is also published to the shared L2 with `SET NX` and its **remaining** life. `NotExists` keeps a cluster-wide restart idempotent and stops instances holding overlapping views of the same files racing to publish their own copies over each other's.
+
+An unparseable line is skipped rather than failing its file; an unreadable file rather than failing the load.
+
+### Flush — the timer, and nothing else
+
+```
+every FlushIntervalSeconds:
+    snapshot each cache's bag
+    if all empty -> return                 # the bag IS the dirty flag
+    serialise every snapshot into one file, temp + rename
+    on success: remove exactly the entries written, matched by reference
+    on failure: leave the bags untouched; the next tick retries
+```
+
+There is no explicit flush endpoint and no flush-on-completion. An ungraceful crash loses at most one interval, which is why the interval is ten minutes rather than an hour; a graceful shutdown flushes via an `ApplicationStopping` hook bounded by `CacheShutdownFlushSeconds`.
+
+An idle process writes nothing at all, because the bags are empty.
+
+### Sweep
+
+Runs on the background load and on each flush tick, best-effort.
+
+Record files are deleted by **filename arithmetic alone**: every entry in a file was written no later than the file was, so once `fileTime + CacheTtlHours` is past, nothing in it can still be live. The rule applies to this instance's files exactly as to any other's. Legacy per-type files are deleted by mtime, matched by name rather than by a `*.json` glob so an operator's unrelated files are never taken with them.
+
+A **folder** is removed only when it is empty, is not ours, and its own mtime is past the cutoff. The age gate makes this safe against an instance that has just started and not yet flushed — creating the folder sets a fresh mtime. Note the timing: removing the last file updates the parent's mtime, so the clock only starts once the folder is already empty, and a dead instance's folder lingers for roughly twice the TTL. Every flush calls `Directory.CreateDirectory` regardless, because a *live* instance idle longer than the TTL writes no files, ages out, and has its folder legitimately removed.
+
+Directory mtime is reliable on POSIX but not on SMB/Azure Files, where servers may not update it on entry changes; there the gate degrades to near-immediate removal, which the `CreateDirectory` guard already covers.
+
+Pod-name reuse is not a hazard in either direction: Deployment names are never reused, so an orphaned folder is definitively dead; StatefulSet names are, and a restarting pod simply finds its own still-valid entries.
+
+### File count
+
+Live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` — **13 at the defaults** (2h / 600s). Across ten replicas that is ~130 files in ten folders. An operator running `CacheTtlHours=24` with 30-minute flushes gets 49 per instance. Total opens grow with replicas × retention; that product is the number to watch.
+
+### Legacy format
+
+Files written by the previous one-file-per-cache-type layout (`dns-queries.json`, `smtp-probes.json`, …, including per-instance variants such as `dns-queries.pod7.json`) are still **read**, so an upgrade does not cold-start. Nothing writes them any more, and the sweep removes them once they are past the TTL. Record files are read first and legacy files second, so with add-if-absent imports a record always beats a legacy copy of the same key.
+
+`domain-results` now expires on load like everything else. The old reader had no TTL filter at all, so recheck decisions could rest on month-old records.
 
 ### Optional Redis L2 (distributed mode)
 
@@ -200,13 +281,30 @@ Each service maintains specific ProbeCache instances:
 
 `CacheManager` (`src/Ednsv.Core/Services/CacheManager.cs`) orchestrates the cache lifecycle and implements `IAsyncDisposable`:
 
-1. **LoadAsync(retryErrors)** — At startup, loads disk cache into service ProbeCache instances via `Import()`. Also reads `domain-results.json` into `_previousResults`. With `retryErrors=true`, drops cached SMTP probes whose stored result indicates a transient failure so they will be reprobed.
-2. **FlushAsync()** — Routes through `BackgroundCacheFlusher.FlushAsync` when a flusher is active (so timer flushes, on-completion flushes, and explicit calls all serialise on the same lock); falls back to `DiskCacheService.SaveAsync` when no flusher exists (CLI single-shot mode).
-3. **RequestFlush()** — Fires a non-blocking background flush via the flusher. The web API calls this after every job completes.
-4. **StartBackgroundFlusher(interval)** — Creates the periodic flusher (default `FlushIntervalSeconds=120`).
-5. **GetRecheckDeps(domain, minSeverity)** — Reads `_previousResults` to determine which cache types to bypass for a recheck, based on the previous validation's issue categories and the requested severity threshold. Returns `CacheDep.None` if the domain has no recorded prior result.
-6. **SaveDomainResultAsync(domain, summary)** — Updates the in-memory `_previousResults` map and writes `domain-results.json` (under the disk-service lock).
-7. **DisposeAsync()** — Disposes the flusher (which performs its final flush) or, if no flusher exists, performs one direct save before returning.
+1. **LoadAsync(retryErrors)** — Reads the disk cache into the service caches via `Import()`, including domain summaries. With `retryErrors=true`, drops cached entries whose stored result indicates a transient failure so they are reprobed. The web host runs this on a background task; the CLI awaits it, since a single-shot run needs the cache before it starts.
+2. **StartBackgroundFlusher(interval)** — Starts the periodic flusher (default `FlushIntervalSeconds=600`), which also runs the sweep on each tick.
+3. **FlushAsync()** — Routes through the flusher's lock when one is active; falls back to `DiskCacheService.SaveAsync` for CLI single-shot mode.
+4. **SaveDomainResult(domain, summary)** — Records a validation result. Synchronous and in-memory: it updates the map immediately and queues the write for the next flush, like every other cache. It used to do a full read-modify-write of one JSON file under a semaphore on *every completed validation* — the same amplification this design removes everywhere else, in the one file that also never expired anything.
+5. **GetRecheckDeps(domain, minSeverity)** — Reads the domain summaries to determine which cache types to bypass for a recheck. Returns `CacheDep.None` if the domain has no recorded prior result.
+6. **DisposeAsync()** — Disposes the flusher (which performs its final flush) or, without one, performs a direct save.
+
+The web host registers these singletons as pre-created instances, and the DI container only disposes what it **constructs** — so an explicit `ApplicationStopping` hook performs the shutdown flush. Without it every deploy silently discarded whatever had been gathered since the last periodic flush.
+
+### Turning the disk tier off
+
+`CacheDir=none` disables it entirely: no load, no flusher, no sweep, and — importantly — **nothing queued in the write bags**. That gate belongs on the caches themselves, not just the flusher, or the bags would grow for the life of the process with nothing draining them.
+
+Only the literal string `none` disables it. A blank value resolves to the default path, deliberately: `GetValue<string>` returns the *empty string* for a JSON `null`, so anything looser would turn the disk cache off for every deployment whose settings file merely mentions the key.
+
+Startup logs a warning when `CacheDir=none` **and** no Redis is configured. That is L1-only: the cache dies with the process and every restart is fully cold. Reasonable on a dev box, almost certainly a misconfiguration in production.
+
+### Removed: the cache-clear and cache-flush endpoints
+
+`POST /api/cache/flush` and `POST /api/cache/clear` are gone, along with `RequestFlush()`.
+
+Flushing sooner than the timer now only fragments storage. Clearing was worse: on a multi-pod deployment it returned 200 and audit-logged *"Cache CLEARED (memory + disk)"* while N-1 pods kept serving warm L1 — a control that reported success without doing the thing. **Recheck-all** covers the real need better: targeted, pod-agnostic, no admin rights, and it writes fresh results back. The 2-hour TTL is what makes that trade safe; at 24 hours the lack of a lever would have been too long.
+
+Both are breaking API changes for anyone scripting them. A manual purge now means deleting the files and restarting.
 
 ## Recheck System
 
@@ -215,7 +313,7 @@ The recheck feature allows re-running previously failing checks with fresh data,
 ```mermaid
 flowchart LR
     REQ["--recheck warning"] --> CM["CacheManager.GetRecheckDeps()"]
-    CM --> DR["Read domain-results.json<br/><i>Previous issues for domain</i>"]
+    CM --> DR["Read the domain summaries<br/><i>Previous issues for domain</i>"]
     DR --> MAP["RecheckHelper.GetDependenciesForIssues()<br/><i>Map categories → CacheDep flags</i>"]
     MAP --> FLAGS["CacheDep flags<br/><i>e.g., Dns | Smtp | Http</i>"]
     FLAGS --> AL["AsyncLocal&lt;CacheDep&gt;<br/><i>Flows through async calls</i>"]
@@ -234,7 +332,7 @@ flowchart LR
 
 4. **Fresh query**: The factory function runs, making a real network request.
 
-5. **Write back**: The fresh result is stored in MemoryCache (and the export log when `shouldPersist` returns true) — other concurrent validations benefit from the refreshed data, and the next non-recheck request serves the new value from cache.
+5. **Write back**: The fresh result is stored in MemoryCache (and the write bag when `shouldPersist` returns true) — other concurrent validations benefit from the refreshed data, and the next non-recheck request serves the new value from cache.
 
 > **CLI now uses the same mechanism as the web API.** Earlier versions physically deleted matching entries from MemoryCache for CLI rechecks (`ClearImportedEntriesForDomain`). That code path was removed; CLI rechecks now go through the same AsyncLocal bypass as the web API by setting `validator.RecheckDeps`. Fresh results overwrite the old entries on write-back.
 

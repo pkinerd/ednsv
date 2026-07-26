@@ -141,11 +141,17 @@ public class ProbeCache<TValue> where TValue : class
         set => TraceContext.Sink = value;
     }
 
-    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null)
+    // False when there is no disk tier configured. The gate belongs here rather than
+    // only on the flusher: with nothing draining it, a bag nobody writes out grows for
+    // the life of the process.
+    private readonly bool _persist;
+
+    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
+        _persist = persist;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
@@ -282,6 +288,8 @@ public class ProbeCache<TValue> where TValue : class
             _cache.Set(key, value, ttl.Value);
         else
             _cache.Set(key, value);
+
+        if (!_persist) return; // no disk tier — nothing would ever drain the bag
 
         var now = DateTime.UtcNow;
         _bag[key] = new BagEntry<TValue>(value, now, ttl.HasValue ? now + ttl.Value : DateTime.MaxValue);
@@ -445,10 +453,14 @@ public class ProbeCacheValue<TValue> where TValue : struct
 
     private sealed class Box { public TValue Value; }
 
-    public ProbeCacheValue(TimeSpan? ttl = null)
+    /// <summary>See <see cref="ProbeCache{T}"/> — false when there is no disk tier.</summary>
+    private readonly bool _persist;
+
+    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _persist = persist;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
@@ -526,6 +538,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
             _cache.Set(key, box, _ttl.Value);
         else
             _cache.Set(key, box);
+
+        if (!_persist) return; // see ProbeCache<T>.Set
 
         var now = DateTime.UtcNow;
         _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);

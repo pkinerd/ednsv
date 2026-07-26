@@ -26,9 +26,12 @@ public sealed class DomainResultStore
     private readonly ConcurrentDictionary<string, DomainResultSummary> _results = new();
     private readonly WriteBag<DomainResultSummary> _bag;
 
-    public DomainResultStore(TimeSpan? ttl)
+    /// <param name="persist">False when there is no disk tier configured: the map is
+    /// still kept, since recheck decisions within this process depend on it, but
+    /// nothing is queued for a write that will never happen.</param>
+    public DomainResultStore(TimeSpan? ttl, bool persist = true)
     {
-        _bag = new WriteBag<DomainResultSummary>(ttl);
+        _bag = new WriteBag<DomainResultSummary>(ttl, persist);
     }
 
     /// <summary>Every summary this process knows, keyed by lowercased domain.</summary>

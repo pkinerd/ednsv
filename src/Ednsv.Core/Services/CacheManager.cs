@@ -11,7 +11,33 @@ namespace Ednsv.Core.Services;
 /// </summary>
 public sealed class CacheManager : IAsyncDisposable
 {
+    /// <summary>
+    /// The value of <c>CacheDir</c> that turns the disk tier off entirely: no load,
+    /// no flusher, no sweep, and nothing queued in the caches' write bags.
+    ///
+    /// <para>A path-shaped switch rather than a path plus a boolean, matching the
+    /// existing sentinel convention (<see cref="AuthService.DisabledMarker"/>).
+    /// Deliberately <i>not</i> "unset means off", tempting as that is: the directory
+    /// is derived today and nobody sets a key that does not yet exist, so
+    /// unset-means-off would silently disable the disk cache on every existing
+    /// deployment the moment it upgraded.</para>
+    /// </summary>
+    public const string DisabledMarker = "none";
+
+    /// <summary>
+    /// True when this manager has no disk tier — see <see cref="DisabledMarker"/>.
+    ///
+    /// <para>Only the explicit marker counts. An empty or missing value is <b>not</b>
+    /// disabled, deliberately: <c>GetValue&lt;string&gt;</c> returns the empty string
+    /// for a JSON <c>null</c>, so treating blank as "off" would turn the disk cache
+    /// off for anyone whose settings file merely mentions the key. Callers resolve a
+    /// blank value to their own default path instead.</para>
+    /// </summary>
+    public static bool IsDisabled(string? cacheDir)
+        => string.Equals(cacheDir?.Trim(), DisabledMarker, StringComparison.OrdinalIgnoreCase);
+
     private readonly string _cacheDir;
+    private readonly bool _enabled;
     private readonly TimeSpan _ttl;
     private readonly DnsResolverService _dns;
     private readonly SmtpProbeService _smtp;
@@ -32,11 +58,12 @@ public sealed class CacheManager : IAsyncDisposable
         HttpProbeService http)
     {
         _cacheDir = cacheDir;
+        _enabled = !IsDisabled(cacheDir);
         _ttl = ttl;
         _dns = dns;
         _smtp = smtp;
         _http = http;
-        _domainResults = new DomainResultStore(ttl > TimeSpan.Zero ? ttl : null);
+        _domainResults = new DomainResultStore(ttl > TimeSpan.Zero ? ttl : null, _enabled);
     }
 
     /// <summary>
@@ -44,13 +71,17 @@ public sealed class CacheManager : IAsyncDisposable
     /// Returns summary info about what was loaded, or null if nothing was found.
     /// </summary>
     public Task<DiskCacheService.CacheLoadResult?> LoadAsync(bool retryErrors = false)
-        => DiskCacheService.LoadAsync(_cacheDir, _ttl, _smtp, _http, _dns, retryErrors, _domainResults);
+        => _enabled
+            ? DiskCacheService.LoadAsync(_cacheDir, _ttl, _smtp, _http, _dns, retryErrors, _domainResults)
+            : Task.FromResult<DiskCacheService.CacheLoadResult?>(null);
 
     /// <summary>
     /// Starts a background timer that periodically flushes in-memory caches to disk.
+    /// A no-op without a disk tier, so no timer runs and nothing is swept.
     /// </summary>
     public void StartBackgroundFlusher(TimeSpan interval)
     {
+        if (!_enabled) return;
         _flusher ??= new BackgroundCacheFlusher(_cacheDir, _smtp, _http, _dns, interval, _ttl, _domainResults);
     }
 
@@ -58,9 +89,11 @@ public sealed class CacheManager : IAsyncDisposable
     /// Explicitly flushes all in-memory caches to disk.
     /// Routes through the flusher's lock when available to prevent concurrent writes.
     /// </summary>
-    public Task FlushAsync() => _flusher != null
-        ? _flusher.FlushAsync()
-        : SaveDirectAsync();
+    public Task FlushAsync() => !_enabled
+        ? Task.CompletedTask
+        : _flusher != null
+            ? _flusher.FlushAsync()
+            : SaveDirectAsync();
 
     // Without a background flusher (CLI single-shot runs) there is no shared lock to
     // route through, so serialise here instead. Two concurrent saves would each

@@ -49,7 +49,7 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 | `--mask-trace` / `--no-mask-trace` | Privacy masking for trace output (default: on) |
 | `--mask-salt <salt>` | Deterministic hash salt for consistent masks |
 | `--cache [dir]` / `-c` | Persist probe cache between runs (default dir: `.ednsv-cache/`) |
-| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24) |
+| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24). `0` means no cap |
 | `--recheck warning\|error\|critical` | Re-validate previously failing checks (bypasses stale cache only) |
 | `--retry` | Double retry counts for unreliable networks |
 | `--retry-errors` | With `--cache`, re-probe previously failed checks, keep successful cached results |
@@ -103,9 +103,12 @@ Environment variables or command-line configuration. See [configuration.md](conf
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` |
-| `CacheTtlHours` | 24 | TTL for cached DNS/SMTP/HTTP results |
-| `FlushIntervalSeconds` | 120 | Background flush interval |
+| `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` by default |
+| `CacheDir` | `{DataDir}/cache` | Where probe results are persisted. `none` disables the disk tier. With Redis and multiple pods, point this at a pod-local volume — see below. |
+| `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` = no cap |
+| `FlushIntervalSeconds` | 600 | Flush interval, and the cache-file granularity |
+| `CacheShutdownFlushSeconds` | 5 | Bound on the final flush at shutdown |
+| `DnsCacheMinTtlSeconds` | 0 | `0` = off; above zero, bound DNS entries by their record TTLs |
 | `DnsServer` | system | Custom DNS server(s), comma-separated |
 | `DkimSelectors` | (built-in seed) | Default DKIM selectors, comma-separated |
 | `EnableSmtpProbes` / `EnableHttpProbes` / `EnableDnsbl` | `true` | Server-side defaults for the validator UI; per-request body overrides |
@@ -302,7 +305,7 @@ docker run --rm -p 8080:8080 ghcr.io/<owner>/ednsv:latest
 
 ### Scaling across multiple replicas
 
-A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, and a Kubernetes-style example.
+A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, a Kubernetes-style example, and why the probe cache should go on a **pod-local** volume once Redis is present.
 
 ## Network egress (outbound ports)
 

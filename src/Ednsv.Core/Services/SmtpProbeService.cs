@@ -45,7 +45,10 @@ public class SmtpProbeService
 
     /// <param name="timeoutSeconds">SMTP command/connect timeout. Default 10s.</param>
     /// <param name="portTimeoutSeconds">TCP port-open probe timeout. Default 5s.</param>
-    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5, RedisConnection? redis = null)
+    /// <param name="persistToDisk">False when no cache directory is configured, so
+    /// results are never queued for a write that will not happen.</param>
+    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5,
+        RedisConnection? redis = null, bool persistToDisk = true)
     {
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
@@ -60,10 +63,10 @@ public class SmtpProbeService
                     })
                 : null;
         _cacheTtl = cacheTtl;
-        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2);
-        _portCache = new ProbeCacheValue<bool>(cacheTtl);
-        _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl);
-        _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl);
+        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2, persistToDisk);
+        _portCache = new ProbeCacheValue<bool>(cacheTtl, persistToDisk);
+        _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl, persistToDisk);
+        _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl, persistToDisk);
     }
     private readonly TimeSpan? _cacheTtl;
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();

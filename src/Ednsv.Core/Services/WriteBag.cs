@@ -24,9 +24,14 @@ public sealed class WriteBag<TValue>
     private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
     private readonly TimeSpan? _ttl;
 
-    public WriteBag(TimeSpan? ttl)
+    /// <summary>False when there is no disk tier configured. Without this the queue
+    /// would grow for the life of the process, since nothing would ever drain it.</summary>
+    private readonly bool _persist;
+
+    public WriteBag(TimeSpan? ttl, bool persist = true)
     {
         _ttl = ttl;
+        _persist = persist;
     }
 
     /// <summary>Entries queued for the next flush. Not the size of the cache itself.</summary>
@@ -35,6 +40,8 @@ public sealed class WriteBag<TValue>
     /// <summary>Queue a freshly-fetched value. Imports from disk must not call this.</summary>
     public void Add(string key, TValue value)
     {
+        if (!_persist) return;
+
         var now = DateTime.UtcNow;
         _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
     }
