@@ -131,9 +131,9 @@ fixed — their whole point is a short skip-if-slow ceiling.
 
 The three `ProbeCache` instances also carry a shared Redis L2 when one is configured. The
 `ExpiringMap` caches do not: they are L1 and disk only. They expire on `CacheTtlHours`
-like everything else, but are **not** reached by the recheck bypass — see
-[caching-architecture.md](caching-architecture.md) →
-*Known gap: recheck does not reach the ExpiringMap caches*.
+and honour the recheck bypass (`CacheDep.Axfr` for the two AXFR caches,
+`CacheDep.ServerDns` for the unreachable-server breaker in front of `_serverQueryCache`)
+— see [caching-architecture.md](caching-architecture.md) → *Recheck reaches these too*.
 
 ### Unreachable-server decay
 
@@ -262,8 +262,10 @@ would always find something to write — which defeats the "bag is the dirty fla
 that keeps an idle instance from creating a file per interval.
 
 They honour `CacheTtlHours` like every other cache — see
-[caching-architecture.md](caching-architecture.md) → *ExpiringMap*. What they still do not
-have is a recheck bypass: see *Known gap: recheck does not reach the ExpiringMap caches*.
+[caching-architecture.md](caching-architecture.md) → *ExpiringMap* — and the recheck
+bypass: `CacheDep.Rcpt` for `_rcptCache`, `CacheDep.Smtp` for `_relayCache`, matching the
+categories that declare them. Both write unconditionally rather than add-if-absent, so a
+refetched verdict actually replaces the one the bypass skipped.
 
 ### Diagnostic Counters
 

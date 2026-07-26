@@ -77,9 +77,23 @@ public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
     /// Read a value. An expired entry is a miss, and is removed as it is found —
     /// matched by whole entry, so a fresher value written between the read and the
     /// removal survives.
+    ///
+    /// <para><paramref name="recheckFlag"/> is the recheck bypass, identical in
+    /// mechanism and meaning to <see cref="ProbeCache{T}.TryGet"/>: when the current
+    /// validation is rechecking this cache type, every read is a miss so the caller
+    /// refetches. It is <see cref="RecheckHelper.CacheDep.None"/> — never bypassed —
+    /// for a caller that has no cache type of its own.</para>
     /// </summary>
-    public bool TryGetValue(TKey key, out TValue value)
+    public bool TryGetValue(TKey key, out TValue value,
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
+        if (recheckFlag != RecheckHelper.CacheDep.None
+            && RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag))
+        {
+            value = default!;
+            return false;
+        }
+
         if (_map.TryGetValue(key, out var entry))
         {
             if (entry.ExpiresUtc > DateTime.UtcNow)

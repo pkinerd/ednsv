@@ -48,11 +48,19 @@ public class SmtpProbeService
     /// results are never queued for a write that will not happen.</param>
     /// <param name="warmSharedCache">False when nothing will republish this cache into
     /// the shared tier — see <see cref="ProbeCache{T}"/>.</param>
+    /// <param name="smtpPort">Where the RCPT and relay probes open their mail
+    /// transaction. Always 25 in production — it is the port an MX listens on, and
+    /// nothing configures it. It exists so a test can point those probes at a stub on
+    /// an ephemeral port: binding 25 needs privilege, and a listener on a well-known
+    /// port is a process-wide resource that other tests probing localhost would then
+    /// reach by accident.</param>
     public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5,
-        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true)
+        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true,
+        int smtpPort = 25)
     {
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
+        _smtpPort = smtpPort;
         ProbeCacheL2<SmtpProbeResult>? probeL2 =
             redis != null && redis.Enabled
                 ? new ProbeCacheL2<SmtpProbeResult>(redis, "smtp", cacheTtl,
@@ -72,6 +80,7 @@ public class SmtpProbeService
         _relayCache = new ExpiringMap<string, (bool isRelay, string description)>(cacheTtl);
     }
     private readonly TimeSpan? _cacheTtl;
+    private readonly int _smtpPort;
     // Not a ProbeCache: no L2, no in-flight dedup, and their own write queues. They
     // do expire, though — see ExpiringMap.
     private readonly ExpiringMap<string, (bool accepted, string response)> _rcptCache;
@@ -343,7 +352,9 @@ public class SmtpProbeService
     public async Task<(bool accepted, string response)> ProbeRcptDetailedAsync(string host, string address)
     {
         var cacheKey = $"{host.ToLowerInvariant()}|{address.ToLowerInvariant()}";
-        if (_rcptCache.TryGetValue(cacheKey, out var cached))
+        // CacheDep.Rcpt is what the Postmaster and Abuse categories declare, and this
+        // is the only cache it names.
+        if (_rcptCache.TryGetValue(cacheKey, out var cached, RecheckHelper.CacheDep.Rcpt))
             return cached;
 
         (bool accepted, string response) lastResult = (false, "");
@@ -355,10 +366,13 @@ public class SmtpProbeService
                 break;
         }
 
-        // Only cache definitive server responses, not transient failures
-        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out")
-            && _rcptCache.TryAdd(cacheKey, lastResult))
+        // Only cache definitive server responses, not transient failures. Written
+        // rather than added-if-absent: on a recheck the read above was bypassed on
+        // purpose, and an add-if-absent would leave the entry that bypass exists to
+        // replace — refetching every time and discarding the answer.
+        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
         {
+            _rcptCache.Set(cacheKey, lastResult);
             _rcptBag.Add(cacheKey, lastResult);
         }
         return lastResult;
@@ -370,7 +384,7 @@ public class SmtpProbeService
         try
         {
             client = new TcpClient();
-            var connectTask = client.ConnectAsync(host, 25);
+            var connectTask = client.ConnectAsync(host, _smtpPort);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");
             await connectTask;
@@ -481,14 +495,18 @@ public class SmtpProbeService
     public async Task<(bool isRelay, string description)> TestRelayAsync(string mxHost, string domain)
     {
         var cacheKey = $"relay:{mxHost.ToLowerInvariant()}|{domain.ToLowerInvariant()}";
-        if (_relayCache.TryGetValue(cacheKey, out var cached))
+        // CacheDep.Smtp: the open-relay check reports under CheckCategory.SMTP, which
+        // declares Smtp, and a relay verdict is an SMTP conversation with the MX. The
+        // handshake cache was already refreshed by that flag; this one was not.
+        if (_relayCache.TryGetValue(cacheKey, out var cached, RecheckHelper.CacheDep.Smtp))
             return cached;
 
         var result = await PerformRelayTestAsync(mxHost, domain);
-        // Only cache definitive results, not transient failures
-        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out")
-            && _relayCache.TryAdd(cacheKey, result))
+        // Only cache definitive results, not transient failures. Written rather than
+        // added-if-absent — see ProbeRcptDetailedAsync.
+        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out"))
         {
+            _relayCache.Set(cacheKey, result);
             _relayBag.Add(cacheKey, result);
         }
         return result;
@@ -500,7 +518,7 @@ public class SmtpProbeService
         try
         {
             client = new TcpClient();
-            var connectTask = client.ConnectAsync(mxHost, 25);
+            var connectTask = client.ConnectAsync(mxHost, _smtpPort);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");
             await connectTask;

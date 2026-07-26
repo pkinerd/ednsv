@@ -299,11 +299,11 @@ It is a cheap heuristic for the case that actually hurts, not a consistency mech
 
 ## Service Cache Inventory
 
-Two shapes appear here, and the difference matters for both persistence and recheck:
-a `ProbeCache<T>`, which owns a MemoryCache, an in-flight dedup map, a write bag and
-an optional Redis L2; and an `ExpiringMap<K,V>`, usually paired with a `WriteBag<T>`,
-which owns none of that and is read with a direct `TryGetValue`. Both expire on
-`CacheTtlHours`.
+Two shapes appear here: a `ProbeCache<T>`, which owns a MemoryCache, an in-flight dedup
+map, a write bag and an optional Redis L2; and an `ExpiringMap<K,V>`, usually paired
+with a `WriteBag<T>`, which owns none of that and is read with a direct `TryGetValue`.
+The difference that remains is the shared L2 and the in-flight dedup — both expire on
+`CacheTtlHours`, and both honour the recheck bypass.
 
 ### DnsResolverService
 | Cache | Type | Key format | Recheck |
@@ -311,9 +311,9 @@ which owns none of that and is read with a direct `TryGetValue`. Both expire on
 | `_queryCache` | `ProbeCache<IDnsQueryResponse>` | `q:domain:queryType` | `CacheDep.Dns` |
 | `_ptrCache` | `ProbeCache<List<string>>` | `ptr:ip` | `CacheDep.Ptr` |
 | `_serverQueryCache` | `ProbeCache<IDnsQueryResponse>` | `sq:server:domain:queryType` | `CacheDep.ServerDns` |
-| `_axfrCache` + `_axfrBag` | `ExpiringMap<(ip,domain), bool>` | `ip\|domain` on disk | **not bypassed** |
-| `_axfrResponseCache` | `ExpiringMap<(ip,domain), IDnsQueryResponse>` | tuple | not persisted, not bypassed |
-| `_unreachableServerCounts` + `_unreachableBag` | `ExpiringMap<string, (count, lastFailure)>` | server IP | not bypassed — see *Unreachable-server decay* |
+| `_axfrCache` + `_axfrBag` | `ExpiringMap<(ip,domain), bool>` | `ip\|domain` on disk | `CacheDep.Axfr` |
+| `_axfrResponseCache` | `ExpiringMap<(ip,domain), IDnsQueryResponse>` | tuple | `CacheDep.Axfr` — not persisted |
+| `_unreachableServerCounts` + `_unreachableBag` | `ExpiringMap<string, (count, lastFailure)>` | server IP | `CacheDep.ServerDns` — see *Unreachable-server decay* |
 | `_serverClients` | `ExpiringMap<string, LookupClient>` | server IP | n/a — a client pool, not results |
 
 ### SmtpProbeService
@@ -321,8 +321,8 @@ which owns none of that and is read with a direct `TryGetValue`. Both expire on
 |-------|------|-----------|---------|
 | `_probeCache` | `ProbeCache<SmtpProbeResult>` | `smtp:host:port` | `CacheDep.Smtp` |
 | `_portCache` | `ProbeCacheValue<bool>` | `port:host:port` | `CacheDep.Port` |
-| `_rcptCache` + `_rcptBag` | `ExpiringMap<string, (accepted, response)>` | `host\|email` | **not bypassed** |
-| `_relayCache` + `_relayBag` | `ExpiringMap<string, (isRelay, description)>` | `relay:host\|domain` | **not bypassed** |
+| `_rcptCache` + `_rcptBag` | `ExpiringMap<string, (accepted, response)>` | `host\|email` | `CacheDep.Rcpt` |
+| `_relayCache` + `_relayBag` | `ExpiringMap<string, (isRelay, description)>` | `relay:host\|domain` | `CacheDep.Smtp` |
 
 ### HttpProbeService
 | Cache | Type | Key format | Recheck |
@@ -368,21 +368,40 @@ null TTL (`CacheTtlHours=0`) means no expiry, exactly as it does everywhere else
 unused for a whole TTL is rebuilt on next use — a trade of one socket-pool reconstruction
 against unbounded retention.
 
-### Known gap: recheck does not reach the ExpiringMap caches
+### Recheck reaches these too
 
-`CacheDep.Rcpt` exists, and `RecheckHelper` maps the **Postmaster** and **Abuse**
-categories to it — but nothing consults it. `_rcptCache`, `_relayCache` and `_axfrCache`
-are read with a bare `TryGetValue`, with no `RecheckHelper` check, so a recheck does not
-refetch them.
+`ExpiringMap.TryGetValue` takes the same `CacheDep` flag as `ProbeCache.TryGet` and
+returns a miss for the types the current validation is rechecking. Four caches were
+outside that mechanism until recently, and each was a different shade of the same
+defect:
 
-The relay cache has the same problem by a different route: `CacheDep.Smtp` refreshes
-`_probeCache`, but `TestRelayAsync` reads `_relayCache` directly, so a recheck of an SMTP
-finding re-probes the handshake and reuses the cached relay verdict. `_axfrCache` was
-never wired to a flag at all.
+- **`_rcptCache`** — `CacheDep.Rcpt` existed, `RecheckHelper` mapped the **Postmaster**
+  and **Abuse** categories to it, and nothing anywhere read it. Rechecking either
+  finding re-ran the check against the same cached verdict.
+- **`_relayCache`** — no flag of its own, and the one its category declares
+  (`CacheDep.Smtp`, via `CheckCategory.SMTP`) refreshed the handshake beside it while
+  the relay verdict was reused.
+- **The AXFR caches** — `CheckCategory.ZoneTransfer` declared only `CacheDep.Dns`, which
+  names neither of them. `CacheDep.Axfr` is new and is the only flag that reaches them;
+  putting them behind `Dns` would have every recheck of anything re-run zone transfers
+  against every nameserver.
+- **The unreachable-server breaker** — not a cache read at all, but it sits *in front*
+  of `_serverQueryCache` and returns `EmptyResponse` without querying. A recheck run
+  straight after the failure that prompted it falls inside the five-minute decay window,
+  so every server that had just failed was skipped rather than retried — the bypass
+  behind it never got a chance to matter. It now yields to `CacheDep.ServerDns`.
 
-Practical effect: `--recheck` on a Postmaster or Abuse finding re-runs the check but
-reuses the cached RCPT verdict until it expires on its own. Documented rather than
-quietly fixed — closing it is a behaviour change, not a docs correction.
+**The write side matters as much as the read.** These caches wrote add-if-absent, which
+is correct only while entries cannot be replaced: after a bypassed read the fresh answer
+would find the stale entry still present, be handed to the caller, and be dropped — every
+recheck paying for a probe and changing nothing, for ever. They write unconditionally
+now, into the write bag as well as memory, so the refreshed verdict also reaches disk.
+
+One exception, and it is not an oversight: a zone transfer that never happened is not
+recorded. `EmptyResponse` means the TCP attempt failed, which is indistinguishable from
+a refused *transfer* once reduced to a bool — so caching it would record "not
+vulnerable" for a server nobody reached, and on a recheck would overwrite a real finding
+with it. Same intent as `shouldPersist` everywhere else.
 
 ### Unreachable-server decay
 
@@ -435,7 +454,7 @@ flowchart LR
 
 2. **Set context**: `DomainValidator.ValidateAsync` sets `RecheckHelper.CurrentRecheckDeps.Value` (an `AsyncLocal<CacheDep>`) at the start of the validation and clears it back to `CacheDep.None` in the finally section. Because it is `AsyncLocal`, each concurrent validation in the web API gets its own value with no cross-bleed, and the deps automatically flow through `await` boundaries into the singleton DNS/SMTP/HTTP services.
 
-3. **Bypass on read**: `ProbeCache.TryGet()` (and `ProbeCacheValue.TryGet()`) checks `RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)` before consulting MemoryCache. When the flag is set, it returns a miss without touching MemoryCache — and `GetOrCreateAsync` skips the **shared L2 read** as well, so a recheck cannot be satisfied by a peer's cached copy. The L2 *write-back* still happens, so a forced recheck refreshes the shared cache for everyone. Note the gap above: the plain-dictionary caches do not participate in this at all.
+3. **Bypass on read**: `ProbeCache.TryGet()`, `ProbeCacheValue.TryGet()` and `ExpiringMap.TryGetValue()` all check `RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)` before consulting the cache. When the flag is set, the read is a miss — and `GetOrCreateAsync` skips the **shared L2 read** as well, so a recheck cannot be satisfied by a peer's cached copy. The L2 *write-back* still happens, so a forced recheck refreshes the shared cache for everyone.
 
 4. **Fresh query**: The factory function runs, making a real network request.
 
@@ -453,8 +472,14 @@ Smtp = 8        — SMTP handshake probes
 Port = 16       — Port reachability
 Rcpt = 32       — RCPT verification
 Http = 64       — HTTP GET requests
-All = 127       — All cache types
+Axfr = 128      — Zone-transfer verdicts and the transfers themselves
+All = 255       — All cache types
 ```
+
+`Axfr` is deliberately its own bit rather than part of `Dns`: an attempt is a TCP query
+per nameserver with a ten-second budget, and nearly every category declares `Dns`, so
+sharing the bit would make every recheck of anything re-run zone transfers wherever the
+feature is enabled.
 
 ### Category → Dependency Mapping (examples)
 
@@ -465,9 +490,10 @@ All = 127       — All cache types
 | DMARC | Dns |
 | SMTP | Dns, Smtp, Port |
 | MTA-STS | Dns, Http |
-| Postmaster | Rcpt *(mapped but not enforced — see the gap above)* |
+| Postmaster | Rcpt |
 | Delegation | Dns, ServerDns, Ptr |
+| ZoneTransfer | Dns, Axfr |
 
 ### CLI vs Web Behavior
 
-CLI and web API use the **same** AsyncLocal bypass since commit 5277d94. Both flow `validator.RecheckDeps` into `RecheckHelper.CurrentRecheckDeps` and rely on `ProbeCache.TryGet` returning `false` for matching cache types. There is no separate "imported-only" tracking and no physical cache invalidation on the recheck path — fresh results simply overwrite stale ones.
+CLI and web API use the **same** AsyncLocal bypass. Both flow `validator.RecheckDeps` into `RecheckHelper.CurrentRecheckDeps` and rely on the cache reads returning `false` for matching cache types. There is no separate "imported-only" tracking and no physical cache invalidation on the recheck path — fresh results simply overwrite stale ones.

@@ -474,7 +474,15 @@ public class DnsResolverService
 
         // If this server has been unreachable too many times recently, skip immediately.
         // Entries older than the decay window are ignored, allowing recovery.
-        if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachEntry)
+        //
+        // A recheck of this cache type ignores the skip. The breaker sits in front of
+        // the cache, so leaving it in would defeat the bypass entirely in the one
+        // workflow that needs it most: a recheck run straight after the failure that
+        // prompted it falls well inside the five-minute decay window, and every server
+        // that just failed would be skipped rather than retried — returning the same
+        // finding without a single query.
+        if (_unreachableServerCounts.TryGetValue(serverStr, out var unreachEntry,
+                RecheckHelper.CacheDep.ServerDns)
             && unreachEntry.count >= MaxRetries
             && (DateTime.UtcNow - unreachEntry.lastFailure) < _unreachableDecay)
         {
@@ -617,13 +625,21 @@ public class DnsResolverService
     public async Task<bool> TestZoneTransferAsync(IPAddress nsIp, string domain)
     {
         var key = (nsIp.ToString(), domain.ToLowerInvariant());
-        if (_axfrCache.TryGetValue(key, out var cached))
+        if (_axfrCache.TryGetValue(key, out var cached, RecheckHelper.CacheDep.Axfr))
             return cached;
 
         var response = await CachedAxfrAsync(nsIp, domain);
+
+        // A transfer that never happened is not a verdict. EmptyResponse means the TCP
+        // attempt failed outright, which looks identical to a refused transfer once it
+        // is reduced to a bool — so caching it would record "not vulnerable" for a
+        // server nobody reached, and on a recheck would overwrite a real finding with
+        // it. The equivalent of every other cache's shouldPersist.
+        if (ReferenceEquals(response, EmptyResponse.Instance)) return false;
+
         var vulnerable = response.Answers.Count > 0;
-        if (_axfrCache.TryAdd(key, vulnerable))
-            _axfrBag.Add(AxfrKey(key.Item1, key.Item2), vulnerable);
+        _axfrCache.Set(key, vulnerable);
+        _axfrBag.Add(AxfrKey(key.Item1, key.Item2), vulnerable);
         return vulnerable;
     }
 
@@ -634,9 +650,11 @@ public class DnsResolverService
     {
         var selectors = new List<string>();
 
-        // If we already know AXFR was denied from disk cache, skip the TCP attempt
+        // If we already know AXFR was denied from disk cache, skip the TCP attempt —
+        // unless this validation is rechecking zone transfers, in which case skipping
+        // on the strength of the cached verdict is exactly what it asked us not to do.
         var boolKey = (nsIp.ToString(), domain.ToLowerInvariant());
-        if (_axfrCache.TryGetValue(boolKey, out var wasDenied) && !wasDenied)
+        if (_axfrCache.TryGetValue(boolKey, out var wasDenied, RecheckHelper.CacheDep.Axfr) && !wasDenied)
             return selectors;
 
         try
@@ -661,14 +679,16 @@ public class DnsResolverService
 
     private async Task<IDnsQueryResponse> CachedAxfrAsync(IPAddress nsIp, string domain)
     {
+        // Bypassed by the same flag as the verdict it feeds. Recomputing a verdict from
+        // a cached response would be a recheck in name only.
         var key = (nsIp.ToString(), domain.ToLowerInvariant());
-        if (_axfrResponseCache.TryGetValue(key, out var cached))
+        if (_axfrResponseCache.TryGetValue(key, out var cached, RecheckHelper.CacheDep.Axfr))
             return cached;
 
         try
         {
             var result = await PerformZoneTransferAsync(nsIp, domain);
-            _axfrResponseCache.TryAdd(key, result);
+            _axfrResponseCache.Set(key, result);
             return result;
         }
         catch
