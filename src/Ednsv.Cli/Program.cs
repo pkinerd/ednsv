@@ -498,22 +498,21 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
-    // Load disk cache if specified
+    // Load disk cache if specified. Domain results are loaded and written as part of
+    // the same cache now, so the store is created whenever there is a cache path even
+    // if --recheck was not asked for: this run's results still need persisting.
+    var cacheTtl = TimeSpan.FromHours(cacheTtlHours);
+    var previousResults = cachePath != null ? new DomainResultStore(CacheTtlOrNull(cacheTtl)) : null;
     if (cachePath != null)
     {
-        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, cacheTtl, smtp, http, dns, retryErrors, previousResults);
         if (cacheResult != null)
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
-    // Load previous domain results for --recheck
-    Dictionary<string, DomainResultSummary>? previousResults = null;
-    if (recheckSeverity != null && cachePath != null)
-        previousResults = await DiskCacheService.LoadDomainResultsAsync(cachePath);
-
     // Periodic background flush (every 60s) + final save on dispose
     await using var cacheFlusher = cachePath != null
-        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60))
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60), cacheTtl, previousResults)
         : null;
 
     for (int i = 0; i < domains.Count; i++)
@@ -546,7 +545,7 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
 
         // --recheck: bypass cache for domains with previous issues
         if (recheckSeverity != null && previousResults != null &&
-            previousResults.TryGetValue(domain.ToLowerInvariant(), out var prevResult))
+            previousResults.TryGet(domain, out var prevResult))
         {
             var deps = RecheckHelper.GetDependenciesForIssues(prevResult, recheckSeverity.Value);
             if (deps != RecheckHelper.CacheDep.None)
@@ -646,10 +645,9 @@ static async Task RunInteractiveAsync(List<string> domains, ValidationOptions op
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save the domain result (non-blocking). Probe caches reach disk on the
-        // flusher's own timer and its final flush on dispose.
-        if (cachePath != null)
-            _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
+        // Record the domain result. It reaches disk on the flusher's own timer and
+        // its final flush on dispose, like every other cache.
+        previousResults?.Set(domain, BuildDomainResultSummary(report));
 
         // Per-domain summary
         AnsiConsole.WriteLine();
@@ -780,23 +778,20 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
-    // Load disk cache if specified
+    // Load disk cache if specified (domain results included — see RunInteractiveAsync)
+    var cacheTtl = TimeSpan.FromHours(cacheTtlHours);
+    var previousResults2 = cachePath != null ? new DomainResultStore(CacheTtlOrNull(cacheTtl)) : null;
     if (cachePath != null)
     {
-        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, cacheTtl, smtp, http, dns, retryErrors, previousResults2);
         if (cacheResult != null && showProgress)
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
     // Periodic background flush (every 60s) + final save on dispose
     await using var cacheFlusher = cachePath != null
-        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60))
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(60), cacheTtl, previousResults2)
         : null;
-
-    // Load previous domain results for --recheck
-    Dictionary<string, DomainResultSummary>? previousResults2 = null;
-    if (recheckSeverity != null && cachePath != null)
-        previousResults2 = await DiskCacheService.LoadDomainResultsAsync(cachePath);
 
     for (int i = 0; i < domains.Count; i++)
     {
@@ -807,7 +802,7 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
 
         // --recheck: clear stale cached probes for domains with previous issues
         if (recheckSeverity != null && previousResults2 != null &&
-            previousResults2.TryGetValue(domain.ToLowerInvariant(), out var prevResult2))
+            previousResults2.TryGet(domain, out var prevResult2))
         {
             var deps = RecheckHelper.GetDependenciesForIssues(prevResult2, recheckSeverity.Value);
             if (deps != RecheckHelper.CacheDep.None)
@@ -933,10 +928,9 @@ static async Task<List<ValidationReport>> ValidateAllAsync(List<string> domains,
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save the domain result (non-blocking). Probe caches reach disk on the
-        // flusher's own timer and its final flush on dispose.
-        if (cachePath != null)
-            _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
+        // Record the domain result. It reaches disk on the flusher's own timer and
+        // its final flush on dispose, like every other cache.
+        previousResults2?.Set(domain, BuildDomainResultSummary(report));
 
         if (showProgress)
         {
@@ -1011,22 +1005,19 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
     var smtp = new SmtpProbeService();
     var http = new HttpProbeService();
 
-    // Load disk cache if specified
+    // Load disk cache if specified (domain results included — see RunInteractiveAsync)
+    var cacheTtl = TimeSpan.FromHours(cacheTtlHours);
+    var previousResults3 = cachePath != null ? new DomainResultStore(CacheTtlOrNull(cacheTtl)) : null;
     if (cachePath != null)
     {
-        var cacheResult = await DiskCacheService.LoadAsync(cachePath, TimeSpan.FromHours(cacheTtlHours), smtp, http, dns, retryErrors);
+        var cacheResult = await DiskCacheService.LoadAsync(cachePath, cacheTtl, smtp, http, dns, retryErrors, previousResults3);
         if (cacheResult != null)
             AnsiConsole.MarkupLine($"[dim]Loaded cache ({cacheResult.Total} entries, {cacheResult.Age.TotalMinutes:F0}m old): {cacheResult.DnsQueries} DNS, {cacheResult.SmtpProbes} SMTP, {cacheResult.RcptProbes} RCPT, {cacheResult.HttpRequests} HTTP, {cacheResult.PtrLookups} PTR, {cacheResult.PortProbes} port[/]");
     }
 
-    // Load previous domain results for --recheck
-    Dictionary<string, DomainResultSummary>? previousResults3 = null;
-    if (recheckSeverity != null && cachePath != null)
-        previousResults3 = await DiskCacheService.LoadDomainResultsAsync(cachePath);
-
     // Background cache flusher — periodically saves caches to disk and does a final save on dispose
     await using var cacheFlusher = cachePath != null
-        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(30))
+        ? new BackgroundCacheFlusher(cachePath, smtp, http, dns, TimeSpan.FromSeconds(30), cacheTtl, previousResults3)
         : null;
 
     for (int i = 0; i < domains.Count; i++)
@@ -1038,7 +1029,7 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
 
         // --recheck: clear stale cached probes for domains with previous issues
         if (recheckSeverity != null && previousResults3 != null &&
-            previousResults3.TryGetValue(domain.ToLowerInvariant(), out var prevResult3))
+            previousResults3.TryGet(domain, out var prevResult3))
         {
             var deps = RecheckHelper.GetDependenciesForIssues(prevResult3, recheckSeverity.Value);
             if (deps != RecheckHelper.CacheDep.None)
@@ -1149,10 +1140,9 @@ static async Task RunOutputDirAsync(List<string> domains, ValidationOptions opti
         var report = await validator.ValidateAsync(domain, options);
         reports.Add(report);
 
-        // Save the domain result (non-blocking). Probe caches reach disk on the
-        // flusher's own timer and its final flush on dispose.
-        if (cachePath != null)
-            _ = DiskCacheService.SaveDomainResultAsync(cachePath, domain, BuildDomainResultSummary(report));
+        // Record the domain result. It reaches disk on the flusher's own timer and
+        // its final flush on dispose, like every other cache.
+        previousResults3?.Set(domain, BuildDomainResultSummary(report));
 
         // Write individual domain file immediately
         var filename = $"{SanitizeFilename(domain)}.{ext}";
@@ -1530,6 +1520,11 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
 
     writer.Write(sb.ToString());
 }
+
+// --cache-ttl 0 already meant "ignore what is on disk" here, since the load cutoff
+// becomes now. Passing null rather than zero keeps this run's own results usable in
+// memory instead of stamping them as expired the moment they are recorded.
+static TimeSpan? CacheTtlOrNull(TimeSpan ttl) => ttl > TimeSpan.Zero ? ttl : null;
 
 static DomainResultSummary BuildDomainResultSummary(ValidationReport report)
 {

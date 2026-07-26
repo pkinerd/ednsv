@@ -73,16 +73,22 @@ public sealed class ProbeCacheBagTests
     }
 
     [Fact]
-    public async Task ExportTimedCarriesTheFetchTime()
+    public async Task CollectedRecordsCarryTheFetchTimeAndTheEntrysExpiry()
     {
+        // The fetch time is what orders entries across instances when their files are
+        // merged, so it has to be the moment of the fetch and not of the flush.
         var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
         var before = DateTime.UtcNow;
 
         await cache.GetOrCreateAsync("k", () => Fresh("v"));
 
-        var stamped = cache.ExportTimed()["k"];
-        Assert.Equal("v", stamped.Value);
-        Assert.InRange(stamped.CachedAtUtc, before.AddSeconds(-1), DateTime.UtcNow.AddSeconds(1));
+        var record = Assert.Single(
+            cache.CollectPending("test", v => System.Text.Json.JsonSerializer.SerializeToNode(v)).Records);
+        Assert.Equal("k", record.Key);
+        Assert.Equal("v", record.Value?.GetValue<string>());
+        Assert.InRange(record.WrittenUtc, before.AddSeconds(-1), DateTime.UtcNow.AddSeconds(1));
+        Assert.InRange(record.ExpiresUtc,
+            before.AddMinutes(10).AddSeconds(-1), DateTime.UtcNow.AddMinutes(10).AddSeconds(1));
     }
 
     [Fact]

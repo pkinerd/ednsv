@@ -6,6 +6,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Ednsv.Core.Services;
 
@@ -58,11 +59,20 @@ public class SmtpProbeService
                         return e == null ? null : FromCacheEntry(e);
                     })
                 : null;
+        _cacheTtl = cacheTtl;
         _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2);
         _portCache = new ProbeCacheValue<bool>(cacheTtl);
+        _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl);
+        _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl);
     }
+    private readonly TimeSpan? _cacheTtl;
     private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
     private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
+
+    // Plain dictionaries rather than ProbeCaches, so they carry their own write
+    // queues — see WriteBag.
+    private readonly WriteBag<(bool accepted, string response)> _rcptBag;
+    private readonly WriteBag<(bool isRelay, string description)> _relayBag;
 
     // Counters for diagnostics
     private int _probesStarted;
@@ -338,8 +348,11 @@ public class SmtpProbeService
         }
 
         // Only cache definitive server responses, not transient failures
-        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
-            _rcptCache.TryAdd(cacheKey, lastResult);
+        if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out")
+            && _rcptCache.TryAdd(cacheKey, lastResult))
+        {
+            _rcptBag.Add(cacheKey, lastResult);
+        }
         return lastResult;
     }
 
@@ -465,8 +478,11 @@ public class SmtpProbeService
 
         var result = await PerformRelayTestAsync(mxHost, domain);
         // Only cache definitive results, not transient failures
-        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out"))
-            _relayCache.TryAdd(cacheKey, result);
+        if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out")
+            && _relayCache.TryAdd(cacheKey, result))
+        {
+            _relayBag.Add(cacheKey, result);
+        }
         return result;
     }
 
@@ -575,15 +591,59 @@ public class SmtpProbeService
         };
     }
 
-    public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
+    /// <summary>Import one record from a cache file — see
+    /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
+    public bool TryImportRecord(string type, string key, JsonNode? value)
     {
-        var result = new Dictionary<string, SmtpProbeCacheEntry>();
-        foreach (var kvp in _probeCache.Export())
+        if (value == null) return false;
+        try
         {
-            var diskKey = kvp.Key.StartsWith("smtp:") ? kvp.Key[5..] : kvp.Key;
-            result[diskKey] = ToCacheEntry(kvp.Value);
+            switch (type)
+            {
+                case CacheTypes.Smtp:
+                {
+                    var entry = value.Deserialize<SmtpProbeCacheEntry>();
+                    if (entry != null) _probeCache.Import(key, FromCacheEntry(entry));
+                    return true;
+                }
+                case CacheTypes.Port:
+                    _portCache.Import(key, value.Deserialize<bool>());
+                    return true;
+                case CacheTypes.Rcpt:
+                {
+                    var entry = value.Deserialize<RcptCacheEntry>();
+                    if (entry != null) _rcptCache.TryAdd(key, (entry.Accepted, entry.Response));
+                    return true;
+                }
+                case CacheTypes.Relay:
+                {
+                    var entry = value.Deserialize<RelayCacheEntry>();
+                    if (entry != null) _relayCache.TryAdd(key, (entry.IsRelay, entry.Description));
+                    return true;
+                }
+                default:
+                    return false;
+            }
         }
-        return result;
+        catch
+        {
+            return true;
+        }
+    }
+
+    // ── Flush sources ────────────────────────────────────────────────────
+
+    /// <summary>Everything this prober has fetched and not yet written out.</summary>
+    public IEnumerable<PendingWrites> CollectPendingWrites()
+    {
+        yield return _probeCache.CollectPending(CacheTypes.Smtp,
+            r => JsonSerializer.SerializeToNode(ToCacheEntry(r)));
+        yield return _portCache.CollectPending(CacheTypes.Port,
+            open => JsonSerializer.SerializeToNode(open));
+        yield return _rcptBag.Collect(CacheTypes.Rcpt,
+            v => JsonSerializer.SerializeToNode(new RcptCacheEntry { Accepted = v.accepted, Response = v.response }));
+        yield return _relayBag.Collect(CacheTypes.Relay,
+            v => JsonSerializer.SerializeToNode(new RelayCacheEntry { IsRelay = v.isRelay, Description = v.description }));
     }
 
     public void ImportProbeCache(Dictionary<string, SmtpProbeCacheEntry> entries)
@@ -592,21 +652,10 @@ public class SmtpProbeService
             _probeCache.Import($"smtp:{kvp.Key}", FromCacheEntry(kvp.Value));
     }
 
-    public Dictionary<string, bool> ExportPortCache()
-        => _portCache.Export();
-
     public void ImportPortCache(Dictionary<string, bool> entries)
     {
         foreach (var kvp in entries)
             _portCache.Import(kvp.Key, kvp.Value);
-    }
-
-    public Dictionary<string, RcptCacheEntry> ExportRcptCache()
-    {
-        var result = new Dictionary<string, RcptCacheEntry>();
-        foreach (var kvp in _rcptCache)
-            result[kvp.Key] = new RcptCacheEntry { Accepted = kvp.Value.accepted, Response = kvp.Value.response };
-        return result;
     }
 
     public void ImportRcptCache(Dictionary<string, RcptCacheEntry> entries)
@@ -628,6 +677,7 @@ public class SmtpProbeService
         var toRemove = _rcptCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _rcptCache.TryRemove(key, out _);
+        _rcptBag.Remove(predicate); // don't persist what was just invalidated
     }
 
     public void RemoveRelayEntries(Func<string, bool> predicate)
@@ -635,20 +685,7 @@ public class SmtpProbeService
         var toRemove = _relayCache.Keys.Where(predicate).ToList();
         foreach (var key in toRemove)
             _relayCache.TryRemove(key, out _);
-    }
-
-    public Dictionary<string, RelayCacheEntry> ExportRelayCache()
-    {
-        var result = new Dictionary<string, RelayCacheEntry>();
-        foreach (var kvp in _relayCache)
-        {
-            result[kvp.Key] = new RelayCacheEntry
-            {
-                IsRelay = kvp.Value.isRelay,
-                Description = kvp.Value.description
-            };
-        }
-        return result;
+        _relayBag.Remove(predicate);
     }
 
     public void ImportRelayCache(Dictionary<string, RelayCacheEntry> entries)

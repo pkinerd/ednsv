@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Caching.Memory;
 using StackExchange.Redis;
 
@@ -271,6 +272,55 @@ public class ProbeCache<TValue> where TValue : class
         SetMemoryOnly(key, value);
     }
 
+    /// <summary>
+    /// Snapshot the values awaiting persistence as writable records, plus the means
+    /// to drop them once written. Entries whose MemoryCache copy has already expired
+    /// are discarded rather than written; anything the serialiser rejects is left in
+    /// the bag for a later attempt rather than silently lost.
+    /// </summary>
+    public PendingWrites CollectPending(string type, Func<TValue, JsonNode?> serialize)
+    {
+        var snapshot = _bag.ToArray();
+        if (snapshot.Length == 0) return PendingWrites.None;
+
+        var records = new List<CacheRecord>(snapshot.Length);
+        var claimed = new List<KeyValuePair<string, BagEntry<TValue>>>(snapshot.Length);
+        var dropped = new List<KeyValuePair<string, BagEntry<TValue>>>();
+
+        foreach (var kv in snapshot)
+        {
+            if (!_cache.TryGetValue(kv.Key, out TValue? live) || live == null)
+            {
+                dropped.Add(kv); // expired out of memory before we got to it
+                continue;
+            }
+
+            JsonNode? json;
+            try { json = serialize(kv.Value.Value); }
+            catch { continue; } // leave it queued; a later flush may fare better
+            if (json == null) continue;
+
+            records.Add(new CacheRecord
+            {
+                Type = type,
+                Key = kv.Key,
+                WrittenUtc = kv.Value.WrittenUtc,
+                ExpiresUtc = kv.Value.ExpiresUtc,
+                Value = json
+            });
+            claimed.Add(kv);
+        }
+
+        foreach (var kv in dropped) _bag.TryRemove(kv);
+
+        return new PendingWrites(records, () =>
+        {
+            // Reference-matched removal: a newer entry for the same key that landed
+            // during the write is not equal to this one and therefore survives.
+            foreach (var kv in claimed) _bag.TryRemove(kv);
+        });
+    }
+
     /// <summary>Values awaiting persistence that are still live in MemoryCache.</summary>
     public Dictionary<string, TValue> Export()
     {
@@ -279,19 +329,6 @@ public class ProbeCache<TValue> where TValue : class
         {
             if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
                 result[kvp.Key] = val;
-        }
-        return result;
-    }
-
-    /// <summary>Values awaiting persistence with the time each was fetched, so disk
-    /// records age from the real fetch rather than from when they were written.</summary>
-    public Dictionary<string, (TValue Value, DateTime CachedAtUtc)> ExportTimed()
-    {
-        var result = new Dictionary<string, (TValue, DateTime)>();
-        foreach (var kvp in _bag)
-        {
-            if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
-                result[kvp.Key] = (val, kvp.Value.WrittenUtc);
         }
         return result;
     }
@@ -438,6 +475,48 @@ public class ProbeCacheValue<TValue> where TValue : struct
     public void Import(string key, TValue value)
     {
         SetMemoryOnly(key, value);
+    }
+
+    /// <summary>See <see cref="ProbeCache{T}.CollectPending"/>.</summary>
+    public PendingWrites CollectPending(string type, Func<TValue, JsonNode?> serialize)
+    {
+        var snapshot = _bag.ToArray();
+        if (snapshot.Length == 0) return PendingWrites.None;
+
+        var records = new List<CacheRecord>(snapshot.Length);
+        var claimed = new List<KeyValuePair<string, BagEntry<TValue>>>(snapshot.Length);
+        var dropped = new List<KeyValuePair<string, BagEntry<TValue>>>();
+
+        foreach (var kv in snapshot)
+        {
+            if (!_cache.TryGetValue(kv.Key, out Box? box) || box == null)
+            {
+                dropped.Add(kv);
+                continue;
+            }
+
+            JsonNode? json;
+            try { json = serialize(kv.Value.Value); }
+            catch { continue; }
+            if (json == null) continue;
+
+            records.Add(new CacheRecord
+            {
+                Type = type,
+                Key = kv.Key,
+                WrittenUtc = kv.Value.WrittenUtc,
+                ExpiresUtc = kv.Value.ExpiresUtc,
+                Value = json
+            });
+            claimed.Add(kv);
+        }
+
+        foreach (var kv in dropped) _bag.TryRemove(kv);
+
+        return new PendingWrites(records, () =>
+        {
+            foreach (var kv in claimed) _bag.TryRemove(kv);
+        });
     }
 
     public Dictionary<string, TValue> Export()

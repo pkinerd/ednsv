@@ -82,6 +82,29 @@ public static class AtomicFile
         }
     }
 
+    /// <summary>
+    /// Removes temp files anywhere under <paramref name="directory"/> that are older
+    /// than <paramref name="maxAge"/>. Needed where each write targets a fresh
+    /// filename — the disk cache writes one immutable file per flush — so there is no
+    /// stable target path to sweep temps for. Best-effort; never throws.
+    /// </summary>
+    public static void SweepStaleTempsInDirectory(string directory, TimeSpan? maxAge = null)
+    {
+        var cutoff = DateTime.UtcNow - (maxAge ?? DefaultStaleTempAge);
+        string[] matches;
+        try { matches = Directory.GetFiles(directory, "*" + TempExtension); }
+        catch { return; }
+
+        foreach (var tmp in matches)
+        {
+            try
+            {
+                if (File.GetLastWriteTimeUtc(tmp) < cutoff) File.Delete(tmp);
+            }
+            catch { /* best effort */ }
+        }
+    }
+
     /// <summary>Removes every temp file for <paramref name="path"/> regardless of
     /// age. Only safe where the caller holds the lock that excludes writers —
     /// otherwise use <see cref="SweepStaleTemps"/>. Best-effort; never throws.</summary>

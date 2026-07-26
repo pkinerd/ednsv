@@ -17,6 +17,11 @@ public sealed class ShutdownFlushTests
     /// <c>Import</c>: imported entries are already on disk and will stop being
     /// flush-eligible later in this rework, whereas a fresh network result is
     /// exactly what a shutdown flush has to save.</summary>
+    private static string[] CacheFiles(string cacheDir)
+        => Directory.Exists(cacheDir)
+            ? Directory.GetFiles(cacheDir, "*.jsonl", SearchOption.AllDirectories)
+            : Array.Empty<string>();
+
     private static async Task SeedCacheAsync(EdnsvAppFactory factory)
     {
         var dns = factory.Services.GetRequiredService<DnsResolverService>();
@@ -45,13 +50,14 @@ public sealed class ShutdownFlushTests
             _ = factory.CreateClient(); // build the host
             await SeedCacheAsync(factory);
 
-            Assert.False(Directory.Exists(cacheDir) && Directory.GetFiles(cacheDir).Length > 0,
+            // Record files live in a per-instance subfolder, so look recursively.
+            Assert.False(Directory.Exists(cacheDir) && CacheFiles(cacheDir).Length > 0,
                 "nothing should have reached disk before shutdown");
 
             factory.Dispose(); // fires ApplicationStopping
 
             Assert.True(Directory.Exists(cacheDir), "shutdown did not create the cache directory");
-            Assert.NotEmpty(Directory.GetFiles(cacheDir));
+            Assert.NotEmpty(CacheFiles(cacheDir));
         }
         finally
         {

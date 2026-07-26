@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Ednsv.Core.Services;
 
@@ -208,26 +209,56 @@ public class HttpProbeService
     /// <summary>Evicts all cached HTTP GET results.</summary>
     // ── Cache export/import for disk persistence ─────────────────────────
 
-    public Dictionary<string, HttpGetCacheEntry> ExportGetCache()
+    /// <summary>Import one record from a cache file — see
+    /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
+    public bool TryImportRecord(string type, string key, JsonNode? value)
     {
-        var result = new Dictionary<string, HttpGetCacheEntry>();
-        foreach (var kvp in _getCache.Export())
-            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode };
-        return result;
+        if (value == null) return false;
+        try
+        {
+            switch (type)
+            {
+                case CacheTypes.HttpGet:
+                {
+                    var e = value.Deserialize<HttpGetCacheEntry>();
+                    if (e != null)
+                        _getCache.Import(key, new GetResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode });
+                    return true;
+                }
+                case CacheTypes.HttpGetHeaders:
+                {
+                    var e = value.Deserialize<HttpGetWithHeadersCacheEntry>();
+                    if (e != null)
+                        _getWithHeadersCache.Import(key, new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType });
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    // ── Flush sources ────────────────────────────────────────────────────
+
+    /// <summary>Everything this prober has fetched and not yet written out.</summary>
+    public IEnumerable<PendingWrites> CollectPendingWrites()
+    {
+        yield return _getCache.CollectPending(CacheTypes.HttpGet,
+            r => JsonSerializer.SerializeToNode(
+                new HttpGetCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode }));
+        yield return _getWithHeadersCache.CollectPending(CacheTypes.HttpGetHeaders,
+            r => JsonSerializer.SerializeToNode(
+                new HttpGetWithHeadersCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode, ContentType = r.ContentType }));
     }
 
     public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
     {
         foreach (var kvp in entries)
             _getCache.Import(kvp.Key, new GetResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode });
-    }
-
-    public Dictionary<string, HttpGetWithHeadersCacheEntry> ExportGetWithHeadersCache()
-    {
-        var result = new Dictionary<string, HttpGetWithHeadersCacheEntry>();
-        foreach (var kvp in _getWithHeadersCache.Export())
-            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType };
-        return result;
     }
 
     public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)

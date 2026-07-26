@@ -25,23 +25,28 @@ public class DiskCacheTests : IDisposable
             Directory.Delete(_cacheDir, true);
     }
 
-    /// <summary>Files holding a cache type. Each process writes its own
-    /// ("dns-queries.{instance}.json"), so tests match on the stem rather than an
-    /// exact name — while keeping "http-get" from matching "http-get-headers".</summary>
-    private string[] CacheFiles(string baseName)
+    /// <summary>Every record file written under the cache directory, across all
+    /// instance folders.</summary>
+    private string[] RecordFiles() => Directory.Exists(_cacheDir)
+        ? Directory.GetFiles(_cacheDir, "*.jsonl", SearchOption.AllDirectories)
+        : Array.Empty<string>();
+
+    /// <summary>The type tags present on disk, e.g. "dns" or "http-get". One file
+    /// holds every cache type, so a test that used to look for a per-type filename
+    /// looks for a per-type record instead.</summary>
+    private HashSet<string> PersistedTypes()
     {
-        if (!Directory.Exists(_cacheDir)) return Array.Empty<string>();
-        var stem = Path.GetFileNameWithoutExtension(baseName);
-        var ext = Path.GetExtension(baseName);
-        return Directory.GetFiles(_cacheDir, "*" + ext)
-            .Where(p =>
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in RecordFiles())
+        {
+            foreach (var line in File.ReadAllLines(path))
             {
-                var n = Path.GetFileName(p);
-                return n == baseName
-                    || (n.StartsWith(stem + ".", StringComparison.Ordinal)
-                        && n.Length > stem.Length + 1 + ext.Length);
-            })
-            .ToArray();
+                if (line.Length == 0) continue;
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                types.Add(doc.RootElement.GetProperty("t").GetString() ?? "");
+            }
+        }
+        return types;
     }
 
     // ── Round-trip tests ─────────────────────────────────────────────────
@@ -60,7 +65,7 @@ public class DiskCacheTests : IDisposable
         // Save to disk
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
         Assert.True(Directory.Exists(_cacheDir));
-        Assert.NotEmpty(CacheFiles("dns-queries.json"));
+        Assert.Contains(CacheTypes.Dns, PersistedTypes());
 
         // Load into fresh services
         var dns2 = new DnsResolverService();
@@ -178,10 +183,10 @@ public class DiskCacheTests : IDisposable
         Assert.Null(result);
     }
 
-    // ── Separate files per cache type ────────────────────────────────────
+    // ── One file, every cache type ───────────────────────────────────────
 
     [Fact]
-    public async Task SaveAsync_CreatesPerTypeFiles()
+    public async Task SaveAsync_WritesEveryCacheTypeIntoOneFile()
     {
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();
@@ -193,8 +198,10 @@ public class DiskCacheTests : IDisposable
 
         await DiskCacheService.SaveAsync(_cacheDir, smtp, http, dns);
 
-        Assert.NotEmpty(CacheFiles("dns-queries.json"));
-        Assert.NotEmpty(CacheFiles("http-get.json"));
+        Assert.Single(RecordFiles());
+        var types = PersistedTypes();
+        Assert.Contains(CacheTypes.Dns, types);
+        Assert.Contains(CacheTypes.HttpGet, types);
     }
 
     // ── Merge behavior ──────────────────────────────────────────────────

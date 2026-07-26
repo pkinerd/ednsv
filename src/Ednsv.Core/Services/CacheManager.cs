@@ -18,7 +18,7 @@ public sealed class CacheManager : IAsyncDisposable
     private readonly HttpProbeService _http;
 
     private BackgroundCacheFlusher? _flusher;
-    private ConcurrentDictionary<string, DomainResultSummary> _previousResults = new();
+    private readonly DomainResultStore _domainResults;
     private bool _disposed;
 
     // Serialises direct disk access on the no-flusher path (see SaveDirectAsync).
@@ -36,28 +36,22 @@ public sealed class CacheManager : IAsyncDisposable
         _dns = dns;
         _smtp = smtp;
         _http = http;
+        _domainResults = new DomainResultStore(ttl > TimeSpan.Zero ? ttl : null);
     }
 
     /// <summary>
     /// Loads cached probe data from disk and primes the services.
     /// Returns summary info about what was loaded, or null if nothing was found.
     /// </summary>
-    public async Task<DiskCacheService.CacheLoadResult?> LoadAsync(bool retryErrors = false)
-    {
-        var result = await DiskCacheService.LoadAsync(_cacheDir, _ttl, _smtp, _http, _dns, retryErrors);
-        var loaded = await DiskCacheService.LoadDomainResultsAsync(_cacheDir);
-        if (loaded != null)
-            foreach (var kvp in loaded)
-                _previousResults[kvp.Key] = kvp.Value;
-        return result;
-    }
+    public Task<DiskCacheService.CacheLoadResult?> LoadAsync(bool retryErrors = false)
+        => DiskCacheService.LoadAsync(_cacheDir, _ttl, _smtp, _http, _dns, retryErrors, _domainResults);
 
     /// <summary>
     /// Starts a background timer that periodically flushes in-memory caches to disk.
     /// </summary>
     public void StartBackgroundFlusher(TimeSpan interval)
     {
-        _flusher ??= new BackgroundCacheFlusher(_cacheDir, _smtp, _http, _dns, interval);
+        _flusher ??= new BackgroundCacheFlusher(_cacheDir, _smtp, _http, _dns, interval, _ttl, _domainResults);
     }
 
     /// <summary>
@@ -68,27 +62,23 @@ public sealed class CacheManager : IAsyncDisposable
         ? _flusher.FlushAsync()
         : SaveDirectAsync();
 
-    // Without a background flusher (CLI single-shot runs) there is no shared lock
-    // to route through, so serialise here instead: MergeSaveAsync is a
-    // read-modify-write per cache file, and two interleaved saves drop whichever
-    // entries the loser had merged in.
+    // Without a background flusher (CLI single-shot runs) there is no shared lock to
+    // route through, so serialise here instead. Two concurrent saves would each
+    // collect the same bag entries and write them into two files — harmless on read,
+    // since the merge dedupes by key, but wasteful.
     private async Task SaveDirectAsync()
     {
         await _diskLock.WaitAsync();
-        try { await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns); }
+        try { await DiskCacheService.SaveAsync(_cacheDir, _smtp, _http, _dns, _domainResults); }
         finally { _diskLock.Release(); }
     }
 
     /// <summary>
-    /// Saves a domain's validation result summary for future recheck decisions.
-    /// Updates both the in-memory map (for subsequent rechecks within this process)
-    /// and the on-disk cache (for persistence across restarts).
+    /// Records a domain's validation result for future recheck decisions. Visible
+    /// to this process immediately; written out by the next flush.
     /// </summary>
-    public Task SaveDomainResultAsync(string domain, DomainResultSummary summary)
-    {
-        _previousResults[domain.ToLowerInvariant()] = summary;
-        return DiskCacheService.SaveDomainResultAsync(_cacheDir, domain, summary);
-    }
+    public void SaveDomainResult(string domain, DomainResultSummary summary)
+        => _domainResults.Set(domain, summary);
 
     /// <summary>
     /// Determines which cache types need rechecking for a domain based on previous
@@ -98,7 +88,7 @@ public sealed class CacheManager : IAsyncDisposable
     /// </summary>
     public RecheckHelper.CacheDep GetRecheckDeps(string domain, CheckSeverity minSeverity)
     {
-        if (!_previousResults.TryGetValue(domain.ToLowerInvariant(), out var summary))
+        if (!_domainResults.TryGet(domain, out var summary))
             return RecheckHelper.CacheDep.None;
 
         return RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
@@ -107,7 +97,7 @@ public sealed class CacheManager : IAsyncDisposable
     /// <summary>
     /// Previous domain results loaded from the cache (for recheck decisions).
     /// </summary>
-    public ConcurrentDictionary<string, DomainResultSummary> PreviousResults => _previousResults;
+    public ConcurrentDictionary<string, DomainResultSummary> PreviousResults => _domainResults.Results;
 
     public async ValueTask DisposeAsync()
     {

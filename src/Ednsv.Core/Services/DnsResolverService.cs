@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DnsClient;
 using DnsClient.Protocol;
 using Microsoft.Extensions.Caching.Memory;
@@ -81,6 +82,12 @@ public class DnsResolverService
     private readonly ConcurrentDictionary<string, (int count, DateTime lastFailure)> _unreachableServerCounts = new();
     private readonly TimeSpan _unreachableDecay;
     private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
+
+    // These two live in plain dictionaries rather than a ProbeCache, so they carry
+    // their own write queues. See WriteBag for why they are queued rather than
+    // written out whole on every flush.
+    private readonly WriteBag<int> _unreachableBag;
+    private readonly WriteBag<bool> _axfrBag;
     private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
 
     // One LookupClient per target server IP, reused across queries. LookupClient is
@@ -182,6 +189,8 @@ public class DnsResolverService
 
         // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
+        _unreachableBag = new WriteBag<int>(cacheTtl);
+        _axfrBag = new WriteBag<bool>(cacheTtl);
         ProbeCacheL2<IDnsQueryResponse>? DnsL2(string type) =>
             redis != null && redis.Enabled
                 ? new ProbeCacheL2<IDnsQueryResponse>(redis, type, cacheTtl,
@@ -439,16 +448,20 @@ public class DnsResolverService
                 var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
                 Interlocked.Increment(ref _responsesReceived);
                 if (!result.HasError)
+                {
                     _unreachableServerCounts.TryRemove(serverStr, out _);
+                    _unreachableBag.Remove(serverStr); // recovered — don't persist the old count
+                }
                 return result;
             }
             catch (Exception ex)
             {
                 Interlocked.Increment(ref _responsesReceived);
                 AddError($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
-                _unreachableServerCounts.AddOrUpdate(serverStr,
+                var updated = _unreachableServerCounts.AddOrUpdate(serverStr,
                     (1, DateTime.UtcNow),
                     (_, existing) => (existing.count + 1, DateTime.UtcNow));
+                _unreachableBag.Add(serverStr, updated.count);
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.ServerDns,
@@ -560,7 +573,8 @@ public class DnsResolverService
 
         var response = await CachedAxfrAsync(nsIp, domain);
         var vulnerable = response.Answers.Count > 0;
-        _axfrCache.TryAdd(key, vulnerable);
+        if (_axfrCache.TryAdd(key, vulnerable))
+            _axfrBag.Add(AxfrKey(key.Item1, key.Item2), vulnerable);
         return vulnerable;
     }
 
@@ -644,8 +658,83 @@ public class DnsResolverService
     // Minimal empty response implementation
     // ── Cache export/import for disk persistence ─────────────────────────
 
-    public Dictionary<string, int> ExportUnreachableServers()
-        => _unreachableServerCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.count);
+    /// <summary>
+    /// Import one record from a cache file. Keys are this service's own cache keys,
+    /// written verbatim by <see cref="CollectPendingWrites"/> — no disk-key
+    /// translation, unlike the legacy per-type files. Returns false when the record
+    /// belongs to another service.
+    /// </summary>
+    public bool TryImportRecord(string type, string key, JsonNode? value)
+    {
+        if (value == null) return false;
+        try
+        {
+            switch (type)
+            {
+                case CacheTypes.Dns:
+                case CacheTypes.DnsServer:
+                {
+                    var entry = value.Deserialize<DnsCacheEntry>();
+                    if (entry == null) return true;
+                    var response = DnsCacheSerializer.DeserializeResponse(entry);
+                    if (response == null) return true;
+                    if (type == CacheTypes.Dns) _queryCache.Import(key, response);
+                    else _serverQueryCache.Import(key, response);
+                    return true;
+                }
+                case CacheTypes.Ptr:
+                {
+                    var names = value.Deserialize<List<string>>();
+                    if (names != null) _ptrCache.Import(key, names);
+                    return true;
+                }
+                case CacheTypes.Unreachable:
+                {
+                    var count = value.Deserialize<int>();
+                    _unreachableServerCounts.TryAdd(key, (count, DateTime.UtcNow));
+                    return true;
+                }
+                case CacheTypes.Axfr:
+                {
+                    var parts = key.Split('|', 2);
+                    if (parts.Length == 2) _axfrCache.TryAdd((parts[0], parts[1]), value.Deserialize<bool>());
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+        catch
+        {
+            return true; // ours, but unreadable — skip the record, not the file
+        }
+    }
+
+    // ── Flush sources ────────────────────────────────────────────────────
+
+    /// <summary>Everything this resolver has fetched and not yet written out.
+    /// Keys are the cache's own keys; the load path imports them back unchanged.</summary>
+    public IEnumerable<PendingWrites> CollectPendingWrites()
+    {
+        yield return _queryCache.CollectPending(CacheTypes.Dns, DnsToNode);
+        yield return _serverQueryCache.CollectPending(CacheTypes.DnsServer, DnsToNode);
+        yield return _ptrCache.CollectPending(CacheTypes.Ptr,
+            names => JsonSerializer.SerializeToNode(names));
+        yield return _unreachableBag.Collect(CacheTypes.Unreachable,
+            count => JsonSerializer.SerializeToNode(count));
+        yield return _axfrBag.Collect(CacheTypes.Axfr,
+            vulnerable => JsonSerializer.SerializeToNode(vulnerable));
+    }
+
+    /// <summary>The persisted key for an AXFR result. The tuple key cannot be written
+    /// as-is, and the pipe is safe: an IP never contains one.</summary>
+    private static string AxfrKey(string ip, string domain) => $"{ip}|{domain}";
+
+    private static JsonNode? DnsToNode(IDnsQueryResponse response)
+    {
+        var entry = DnsCacheSerializer.SerializeResponse(response);
+        return entry == null ? null : JsonSerializer.SerializeToNode(entry);
+    }
 
     public void ImportUnreachableServers(Dictionary<string, int> entries)
     {
@@ -653,9 +742,6 @@ public class DnsResolverService
         foreach (var kvp in entries)
             _unreachableServerCounts.TryAdd(kvp.Key, (kvp.Value, now));
     }
-
-    public Dictionary<string, bool> ExportAxfrCache()
-        => _axfrCache.ToDictionary(kvp => $"{kvp.Key.ip}|{kvp.Key.domain}", kvp => kvp.Value);
 
     public void ImportAxfrCache(Dictionary<string, bool> entries)
     {
@@ -667,40 +753,10 @@ public class DnsResolverService
         }
     }
 
-    public Dictionary<string, List<string>> ExportPtrCache()
-    {
-        var result = new Dictionary<string, List<string>>();
-        foreach (var kvp in _ptrCache.Export())
-        {
-            // ProbeCache key is "ptr:ip", disk format is just "ip"
-            var ip = kvp.Key.StartsWith("ptr:") ? kvp.Key[4..] : kvp.Key;
-            result[ip] = kvp.Value;
-        }
-        return result;
-    }
-
     public void ImportPtrCache(Dictionary<string, List<string>> entries)
     {
         foreach (var kvp in entries)
             _ptrCache.Import($"ptr:{kvp.Key}", kvp.Value);
-    }
-
-    public Dictionary<string, DnsCacheEntry> ExportQueryCache()
-    {
-        var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _queryCache.ExportTimed())
-        {
-            // ProbeCache key is "q:domain:type", disk format is "domain|type"
-            var cacheKey = kvp.Key.StartsWith("q:") ? kvp.Key[2..] : kvp.Key;
-            var diskKey = cacheKey.Replace(':', '|');
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value.Value);
-            if (entry != null)
-            {
-                entry.CachedAtUtc = kvp.Value.CachedAtUtc; // real fetch time, honoured on merge-save
-                result[diskKey] = entry;
-            }
-        }
-        return result;
     }
 
     public void ImportQueryCache(Dictionary<string, DnsCacheEntry> entries)
@@ -713,24 +769,6 @@ public class DnsResolverService
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
             _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response, kvp.Value.CachedAtUtc);
         }
-    }
-
-    public Dictionary<string, DnsCacheEntry> ExportServerQueryCache()
-    {
-        var result = new Dictionary<string, DnsCacheEntry>();
-        foreach (var kvp in _serverQueryCache.ExportTimed())
-        {
-            // ProbeCache key is "sq:server:domain:type", disk format is "server|domain|type"
-            var cacheKey = kvp.Key.StartsWith("sq:") ? kvp.Key[3..] : kvp.Key;
-            var diskKey = cacheKey.Replace(':', '|');
-            var entry = DnsCacheSerializer.SerializeResponse(kvp.Value.Value);
-            if (entry != null)
-            {
-                entry.CachedAtUtc = kvp.Value.CachedAtUtc; // real fetch time, honoured on merge-save
-                result[diskKey] = entry;
-            }
-        }
-        return result;
     }
 
     public void ImportServerQueryCache(Dictionary<string, DnsCacheEntry> entries)

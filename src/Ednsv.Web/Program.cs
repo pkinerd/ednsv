@@ -996,7 +996,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         logger.LogInformation(
             "Validation completed: endpoint=sync durationSec={Duration:F2} pass={Pass} warning={Warning} error={Error} critical={Critical}",
             report.Duration.TotalSeconds, report.PassCount, report.WarningCount, report.ErrorCount, report.CriticalCount);
-        _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
+        cache.SaveDomainResult(domain, ValidationTracker.BuildSummary(report));
         return Results.Ok(report);
     }
     catch (OperationCanceledException)
@@ -1786,7 +1786,7 @@ class ValidationTracker : IDisposable
                     job.PassCount, job.InfoCount, job.WarningCount, job.ErrorCount, job.CriticalCount,
                     dnsHits, dnsMisses);
 
-                _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
+                cache.SaveDomainResult(domain, ValidationTracker.BuildSummary(report));
             }
             catch (Exception ex)
             {
