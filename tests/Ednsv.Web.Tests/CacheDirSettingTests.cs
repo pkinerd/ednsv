@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using DnsClient;
 using Ednsv.Core.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Ednsv.Web.Tests;
 
@@ -149,6 +150,38 @@ public sealed class CacheDirSettingTests
                 && l.Message.Contains("no Redis", StringComparison.Ordinal));
 
             Assert.True(warned, "an L1-only configuration should say so at startup");
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task NoneWithRedisDoesNotWarn()
+    {
+        // `none` alongside Redis is the *recommended* multi-pod shape, so warning
+        // about it would be actively misleading — and would teach operators to
+        // ignore the warning that does matter. A dead endpoint is enough here:
+        // RedisConnection.Enabled reflects whether a connection string was
+        // configured, not whether a server answers.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-cachedir-{Guid.NewGuid():N}");
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["CacheDir"] = "none",
+            ["Redis:ConnectionString"] = "127.0.0.1:6399,abortConnect=false,connectTimeout=150,syncTimeout=150,connectRetry=0"
+        }, dataDir, f =>
+        {
+            var logs = f.LogSnapshot();
+
+            Assert.DoesNotContain(logs, l =>
+                l.Level == LogLevel.Warning
+                && l.Message.Contains("Disk cache disabled", StringComparison.Ordinal));
+
+            // Still announced, just not as a problem.
+            Assert.Contains(logs, l =>
+                l.Level == LogLevel.Information
+                && l.Message.Contains("Disk cache disabled", StringComparison.Ordinal)
+                && l.Message.Contains("shared Redis cache only", StringComparison.Ordinal));
+
             return Task.CompletedTask;
         });
     }
