@@ -6,9 +6,9 @@ EDNSV uses a multi-tier caching system to minimize redundant network requests ac
 
 ```mermaid
 flowchart TD
-    subgraph Tier1["Tier 1: Service-Level In-Memory Cache"]
+    subgraph Tier1["Tier 1: Service-Level In-Memory Cache (L1)"]
         direction TB
-        PC["ProbeCache&lt;T&gt;<br/><i>MemoryCache with optional TTL</i>"]
+        PC["ProbeCache&lt;T&gt;<br/><i>MemoryCache, per-entry TTL</i>"]
         DEDUP["In-Flight Deduplication<br/><i>Lazy&lt;Task&lt;T&gt;&gt; per key</i>"]
         PC --> DEDUP
     end
@@ -18,7 +18,12 @@ flowchart TD
         SMTPC["CheckContext.SmtpProbeCache<br/><i>ConcurrentDictionary per validation</i>"]
     end
 
-    subgraph Tier3["Tier 3: Disk Persistence"]
+    subgraph TierL2["Shared Cache (L2) — only when Redis is configured"]
+        direction TB
+        REDIS["ProbeCacheL2&lt;T&gt;<br/><i>&lt;InstanceName&gt;:cache:&lt;type&gt;:&lt;key&gt;<br/>per-key TTL</i>"]
+    end
+
+    subgraph Tier3["Tier 3: Disk Persistence — unless CacheDir=none"]
         direction TB
         DCACHE["DiskCacheService<br/><i>one JSONL file per flush,<br/>under CacheDir/&lt;instance&gt;/</i>"]
     end
@@ -26,19 +31,25 @@ flowchart TD
     CHECK["Check requests data"] --> SMTPC
     SMTPC -->|miss| PC
     PC -->|miss| DEDUP
-    DEDUP -->|miss| NET["Network Request<br/><i>DNS / SMTP / HTTP</i>"]
+    DEDUP -->|miss| REDIS
+    REDIS -->|"hit — cached in L1 only,<br/>never queued for disk"| PC
+    REDIS -->|miss| NET["Network Request<br/><i>DNS / SMTP / HTTP</i>"]
     NET -->|result| PC
-    PC -->|"write bag<br/>(only if shouldPersist)"| BG
+    PC -->|"write-through, if shouldPersist"| REDIS
 
-    CM["CacheManager"] -->|"LoadAsync<br/><i>background, at startup</i>"| DCACHE
-    DCACHE -->|"Import<br/><i>add-if-absent</i>"| PC
-    CM -->|StartBackgroundFlusher| BG["BackgroundCacheFlusher<br/><i>timer only</i>"]
+    PC -->|"write bag, if shouldPersist"| BG["BackgroundCacheFlusher<br/><i>timer only</i>"]
     BG -->|"drain bags → one new file"| DCACHE
 
-    RH["RecheckHelper.CurrentRecheckDeps<br/><i>AsyncLocal&lt;CacheDep&gt;</i>"] -.->|bypass flag| PC
+    CM["CacheManager"] -->|"LoadAsync<br/><i>background, at startup</i>"| DCACHE
+    DCACHE -->|"Import — add-if-absent,<br/>and warms L2 with SET NX"| PC
+
+    WATCH["SharedCacheEpoch<br/><i>every SharedCacheWatchSeconds</i>"] -.->|"emptied? republish L1<br/>with SET NX"| REDIS
+
+    RH["RecheckHelper.CurrentRecheckDeps<br/><i>AsyncLocal&lt;CacheDep&gt;</i>"] -.->|"bypasses the L1 and L2 reads"| PC
 
     style Tier1 fill:#e8f4fd,stroke:#1a73e8
     style Tier2 fill:#fef7e0,stroke:#f9ab00
+    style TierL2 fill:#fce8e6,stroke:#ea4335
     style Tier3 fill:#e6f4ea,stroke:#34a853
 ```
 
@@ -50,17 +61,21 @@ The core caching primitive, defined in `src/Ednsv.Core/Services/ProbeCache.cs`. 
 
 ```mermaid
 flowchart TD
-    REQ["GetOrCreateAsync(key, factory, shouldPersist?, onHit?)"] --> RECHECK{"Recheck bypass<br/>for this cache type?"}
+    REQ["GetOrCreateAsync(key, factory, shouldPersist?, onHit?, entryTtl?)"] --> RECHECK{"Recheck bypass<br/>for this cache type?"}
     RECHECK -->|yes| INFLIGHT
-    RECHECK -->|no| MEMCACHE{"MemoryCache<br/>TryGetValue(key)"}
+    RECHECK -->|no| MEMCACHE{"L1: MemoryCache<br/>TryGetValue(key)"}
     MEMCACHE -->|hit| HITCB["onHit callback fires<br/>(cumulative cache-hit counter)"]
     HITCB --> RETURN["Return cached value"]
     MEMCACHE -->|miss| INFLIGHT{"In-flight<br/>ConcurrentDictionary&lt;Lazy&lt;Task&gt;&gt;<br/>GetOrAdd(key)"}
     INFLIGHT -->|existing Lazy| AWAIT["Await existing Task<br/><i>(dedup join)</i>"]
-    INFLIGHT -->|new Lazy| FACTORY["Run factory function"]
+    INFLIGHT -->|new Lazy| L2{"Shared L2 configured,<br/>and not a recheck?"}
+    L2 -->|hit| L2HIT["SetMemoryOnly: L1 only<br/><i>a peer already persisted it —<br/>never queue it for our disk</i>"]
+    L2HIT --> CLEANUP
+    L2 -->|"miss / no L2 / recheck"| FACTORY["Run factory function<br/><i>(network)</i>"]
     FACTORY --> PERSIST{"shouldPersist(result)?"}
-    PERSIST -->|true / null| SET["Set MemoryCache + Export Log<br/><i>(persisted to disk on next flush)</i>"]
-    PERSIST -->|false| MEMONLY["SetMemoryOnly: MemoryCache only<br/><i>(no disk persistence — transient errors)</i>"]
+    PERSIST -->|true / null| TTL["entryTtl(result)<br/><i>null → the cache-wide TTL</i>"]
+    TTL --> SET["Set: L1 + write bag,<br/>write-through to L2<br/><i>one TTL for all three</i>"]
+    PERSIST -->|false| MEMONLY["SetMemoryOnly: L1 only<br/><i>transient errors are never persisted</i>"]
     SET --> CLEANUP["Remove from in-flight dict"]
     MEMONLY --> CLEANUP
     CLEANUP --> RETURN
@@ -71,6 +86,7 @@ flowchart TD
 
     style RECHECK fill:#fce8e6,stroke:#ea4335
     style INFLIGHT fill:#e8f4fd,stroke:#1a73e8
+    style L2 fill:#fce8e6,stroke:#ea4335
     style PERSIST fill:#fef7e0,stroke:#f9ab00
 ```
 
@@ -88,10 +104,13 @@ When multiple checks request the same DNS record simultaneously, only **one** ne
 
 `GetOrCreateAsync` accepts an optional `shouldPersist: Func<TValue, bool>` predicate that decides whether the result is added to the **write bag**. The predicate does **not** control in-memory caching — every successful factory result is written to MemoryCache so duplicate calls within the same process are still deduped:
 
-| `shouldPersist` returns | MemoryCache | Export log (disk) |
-|-------------------------|-------------|-------------------|
-| `true` (or predicate is null) | written via `Set()` | written |
-| `false` | written via `SetMemoryOnly()` | **skipped** |
+| `shouldPersist` returns | L1 (MemoryCache) | Write bag (disk) | Shared Redis L2 |
+|-------------------------|------------------|------------------|-----------------|
+| `true` (or predicate is null) | written via `Set()` | queued | written through |
+| `false` | written via `SetMemoryOnly()` | **skipped** | **skipped** |
+
+The predicate gates the shared L2 as well as the disk bag — a transient error must not
+be published to peers any more than it should reach disk.
 
 This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls for the rest of the current process. Service-level predicates:
 
@@ -120,7 +139,7 @@ What the bag *excludes* is the point of its design. Three kinds of value are cac
 - values read from the shared **Redis L2** — whichever instance fetched them has already written them to its own disk, and persisting them here duplicates that work onto ours;
 - entries **imported from disk at startup** — they are on disk by definition.
 
-That last exclusion is the one that mattered. Imports used to feed straight back into the export log, so every entry read at startup was re-serialised and rewritten on every flush for the life of the process.
+That last exclusion is the one that mattered. Imports used to feed straight back into `_exportLog`, the bag's predecessor, so every entry read at startup was re-serialised and rewritten on every flush for the life of the process.
 
 A flush snapshots the bag, writes those records, and removes **exactly what it wrote**, matched by reference. Nothing leaves the bag until the file has landed, so a failed write simply retries next tick, and a fresher value that arrived for the same key mid-write survives. `BagEntry` states its reference equality explicitly rather than inheriting it: `ConcurrentDictionary.TryRemove(KeyValuePair)` compares values with `EqualityComparer<T>.Default`, so any value-based equality there would let a flush silently delete the newer entry that replaced the one it persisted.
 
@@ -257,7 +276,7 @@ Files written by the previous one-file-per-cache-type layout (`dns-queries.json`
 
 ### Optional Redis L2 (distributed mode)
 
-When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
+When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `{InstanceName}:cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
 
 #### Recovering an emptied L2
 
@@ -282,30 +301,63 @@ It is a cheap heuristic for the case that actually hurts, not a consistency mech
 
 ## Service Cache Inventory
 
-Each service maintains specific ProbeCache instances:
+Two shapes appear here, and the difference matters for both persistence and recheck:
+a `ProbeCache<T>`, which owns a MemoryCache, an in-flight dedup map, a write bag and
+an optional Redis L2; and a plain `ConcurrentDictionary` paired with a `WriteBag<T>`,
+which owns none of that and is read with a direct `TryGetValue`.
 
 ### DnsResolverService
-| Cache | Type | Key Format | Recheck Flag |
-|-------|------|-----------|--------------|
+| Cache | Type | Key format | Recheck |
+|-------|------|-----------|---------|
 | `_queryCache` | `ProbeCache<IDnsQueryResponse>` | `q:domain:queryType` | `CacheDep.Dns` |
 | `_ptrCache` | `ProbeCache<List<string>>` | `ptr:ip` | `CacheDep.Ptr` |
 | `_serverQueryCache` | `ProbeCache<IDnsQueryResponse>` | `sq:server:domain:queryType` | `CacheDep.ServerDns` |
-| `_axfrResponseCache` | `ConcurrentDictionary<(ip,domain), IDnsQueryResponse>` | tuple | (none — unaffected by recheck) |
-| `_unreachableServerCounts` | `ConcurrentDictionary<string, (count, lastFailure)>` | server-IP | n/a — see "Unreachable-server decay" below |
+| `_axfrCache` + `_axfrBag` | `ConcurrentDictionary<(ip,domain), bool>` | `ip\|domain` on disk | **not bypassed** |
+| `_axfrResponseCache` | `ConcurrentDictionary<(ip,domain), IDnsQueryResponse>` | tuple | not persisted, not bypassed |
+| `_unreachableServerCounts` + `_unreachableBag` | `ConcurrentDictionary<string, (count, lastFailure)>` | server IP | not bypassed — see *Unreachable-server decay* |
 
 ### SmtpProbeService
-| Cache | Type | Key Format | Recheck Flag |
-|-------|------|-----------|--------------|
+| Cache | Type | Key format | Recheck |
+|-------|------|-----------|---------|
 | `_probeCache` | `ProbeCache<SmtpProbeResult>` | `smtp:host:port` | `CacheDep.Smtp` |
 | `_portCache` | `ProbeCacheValue<bool>` | `port:host:port` | `CacheDep.Port` |
-| `_rcptCache` | `ConcurrentDictionary<host\|email, (accepted, response)>` | `host\|email` | `CacheDep.Rcpt` (cleared via `RemoveRcptEntries`) |
-| `_relayCache` | `ConcurrentDictionary<relay:host\|domain, (isRelay, description)>` | `relay:host\|domain` | `CacheDep.Smtp` |
+| `_rcptCache` + `_rcptBag` | `ConcurrentDictionary<string, (accepted, response)>` | `host\|email` | **not bypassed** |
+| `_relayCache` + `_relayBag` | `ConcurrentDictionary<string, (isRelay, description)>` | `relay:host\|domain` | **not bypassed** |
 
 ### HttpProbeService
-| Cache | Type | Key Format | Recheck Flag |
-|-------|------|-----------|--------------|
+| Cache | Type | Key format | Recheck |
+|-------|------|-----------|---------|
 | `_getCache` | `ProbeCache<GetResult>` | `url` (or `url\nAccept:<media-type>` for `GetWithAcceptAsync`) | `CacheDep.Http` |
 | `_getWithHeadersCache` | `ProbeCache<GetWithHeadersResult>` | `url` | `CacheDep.Http` |
+
+Only `_probeCache`, `_queryCache`, `_serverQueryCache`, `_ptrCache`, `_getCache` and
+`_getWithHeadersCache` have a Redis L2; `_portCache` and the plain dictionaries are L1
+and disk only, so they are never shared between instances.
+
+### Known gap: recheck does not reach the plain dictionaries
+
+`CacheDep.Rcpt` exists, and `RecheckHelper` maps the **Postmaster** and **Abuse**
+categories to it — but nothing consults it. `_rcptCache`, `_relayCache` and `_axfrCache`
+are read with a bare `TryGetValue`, with no `RecheckHelper` check, so a recheck does not
+refetch them. Within a process, once one of those results is cached it is served for the
+process lifetime: those dictionaries have no TTL of their own either.
+
+The relay cache has the same problem by a different route: `CacheDep.Smtp` refreshes
+`_probeCache`, but `TestRelayAsync` reads `_relayCache` directly, so a recheck of an SMTP
+finding re-probes the handshake and reuses the cached relay verdict. `_axfrCache` was
+never wired to a flag at all.
+
+All nine `Remove*Entries` methods on the three services — including
+`RemoveRcptEntries` and `RemoveRelayEntries`, which used to clear these — now have
+**no callers**. The last went in commit `5277d94`, which unified CLI and web rechecks
+onto the AsyncLocal bypass and left the plain dictionaries behind. They would not work
+as written anyway: they iterate the write bag, which since it replaced `_exportLog`
+holds only entries not yet flushed rather than everything cached.
+
+Practical effect: `--recheck` on a Postmaster or Abuse finding re-runs the check but
+reuses the cached RCPT verdict, and restarting the process is the only way to clear it.
+Documented rather than quietly fixed — closing it is a behaviour change, not a docs
+correction.
 
 ### Unreachable-server decay
 
@@ -320,7 +372,9 @@ Each service maintains specific ProbeCache instances:
 3. **FlushAsync()** — Routes through the flusher's lock when one is active; falls back to `DiskCacheService.SaveAsync` for CLI single-shot mode.
 4. **SaveDomainResult(domain, summary)** — Records a validation result. Synchronous and in-memory: it updates the map immediately and queues the write for the next flush, like every other cache. It used to do a full read-modify-write of one JSON file under a semaphore on *every completed validation* — the same amplification this design removes everywhere else, in the one file that also never expired anything.
 5. **GetRecheckDeps(domain, minSeverity)** — Reads the domain summaries to determine which cache types to bypass for a recheck. Returns `CacheDep.None` if the domain has no recorded prior result.
-6. **DisposeAsync()** — Disposes the flusher (which performs its final flush) or, without one, performs a direct save.
+6. **WarmSharedCache()** — Republishes everything held in L1 into the shared Redis cache, for use when that cache has been emptied. Returns the number of keys published. See *Recovering an emptied L2*.
+7. **PruneSharedCacheIndex()** — Drops shared-cache index entries whose keys have expired. Cheap, and needed on a timer because MemoryCache expires lazily and never says so.
+8. **DisposeAsync()** — Disposes the flusher (which performs its final flush) or, without one, performs a direct save.
 
 The web host registers these singletons as pre-created instances, and the DI container only disposes what it **constructs** — so an explicit `ApplicationStopping` hook performs the shutdown flush. Without it every deploy silently discarded whatever had been gathered since the last periodic flush.
 
@@ -331,6 +385,8 @@ The web host registers these singletons as pre-created instances, and the DI con
 Only the literal string `none` disables it. A blank value resolves to the default path, deliberately: `GetValue<string>` returns the *empty string* for a JSON `null`, so anything looser would turn the disk cache off for every deployment whose settings file merely mentions the key.
 
 Startup logs a warning when `CacheDir=none` **and** no Redis is configured. That is L1-only: the cache dies with the process and every restart is fully cold. Reasonable on a dev box, almost certainly a misconfiguration in production.
+
+With Redis configured it is not a warning — it logs at Information, because `none` is then the **recommended** multi-pod shape. The shared-cache watch still runs, so an emptied Redis is republished from memory; see [horizontal-scaling.md](horizontal-scaling.md) → *Skip the disk cache once Redis is present*.
 
 ### Removed: the cache-clear and cache-flush endpoints
 
@@ -352,8 +408,8 @@ flowchart LR
     MAP --> FLAGS["CacheDep flags<br/><i>e.g., Dns | Smtp | Http</i>"]
     FLAGS --> AL["AsyncLocal&lt;CacheDep&gt;<br/><i>Flows through async calls</i>"]
     AL --> BYPASS["ProbeCache.TryGet() bypasses<br/>MemoryCache for flagged types"]
-    BYPASS --> FRESH["Fresh network request"]
-    FRESH --> WRITE["Write back to MemoryCache<br/><i>Available to other users</i>"]
+    BYPASS --> FRESH["Fresh network request<br/><i>the L2 read is skipped too</i>"]
+    FRESH --> WRITE["Write back to L1, the write bag<br/>and the L2<br/><i>available to other users and pods</i>"]
 ```
 
 ### How It Works
@@ -362,11 +418,11 @@ flowchart LR
 
 2. **Set context**: `DomainValidator.ValidateAsync` sets `RecheckHelper.CurrentRecheckDeps.Value` (an `AsyncLocal<CacheDep>`) at the start of the validation and clears it back to `CacheDep.None` in the finally section. Because it is `AsyncLocal`, each concurrent validation in the web API gets its own value with no cross-bleed, and the deps automatically flow through `await` boundaries into the singleton DNS/SMTP/HTTP services.
 
-3. **Bypass on read**: `ProbeCache.TryGet()` (and `ProbeCacheValue.TryGet()`) checks `RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)` before consulting MemoryCache. When the flag is set, it returns a miss without touching MemoryCache.
+3. **Bypass on read**: `ProbeCache.TryGet()` (and `ProbeCacheValue.TryGet()`) checks `RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)` before consulting MemoryCache. When the flag is set, it returns a miss without touching MemoryCache — and `GetOrCreateAsync` skips the **shared L2 read** as well, so a recheck cannot be satisfied by a peer's cached copy. The L2 *write-back* still happens, so a forced recheck refreshes the shared cache for everyone. Note the gap above: the plain-dictionary caches do not participate in this at all.
 
 4. **Fresh query**: The factory function runs, making a real network request.
 
-5. **Write back**: The fresh result is stored in MemoryCache (and the write bag when `shouldPersist` returns true) — other concurrent validations benefit from the refreshed data, and the next non-recheck request serves the new value from cache.
+5. **Write back**: The fresh result is stored in MemoryCache, and — when `shouldPersist` returns true — queued in the write bag and written through to the shared L2. Other concurrent validations benefit immediately, and the next non-recheck request serves the new value from cache.
 
 > **CLI now uses the same mechanism as the web API.** Earlier versions physically deleted matching entries from MemoryCache for CLI rechecks (`ClearImportedEntriesForDomain`). That code path was removed; CLI rechecks now go through the same AsyncLocal bypass as the web API by setting `validator.RecheckDeps`. Fresh results overwrite the old entries on write-back.
 
@@ -393,7 +449,7 @@ All = 127       — All cache types
 | DMARC | Dns |
 | SMTP | Dns, Smtp, Port |
 | MTA-STS | Dns, Http |
-| Postmaster | Rcpt |
+| Postmaster | Rcpt *(mapped but not enforced — see the gap above)* |
 | Delegation | Dns, ServerDns, Ptr |
 
 ### CLI vs Web Behavior

@@ -268,7 +268,7 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 - Job IDs are 12-character hex strings from `Guid.NewGuid().ToString("N")[..12]`
 - Each job snapshots service counter baselines at start — status endpoint computes per-job deltas while still exposing the cumulative totals
 - Live severity counters updated via `Interlocked.Increment` as checks complete
-- On completion, domain results are saved for recheck decisions and a non-blocking `cache.RequestFlush()` runs in the background
+- On completion, the domain result is recorded in memory for recheck decisions and queued for the next flush. There is no flush-on-completion any more: the timer is the only writer, so a busy instance no longer rewrites its whole cache after every validation
 - Implements `IDisposable`. A 5-minute `Timer` evicts completed/failed jobs older than 1 hour from the dictionary so long-running web servers don't accumulate every job they ever ran in memory
 - The whole `Task.Run` body runs inside a structured logger scope (`JobId`, `Username`, `Endpoint`, `Domain`) so trace lines emitted from the singleton DNS/SMTP/HTTP services — captured via `TraceContext` AsyncLocal — automatically carry the right job identifier even though the services are shared
 

@@ -122,10 +122,16 @@ fixed — their whole point is a short skip-if-slow ceiling.
 | `_queryCache` | `ProbeCache<IDnsQueryResponse>` | `q:domain:queryType` |
 | `_ptrCache` | `ProbeCache<List<string>>` | `ptr:ip` |
 | `_serverQueryCache` | `ProbeCache<IDnsQueryResponse>` | `sq:server:domain:queryType` |
-| `_axfrResponseCache` | `ConcurrentDictionary` | `(ip, domain)` tuple |
-| `_unreachableServerCounts` | `ConcurrentDictionary` | server-IP, value `(count, lastFailure)` |
+| `_axfrCache` + `_axfrBag` | `ConcurrentDictionary` + `WriteBag<bool>` | `(ip, domain)` tuple; `ip\|domain` on disk |
+| `_axfrResponseCache` | `ConcurrentDictionary` | `(ip, domain)` tuple — not persisted |
+| `_unreachableServerCounts` + `_unreachableBag` | `ConcurrentDictionary` + `WriteBag<int>` | server-IP, value `(count, lastFailure)` |
 
 `shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk write bag while still caching them in MemoryCache for the rest of the current process.
+
+The three `ProbeCache` instances also carry a shared Redis L2 when one is configured. The
+two `WriteBag`-backed caches do not: they are L1 and disk only, and are **not** reached by
+the recheck bypass — see [caching-architecture.md](caching-architecture.md) →
+*Known gap: recheck does not reach the plain dictionaries*.
 
 ### Unreachable-server decay
 
@@ -243,10 +249,19 @@ The result of a probe captures comprehensive connection details:
 |-------|------|-----|
 | `_probeCache` | `ProbeCache<SmtpProbeResult>` | `smtp:host:port` |
 | `_portCache` | `ProbeCacheValue<bool>` | `port:host:port` |
-| `_rcptCache` | `ConcurrentDictionary<string, (accepted, response)>` | `host\|email` |
-| `_relayCache` | `ConcurrentDictionary<string, (isRelay, description)>` | `relay:host\|domain` |
+| `_rcptCache` + `_rcptBag` | `ConcurrentDictionary<string, (accepted, response)>` + `WriteBag` | `host\|email` |
+| `_relayCache` + `_relayBag` | `ConcurrentDictionary<string, (isRelay, description)>` + `WriteBag` | `relay:host\|domain` |
 
 `_rcptCache` and `_relayCache` are raw `ConcurrentDictionary` (not ProbeCache) because their entries are written only after a definitive server-level response — the dedup path uses simple `TryGetValue` / `TryAdd`. Transient errors and connection timeouts are deliberately not cached so the next call retries.
+
+Each carries a `WriteBag` alongside it so a flush writes only what has been fetched since
+the last one. Without that the pair would be serialised whole on every tick, and a flush
+would always find something to write — which defeats the "bag is the dirty flag" behaviour
+that keeps an idle instance from creating a file per interval.
+
+They have **two limitations worth knowing**: no TTL of their own, so an entry lives for the
+process lifetime, and no recheck bypass — see [caching-architecture.md](caching-architecture.md)
+→ *Known gap: recheck does not reach the plain dictionaries*.
 
 ### Diagnostic Counters
 

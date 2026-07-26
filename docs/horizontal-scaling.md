@@ -138,7 +138,7 @@ a Redis flush just means an in-flight client resubmits — acceptable by design.
 The existing two-tier cache gains a shared L2:
 
 1. Check the per-pod **L1** `MemoryCache` (unchanged).
-2. On an L1 miss, check the **Redis L2** (`cache:{type}:{key}`); on a hit,
+2. On an L1 miss, check the **Redis L2** (`{InstanceName}:cache:{type}:{key}`); on a hit,
    populate L1 and return.
 3. On an L2 miss, run the network query, then write-through to **both** L1 and L2
    (subject to the existing `shouldPersist` predicate — transient errors stay L1
@@ -147,9 +147,9 @@ The existing two-tier cache gains a shared L2:
 If Redis is emptied while pods are running — a restart without persistence, a
 `FLUSHALL`, a failover to an empty replica — the shared cache does not refill on
 its own, because every pod is still serving from its own L1 and disk and has no
-reason to refetch. Pods detect this via a nonce key and republish their disk tier
-into it; see [caching-architecture.md](caching-architecture.md) →
-*Recovering an emptied L2*. Without that, a pod rescheduled afterwards would come
+reason to refetch. Pods detect this via a nonce key and republish their own
+in-memory cache into it — not their disk tier, which holds strictly less; see
+[caching-architecture.md](caching-architecture.md) → *Recovering an emptied L2*. Without that, a pod rescheduled afterwards would come
 back fully cold despite the L2 being configured.
 
 Cross-pod in-flight de-duplication is intentionally **not** implemented: at worst

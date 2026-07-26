@@ -28,10 +28,10 @@ graph TD
         end
 
         subgraph Caching
-            PC["ProbeCache&lt;T&gt;<br/><i>In-memory + in-flight dedup<br/>shouldPersist gates disk export</i>"]
-            DISK["DiskCacheService<br/><i>JSON persistence</i>"]
-            FLUSH["BackgroundCacheFlusher<br/><i>SemaphoreSlim-serialised<br/>periodic + on-demand</i>"]
-            CM["CacheManager<br/><i>Load/save/flush orchestration<br/>(IAsyncDisposable)</i>"]
+            PC["ProbeCache&lt;T&gt;<br/><i>In-memory + in-flight dedup<br/>shouldPersist gates the write bag</i>"]
+            DISK["DiskCacheService<br/><i>One JSONL file per flush</i>"]
+            FLUSH["BackgroundCacheFlusher<br/><i>Timer only; also sweeps</i>"]
+            CM["CacheManager<br/><i>Load/flush/re-warm orchestration<br/>(IAsyncDisposable)</i>"]
             RH["RecheckHelper<br/><i>AsyncLocal CacheDep bypass</i>"]
         end
 
@@ -105,9 +105,9 @@ ednsv.sln
 │   │       ├── SmtpProbeService.cs    # SMTP probing, TLS, certificates
 │   │       ├── HttpProbeService.cs    # HTTP/HTTPS GET with caching + concurrency cap
 │   │       ├── ProbeCache.cs          # Generic cache with in-flight dedup + shouldPersist
-│   │       ├── DiskCacheService.cs    # JSON persistence + BackgroundCacheFlusher
+│   │       ├── DiskCacheService.cs    # JSONL persistence + BackgroundCacheFlusher
 │   │       ├── DnsCacheSerializer.cs  # DNS response serialization
-│   │       ├── CacheManager.cs        # Cache load/save/flush orchestration (IAsyncDisposable)
+│   │       ├── CacheManager.cs        # Cache load/flush/re-warm orchestration (IAsyncDisposable)
 │   │       ├── RecheckHelper.cs       # AsyncLocal-based selective cache bypass for recheck
 │   │       ├── NetworkCapabilities.cs # Probes host egress (raw DNS / SMTP / HTTP) for capability hints
 │   │       ├── TraceContext.cs        # AsyncLocal sink + Phase/Check labels for structured tracing
@@ -147,9 +147,9 @@ ednsv.sln
 | **SmtpProbeService** | Connects to SMTP servers, performs STARTTLS handshake, extracts TLS/certificate details. Supports port probing (587, 465), RCPT verification, and relay testing. |
 | **HttpProbeService** | Performs HTTP/HTTPS GET requests with caching, 10 s timeout per request, and a `SemaphoreSlim(20)` outbound concurrency cap. Used for MTA-STS policies, security.txt, BIMI, Certificate Transparency, autodiscover, and DoH propagation. |
 | **ProbeCache\<T\>** | Generic in-memory cache using MemoryCache with in-flight request deduplication via `Lazy<Task<T>>`. Supports TTL, recheck bypass via AsyncLocal, a `shouldPersist` predicate (transient errors stay in-memory only), and an `onHit` callback for hit counting. |
-| **DiskCacheService** | Persists cache to JSON files under `<DataDir>/cache/` with per-entry timestamps and merge-on-save. Domain-result writes are serialised with a static `SemaphoreSlim`. |
-| **BackgroundCacheFlusher** | Periodic disk flusher with `SemaphoreSlim(1, 1)` lock so timer ticks, manual flushes, and on-completion saves never run concurrently. Implements `IAsyncDisposable` and performs a final flush on shutdown. |
-| **CacheManager** | Coordinates disk cache load at startup, routes flushes through the flusher's lock, and exposes `RequestFlush` for fire-and-forget calls. Determines recheck dependencies from previous results. `IAsyncDisposable`. |
+| **DiskCacheService** | Persists newly-fetched results under `CacheDir` (default `<DataDir>/cache`) as **one immutable JSONL file per flush**, in a per-instance folder. Never rewrites a file; an age sweep bounds the set. Reads every instance's files back merged, latest fetch winning per key. |
+| **BackgroundCacheFlusher** | Timer-driven disk flusher — the only flush trigger — with a `SemaphoreSlim(1, 1)` lock so a tick cannot overlap an explicit or dispose-time flush. Also runs the sweep each tick. Implements `IAsyncDisposable` and performs a final flush on shutdown. |
+| **CacheManager** | Coordinates the background disk-cache load at startup, routes flushes through the flusher's lock, records domain results for recheck decisions, and republishes L1 into the shared Redis cache when that has been emptied. Determines recheck dependencies from previous results. `IAsyncDisposable`. |
 | **RecheckHelper** | Maps check categories to cache dependency flags. `CurrentRecheckDeps` is an `AsyncLocal<CacheDep>` that selectively bypasses service caches per-validation without clearing shared entries. CLI and Web API both use this same mechanism. |
 | **TraceContext** | Static AsyncLocal holder for the per-validation trace `Sink`, `Phase` label (PREFETCH / FOUNDATION / CONCURRENT), and `Check` name. Lets singleton services emit trace lines that automatically carry the right job/phase/check identifiers. |
 | **TraceMasker** | SHA256-hashes hostnames, IPs, email addresses, and DKIM selectors in trace output for privacy. Supports deterministic salt for consistent hashes across runs. |
@@ -203,7 +203,7 @@ Every check invocation now runs under a `CancellationTokenSource` (45 s for foun
 Every shared write surface in the cache layer is now serialised:
 
 - `BackgroundCacheFlusher._lock` (`SemaphoreSlim(1, 1)`) gates `SaveAsync` calls. Timer flushes use `WaitAsync(0)` and skip when one is already in progress; explicit and dispose-time flushes block.
-- `DiskCacheService._domainResultsLock` (static `SemaphoreSlim(1, 1)`) gates the read-modify-write on `domain-results.json`, with `temp file → File.Move(overwrite=true)` for atomic publication.
+- Each flush writes a **new** file via `temp file → File.Move(overwrite=true)`, so there is no read-modify-write to serialise and concurrent instances cannot interleave. Domain results go through the same path as every other cache rather than their own lock.
 - `CacheManager.FlushAsync` routes through the flusher's lock when one exists, so manual and background flushes can never overlap.
 
 ### Horizontal scaling (opt-in)
