@@ -193,6 +193,73 @@ public sealed class ProbeCacheBagTests
         Assert.Equal(new[] { "keep:1" }, cache.Export().Keys);
     }
 
+    // ── Per-entry TTL ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task APerEntryTtlBoundsBothTheCacheAndTheDiskRecord()
+    {
+        // A DNS answer whose records say thirty seconds must not be served — or
+        // written out as live — for the cache's full two hours. The two must agree,
+        // or the disk copy resurrects the value the memory copy just expired.
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(2));
+        var before = DateTime.UtcNow;
+
+        await cache.GetOrCreateAsync("k", () => Fresh("v"),
+            entryTtl: _ => TimeSpan.FromSeconds(30));
+
+        var record = Assert.Single(
+            cache.CollectPending("test", v => System.Text.Json.JsonSerializer.SerializeToNode(v)).Records);
+        Assert.InRange(record.ExpiresUtc,
+            before.AddSeconds(29), DateTime.UtcNow.AddSeconds(31));
+    }
+
+    [Fact]
+    public async Task NoPerEntryTtlLeavesTheCacheWideOneGoverning()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(2));
+        var before = DateTime.UtcNow;
+
+        await cache.GetOrCreateAsync("null-ttl", () => Fresh("v"), entryTtl: _ => null);
+        await cache.GetOrCreateAsync("no-delegate", () => Fresh("v"));
+
+        foreach (var record in cache.CollectPending("test",
+                     v => System.Text.Json.JsonSerializer.SerializeToNode(v)).Records)
+        {
+            Assert.InRange(record.ExpiresUtc,
+                before.AddHours(2).AddSeconds(-1), DateTime.UtcNow.AddHours(2).AddSeconds(1));
+        }
+    }
+
+    [Fact]
+    public async Task ATtlDelegateThatThrowsFallsBackToTheCacheTtl()
+    {
+        // A malformed response must cost its own TTL derivation, not the entry.
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(2));
+        var before = DateTime.UtcNow;
+
+        await cache.GetOrCreateAsync("k", () => Fresh("v"),
+            entryTtl: _ => throw new InvalidOperationException("no TTL here"));
+
+        Assert.True(cache.TryGet("k", out _));
+        var record = Assert.Single(
+            cache.CollectPending("test", v => System.Text.Json.JsonSerializer.SerializeToNode(v)).Records);
+        Assert.InRange(record.ExpiresUtc,
+            before.AddHours(2).AddSeconds(-1), DateTime.UtcNow.AddHours(2).AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task APerEntryTtlAlsoExpiresTheMemoryCopy()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(2));
+
+        await cache.GetOrCreateAsync("brief", () => Fresh("v"),
+            entryTtl: _ => TimeSpan.FromMilliseconds(200));
+
+        Assert.True(cache.TryGet("brief", out _));
+        await Task.Delay(500);
+        Assert.False(cache.TryGet("brief", out _), "the entry outlived its per-entry TTL");
+    }
+
     // ── Value-type variant ───────────────────────────────────────────────
 
     [Fact]

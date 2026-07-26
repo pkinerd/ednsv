@@ -50,8 +50,11 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         catch { return null; }
     }
 
-    /// <summary>Write-through to the L2 (fire-and-forget). Best-effort.</summary>
-    public void Set(string key, TValue value)
+    /// <summary>Write-through to the L2 (fire-and-forget). Best-effort.
+    /// <paramref name="entryTtl"/> overrides the cache-wide TTL for values that carry
+    /// their own — a DNS answer bounded by its record TTL, say — so the shared copy
+    /// does not outlive the local one.</summary>
+    public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
         var db = _redis.GetDatabase();
         if (db == null) return;
@@ -59,7 +62,7 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         try { payload = _serialize(value); }
         catch { return; }
         if (payload == null) return;
-        try { db.StringSet(_redis.Key(_prefix + key), payload, _ttl, flags: CommandFlags.FireAndForget); }
+        try { db.StringSet(_redis.Key(_prefix + key), payload, entryTtl ?? _ttl, flags: CommandFlags.FireAndForget); }
         catch { /* best effort — an L2 write failure just means the next pod refills */ }
     }
 
@@ -178,7 +181,8 @@ public class ProbeCache<TValue> where TValue : class
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
         Func<TValue, bool>? shouldPersist = null,
-        Action? onHit = null)
+        Action? onHit = null,
+        Func<TValue, TimeSpan?>? entryTtl = null)
     {
         // 1. Check cache (respects recheck bypass)
         if (TryGet(key, out var cached, recheckFlag))
@@ -200,7 +204,7 @@ public class ProbeCache<TValue> where TValue : class
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist, bypass));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist, bypass, entryTtl));
         });
 
         if (!isNewEntry)
@@ -218,7 +222,8 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist, bool skipL2Read)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory,
+        Func<TValue, bool>? shouldPersist, bool skipL2Read, Func<TValue, TimeSpan?>? entryTtl)
     {
         try
         {
@@ -243,8 +248,13 @@ public class ProbeCache<TValue> where TValue : class
             // (transient errors stay L1-only and never poison disk or the shared L2).
             if (shouldPersist == null || shouldPersist(result))
             {
-                Set(key, result);
-                _l2?.Set(key, result);
+                // Computed once and used for L1, the disk record and the L2 alike, so
+                // a value bounded by its own TTL is bounded everywhere.
+                TimeSpan? ttl;
+                try { ttl = entryTtl?.Invoke(result); }
+                catch { ttl = null; } // a TTL we cannot derive falls back to the cache's
+                Set(key, result, ttl);
+                _l2?.Set(key, result, ttl);
             }
             else
                 SetMemoryOnly(key, result);
@@ -256,17 +266,25 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a freshly fetched value in MemoryCache and queue it for
-    /// persistence.</summary>
-    public void Set(string key, TValue value)
+    /// <summary>
+    /// Store a freshly fetched value in MemoryCache and queue it for persistence.
+    ///
+    /// <para><paramref name="entryTtl"/> lets a value shorten its own life below the
+    /// cache-wide TTL — a DNS answer whose records say thirty seconds should not be
+    /// served for two hours. It applies to the MemoryCache expiry and to the expiry
+    /// stamped on the disk record together, so the two never disagree.</para>
+    /// </summary>
+    public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
-        if (_ttl.HasValue)
-            _cache.Set(key, value, _ttl.Value);
+        var ttl = entryTtl ?? _ttl;
+
+        if (ttl.HasValue)
+            _cache.Set(key, value, ttl.Value);
         else
             _cache.Set(key, value);
 
         var now = DateTime.UtcNow;
-        _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
+        _bag[key] = new BagEntry<TValue>(value, now, ttl.HasValue ? now + ttl.Value : DateTime.MaxValue);
     }
 
     /// <summary>

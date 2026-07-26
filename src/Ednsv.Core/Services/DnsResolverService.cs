@@ -30,6 +30,19 @@ public sealed record DnsTuning
     public int MaxRetries { get; init; } = 3;
     /// <summary>Window after which an unreachable server is retried. Default 5 min.</summary>
     public double UnreachableDecayMinutes { get; init; } = 5;
+
+    /// <summary>
+    /// Floor for bounding cached DNS answers by their own record TTLs, in seconds.
+    /// <b>0 (the default) turns the gating off entirely</b>, so every DNS entry gets
+    /// the full cache TTL — the behaviour before this existed.
+    ///
+    /// <para>Set it above zero and a cached answer lives for
+    /// <c>clamp(minimum record TTL, this floor, the cache TTL)</c>. The floor is what
+    /// stops a domain with 30-second records forcing a refetch on essentially every
+    /// validation; the cache TTL remains the ceiling, which also keeps an entry from
+    /// outliving the record file it was written into.</para>
+    /// </summary>
+    public double CacheMinTtlSeconds { get; init; } = 0;
 }
 
 public class DnsResolverService
@@ -71,6 +84,10 @@ public class DnsResolverService
 
     /// <summary>In-memory cache with per-entry TTL. Null = no expiry (CLI default).</summary>
     private readonly TimeSpan? _cacheTtl;
+
+    /// <summary>Floor for record-TTL gating. Zero disables the gating entirely —
+    /// see <see cref="DnsTuning.CacheMinTtlSeconds"/>.</summary>
+    private readonly TimeSpan _dnsMinTtl;
 
     // Unified caches — single source of truth (MemoryCache) with export log
     private readonly ProbeCache<IDnsQueryResponse> _queryCache;
@@ -189,6 +206,7 @@ public class DnsResolverService
 
         // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
+        _dnsMinTtl = t.CacheMinTtlSeconds > 0 ? TimeSpan.FromSeconds(t.CacheMinTtlSeconds) : TimeSpan.Zero;
         _unreachableBag = new WriteBag<int>(cacheTtl);
         _axfrBag = new WriteBag<bool>(cacheTtl);
         ProbeCacheL2<IDnsQueryResponse>? DnsL2(string type) =>
@@ -357,7 +375,8 @@ public class DnsResolverService
             }
         }, RecheckHelper.CacheDep.Dns,
         shouldPersist: response => response != EmptyResponse.Instance,
-        onHit: () => Interlocked.Increment(ref _cacheHits));
+        onHit: () => Interlocked.Increment(ref _cacheHits),
+        entryTtl: DnsEntryTtl);
     }
 
     /// <summary>
@@ -385,7 +404,8 @@ public class DnsResolverService
             }
         }, RecheckHelper.CacheDep.Dns,
         shouldPersist: response => response != EmptyResponse.Instance,
-        onHit: () => Interlocked.Increment(ref _cacheHits));
+        onHit: () => Interlocked.Increment(ref _cacheHits),
+        entryTtl: DnsEntryTtl);
     }
 
     /// <summary>
@@ -466,7 +486,8 @@ public class DnsResolverService
             }
         }, RecheckHelper.CacheDep.ServerDns,
         shouldPersist: response => response != EmptyResponse.Instance,
-        onHit: () => Interlocked.Increment(ref _cacheHits));
+        onHit: () => Interlocked.Increment(ref _cacheHits),
+        entryTtl: DnsEntryTtl);
     }
 
     public async Task<List<string>> ResolveAAsync(string hostname)
@@ -485,6 +506,9 @@ public class DnsResolverService
     {
         var cacheKey = $"ptr:{ip}";
         bool succeeded = false;
+        // The cached value is the name list, not the response, so the TTL has to be
+        // carried out of the factory rather than read back off the value.
+        TimeSpan? recordTtl = null;
         return await _ptrCache.GetOrCreateAsync(cacheKey, async () =>
         {
             Interlocked.Increment(ref _cacheMisses);
@@ -494,6 +518,7 @@ public class DnsResolverService
                 var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
                 Interlocked.Increment(ref _responsesReceived);
                 succeeded = true;
+                recordTtl = DnsEntryTtl(result.Answers);
                 return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             }
             catch
@@ -503,7 +528,8 @@ public class DnsResolverService
             }
         }, RecheckHelper.CacheDep.Ptr,
         shouldPersist: _ => succeeded,
-        onHit: () => Interlocked.Increment(ref _cacheHits));
+        onHit: () => Interlocked.Increment(ref _cacheHits),
+        entryTtl: _ => recordTtl);
     }
 
     public async Task<List<string>> ResolveCnameChainAsync(string hostname)
@@ -729,6 +755,16 @@ public class DnsResolverService
     /// <summary>The persisted key for an AXFR result. The tuple key cannot be written
     /// as-is, and the pipe is safe: an IP never contains one.</summary>
     private static string AxfrKey(string ip, string domain) => $"{ip}|{domain}";
+
+    // ── Record-TTL gating ────────────────────────────────────────────────
+    //
+    // See DnsCacheTtl for the policy itself. Off unless CacheMinTtlSeconds is set,
+    // in which case an answer lives for clamp(min record TTL, floor, cache TTL).
+
+    private TimeSpan? DnsEntryTtl(IDnsQueryResponse response) => DnsEntryTtl(response.Answers);
+
+    private TimeSpan? DnsEntryTtl(IEnumerable<DnsResourceRecord> answers)
+        => DnsCacheTtl.For(DnsCacheTtl.MinRecordTtl(answers), _dnsMinTtl, _cacheTtl);
 
     private static JsonNode? DnsToNode(IDnsQueryResponse response)
     {

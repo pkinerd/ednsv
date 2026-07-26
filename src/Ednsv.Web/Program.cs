@@ -96,7 +96,11 @@ var dnsTuning = new DnsTuning
     QueryTimeoutSeconds     = builder.Configuration.GetValue("Dns:QueryTimeoutSeconds",     15.0),
     QueryRetries            = builder.Configuration.GetValue("Dns:QueryRetries",            2),
     MaxRetries              = builder.Configuration.GetValue("Dns:MaxRetries",              3),
-    UnreachableDecayMinutes = builder.Configuration.GetValue("Dns:UnreachableDecayMinutes", 5.0)
+    UnreachableDecayMinutes = builder.Configuration.GetValue("Dns:UnreachableDecayMinutes", 5.0),
+    // 0 = off, which is the default: every DNS entry gets the full cache TTL, as
+    // before. Above zero and answers are bounded by their own record TTLs with this
+    // as the floor. See DnsTuning.CacheMinTtlSeconds.
+    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0)
 };
 DnsResolverService.SetMaxRetries(dnsTuning.MaxRetries);
 var smtpTimeoutSeconds     = builder.Configuration.GetValue("Smtp:TimeoutSeconds",     10.0);
