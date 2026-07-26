@@ -36,13 +36,11 @@ public sealed class DomainResultStore
         _bag = new WriteBag<DomainResultSummary>(ttl, persist);
     }
 
-    /// <summary>Every live summary this process knows, keyed by lowercased domain. A
-    /// snapshot: expired entries are already excluded, and it does not track later
-    /// writes.</summary>
-    public Dictionary<string, DomainResultSummary> Results
-        => _results.Snapshot().ToDictionary(kv => kv.Key, kv => kv.Value);
-
-    /// <summary>How many summaries are held. Expired ones do not count.</summary>
+    /// <summary>
+    /// How many summaries are held, including any that have expired but not yet been
+    /// swept — see <see cref="ExpiringMap{TKey,TValue}.Count"/>. Whether a particular
+    /// domain's summary is still live is a question for <see cref="TryGet"/>.
+    /// </summary>
     public int Count => _results.Count;
 
     /// <summary>Record a validation that just completed. Queued for the next flush.</summary>

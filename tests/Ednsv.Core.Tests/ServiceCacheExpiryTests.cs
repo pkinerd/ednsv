@@ -1,3 +1,4 @@
+using System.Net;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
@@ -99,31 +100,66 @@ public sealed class ServiceCacheExpiryTests
     }
 
     // ── SMTP: RCPT probes and relay tests ────────────────────────────────
+    //
+    // These assert through a *read*, not through a count. Since these caches became a
+    // MemoryCache, Count reports what is held — expired entries included until the
+    // platform's sweep gets to them — so the only honest question is whether the value
+    // is still served. Answering that needs somewhere for the refetch to land, which is
+    // what the stub is for.
 
     [Fact]
     public async Task RcptProbesExpire()
     {
-        var smtp = Smtp();
-        Assert.True(Import(smtp, CacheTypes.Rcpt, "mx.example|user@example.com",
-            new RcptCacheEntry { Accepted = true, Response = "250 OK" }));
-        Assert.Equal(1, smtp.RcptCacheCount);
+        using var stub = SmtpStubServer.Start("250 refetched");
+        var smtp = new SmtpProbeService(cacheTtl: Brief, timeoutSeconds: 2, smtpPort: stub.Port);
+        Assert.True(Import(smtp, CacheTypes.Rcpt, "127.0.0.1|user@example.com",
+            new RcptCacheEntry { Accepted = true, Response = "250 cached" }));
+
+        var served = await smtp.ProbeRcptDetailedAsync("127.0.0.1", "user@example.com");
+        Assert.Equal("250 cached", served.response);
+        Assert.Equal(0, stub.Connections);
 
         await Task.Delay(PastBrief);
 
-        Assert.Equal(0, smtp.RcptCacheCount);
+        var refetched = await smtp.ProbeRcptDetailedAsync("127.0.0.1", "user@example.com");
+        Assert.Equal("250 refetched", refetched.response);
+        Assert.Equal(1, stub.Connections);
     }
 
     [Fact]
     public async Task RelayTestsExpire()
     {
-        var smtp = Smtp();
-        Assert.True(Import(smtp, CacheTypes.Relay, "relay:mx.example|example.com",
-            new RelayCacheEntry { IsRelay = false, Description = "Rejected" }));
-        Assert.Equal(1, smtp.RelayCacheCount);
+        using var stub = SmtpStubServer.Start("250 relayed");
+        var smtp = new SmtpProbeService(cacheTtl: Brief, timeoutSeconds: 2, smtpPort: stub.Port);
+        Assert.True(Import(smtp, CacheTypes.Relay, "relay:127.0.0.1|example.com",
+            new RelayCacheEntry { IsRelay = false, Description = "cached verdict" }));
+
+        Assert.Equal("cached verdict", (await smtp.TestRelayAsync("127.0.0.1", "example.com")).description);
+        Assert.Equal(0, stub.Connections);
 
         await Task.Delay(PastBrief);
 
-        Assert.Equal(0, smtp.RelayCacheCount);
+        Assert.True((await smtp.TestRelayAsync("127.0.0.1", "example.com")).isRelay);
+        Assert.Equal(1, stub.Connections);
+    }
+
+    [Fact]
+    public async Task AnImportDoesNotGetAFreshFullTtl()
+    {
+        // A record with 150ms left must live 150ms, not the cache's two hours.
+        using var stub = SmtpStubServer.Start("250 refetched");
+        var smtp = new SmtpProbeService(cacheTtl: TimeSpan.FromHours(2), timeoutSeconds: 2,
+            smtpPort: stub.Port);
+        Assert.True(Import(smtp, CacheTypes.Rcpt, "127.0.0.1|user@example.com",
+            new RcptCacheEntry { Accepted = true, Response = "250 cached" },
+            DateTime.UtcNow.Add(Brief)));
+
+        Assert.Equal("250 cached", (await smtp.ProbeRcptDetailedAsync("127.0.0.1", "user@example.com")).response);
+
+        await Task.Delay(PastBrief);
+
+        Assert.Equal("250 refetched",
+            (await smtp.ProbeRcptDetailedAsync("127.0.0.1", "user@example.com")).response);
     }
 
     // ── DNS: AXFR verdicts and unreachable-server counts ─────────────────
@@ -131,27 +167,41 @@ public sealed class ServiceCacheExpiryTests
     [Fact]
     public async Task AxfrVerdictsExpire()
     {
+        // A listener that hangs up is enough: the assertion is that the transfer was
+        // attempted again at all, which a still-cached verdict would have skipped.
+        using var ns = TcpConnectionCounter.TryStart(53);
+        if (ns == null) return;
+
         var dns = Dns();
-        Assert.True(Import(dns, CacheTypes.Axfr, "192.0.2.1|example.com", false));
-        Assert.Equal(1, dns.AxfrCacheCount);
+        Assert.True(Import(dns, CacheTypes.Axfr, "127.0.0.1|example.com", true));
+
+        Assert.True(await dns.TestZoneTransferAsync(IPAddress.Loopback, "example.com"));
+        Assert.Equal(0, ns.Connections);
 
         await Task.Delay(PastBrief);
 
-        Assert.Equal(0, dns.AxfrCacheCount);
+        Assert.False(await dns.TestZoneTransferAsync(IPAddress.Loopback, "example.com"));
+        Assert.True(ns.Connections > 0, "the expired verdict should have been refetched");
     }
 
     [Fact]
     public async Task UnreachableServerCountsExpire()
     {
         // These already decayed in *meaning* after five minutes — the skip stopped
-        // applying — but the entry itself stayed for the life of the process.
-        var dns = Dns();
-        Assert.True(Import(dns, CacheTypes.Unreachable, "192.0.2.1", 3));
-        Assert.Equal(1, dns.UnreachableServerCount);
+        // applying — but the entry itself stayed for the life of the process. Observed
+        // through the skip, since that is the only thing the count does.
+        var dns = new DnsResolverService(nameservers: null, cacheTtl: Brief,
+            tuning: new DnsTuning { QueryTimeoutSeconds = 0.3, QueryRetries = 0 });
+        Assert.True(Import(dns, CacheTypes.Unreachable, "127.0.0.1", 99));
+
+        var before = dns.ResponsesReceived;
+        await dns.QueryServerAsync(IPAddress.Loopback, "example.com", QueryType.A);
+        Assert.Equal(before, dns.ResponsesReceived); // skipped, nothing asked
 
         await Task.Delay(PastBrief);
 
-        Assert.Equal(0, dns.UnreachableServerCount);
+        await dns.QueryServerAsync(IPAddress.Loopback, "example.com", QueryType.A);
+        Assert.True(dns.ResponsesReceived > before, "the expired count should stop the skip");
     }
 
     // ── An import keeps the expiry stamped on its record ─────────────────
@@ -164,7 +214,8 @@ public sealed class ServiceCacheExpiryTests
         var expired = DateTime.UtcNow.AddMinutes(-1);
 
         // Still "ours", so the record is claimed and not offered to another service —
-        // it is simply not stored.
+        // it is simply not stored. Nothing is written at all, so the counts are exact
+        // here: there is no expired entry waiting to be swept.
         Assert.True(Import(smtp, CacheTypes.Rcpt, "mx.example|user@example.com",
             new RcptCacheEntry { Accepted = true, Response = "250 OK" }, expired));
         Assert.True(Import(dns, CacheTypes.Axfr, "192.0.2.1|example.com", false, expired));
@@ -175,41 +226,12 @@ public sealed class ServiceCacheExpiryTests
         Assert.Equal(0, dns.UnreachableServerCount);
     }
 
-    [Fact]
-    public async Task AnImportDoesNotGetAFreshFullTtl()
-    {
-        // A record with two minutes left must live two minutes, not another full TTL.
-        var smtp = new SmtpProbeService(cacheTtl: TimeSpan.FromHours(2));
-        Assert.True(Import(smtp, CacheTypes.Rcpt, "mx.example|user@example.com",
-            new RcptCacheEntry { Accepted = true, Response = "250 OK" },
-            DateTime.UtcNow.AddMilliseconds(150)));
-        Assert.Equal(1, smtp.RcptCacheCount);
-
-        await Task.Delay(PastBrief);
-
-        Assert.Equal(0, smtp.RcptCacheCount);
-    }
-
     // ── The per-server client pool ───────────────────────────────────────
-
-    [Fact]
-    public async Task ThePerServerClientPoolExpires()
-    {
-        // One LookupClient — and its socket pool — per nameserver IP ever queried.
-        // 192.0.2.1 is TEST-NET-1: the query fails, which is all this needs, since the
-        // client is built before the query runs.
-        // A longer TTL than the other cases here: the failing query itself takes a
-        // moment, and it has to finish while its client is still live.
-        var dns = new DnsResolverService(nameservers: null, cacheTtl: TimeSpan.FromSeconds(1),
-            tuning: new DnsTuning { QueryTimeoutSeconds = 0.3, QueryRetries = 0 });
-
-        await dns.QueryServerAsync(System.Net.IPAddress.Parse("192.0.2.1"), "example.com", QueryType.A);
-        Assert.Equal(1, dns.ServerClientCount);
-
-        await Task.Delay(1200);
-
-        Assert.Equal(0, dns.ServerClientCount);
-    }
+    //
+    // Covered by construction rather than behaviour: a rebuilt LookupClient is not
+    // observable from outside the service, so the TTL wiring test above pins that
+    // _serverClients gets the configured TTL, and ExpiringMapTests pins that GetOrAdd
+    // rebuilds once it has elapsed.
 
     // ── Domain result summaries ──────────────────────────────────────────
 
@@ -222,13 +244,10 @@ public sealed class ServiceCacheExpiryTests
         store.Set("example.com", new DomainResultSummary { ValidatedAtUtc = DateTime.UtcNow, PassCount = 1 });
 
         Assert.True(store.TryGet("example.com", out _));
-        Assert.Equal(1, store.Count);
 
         await Task.Delay(PastBrief);
 
         Assert.False(store.TryGet("example.com", out _));
-        Assert.Equal(0, store.Count);
-        Assert.Empty(store.Results);
     }
 
     [Fact]
@@ -247,7 +266,7 @@ public sealed class ServiceCacheExpiryTests
         Thread.Sleep(PastBrief);
 
         Assert.Equal(1, smtp.RcptCacheCount);
-        Assert.Equal(1, store.Count);
+        Assert.True(store.TryGet("example.com", out _));
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

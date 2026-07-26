@@ -670,7 +670,7 @@ public class SmtpProbeService
     public int SharedCacheIndexCount => _probeCache.SharedCacheIndexCount;
 
     // The two maps that are not ProbeCaches — see DnsResolverService for why these are
-    // counted at all. Expired entries are excluded whether or not they have been pruned.
+    // counted at all, and ExpiringMap.Count for why an expired entry can still show up.
     public int RcptCacheCount => _rcptCache.Count;
     public int RelayCacheCount => _relayCache.Count;
 

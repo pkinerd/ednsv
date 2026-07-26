@@ -162,8 +162,9 @@ public sealed class CacheManager : IAsyncDisposable
         return RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
     }
 
-    /// <summary>How many domain summaries are held for recheck decisions. Expired ones
-    /// do not count.</summary>
+    /// <summary>How many domain summaries are held for recheck decisions, including any
+    /// that have expired and not yet been swept — see
+    /// <see cref="ExpiringMap{TKey,TValue}.Count"/>.</summary>
     public int DomainResultCount => _domainResults.Count;
 
     public async ValueTask DisposeAsync()

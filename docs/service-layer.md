@@ -261,8 +261,8 @@ the last one. Without that the pair would be serialised whole on every tick, and
 would always find something to write — which defeats the "bag is the dirty flag" behaviour
 that keeps an idle instance from creating a file per interval.
 
-They honour `CacheTtlHours` like every other cache — see
-[caching-architecture.md](caching-architecture.md) → *ExpiringMap* — and the recheck
+They honour `CacheTtlHours` like every other cache — an `ExpiringMap` is a `MemoryCache`
+behind this project's cache rules, see [caching-architecture.md](caching-architecture.md) → *ExpiringMap* — and the recheck
 bypass: `CacheDep.Rcpt` for `_rcptCache`, `CacheDep.Smtp` for `_relayCache`, matching the
 categories that declare them. Both write unconditionally rather than add-if-absent, so a
 refetched verdict actually replaces the one the bypass skipped.

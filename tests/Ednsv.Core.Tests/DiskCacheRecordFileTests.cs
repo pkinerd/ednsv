@@ -217,8 +217,8 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (_, store) = await LoadAsync();
 
-        Assert.Contains("a.example", store.Results.Keys);
-        Assert.Contains("b.example", store.Results.Keys);
+        Assert.True(store.TryGet("a.example", out _));
+        Assert.True(store.TryGet("b.example", out _));
     }
 
     [Fact]
@@ -249,8 +249,8 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (_, store) = await LoadAsync();
 
-        Assert.Contains("live.example", store.Results.Keys);
-        Assert.DoesNotContain("dead.example", store.Results.Keys);
+        Assert.True(store.TryGet("live.example", out _));
+        Assert.False(store.TryGet("dead.example", out _));
     }
 
     [Fact]
@@ -264,7 +264,7 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (_, store) = await LoadAsync(ttl: TimeSpan.FromHours(2));
 
-        Assert.DoesNotContain("ancient.example", store.Results.Keys);
+        Assert.False(store.TryGet("ancient.example", out _));
     }
 
     [Fact]
@@ -282,7 +282,7 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (_, store) = await LoadAsync();
 
-        Assert.Contains("good.example", store.Results.Keys);
+        Assert.True(store.TryGet("good.example", out _));
     }
 
     [Fact]
@@ -300,7 +300,7 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (result, store) = await LoadAsync();
 
-        Assert.Contains("known.example", store.Results.Keys);
+        Assert.True(store.TryGet("known.example", out _));
         Assert.Equal(0, result?.Total ?? 0); // domain results are loaded but not counted
     }
 
@@ -380,8 +380,8 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (_, store) = await LoadAsync();
 
-        Assert.Contains("a.example", store.Results.Keys);
-        Assert.Contains("b.example", store.Results.Keys);
+        Assert.True(store.TryGet("a.example", out _));
+        Assert.True(store.TryGet("b.example", out _));
     }
 
     [Fact]
@@ -397,7 +397,7 @@ public sealed class DiskCacheRecordFileTests : IDisposable
 
         var (result, store) = await LoadAsync();
 
-        Assert.Contains("good.example", store.Results.Keys);
+        Assert.True(store.TryGet("good.example", out _));
         Assert.Equal(0, result?.DnsQueries ?? 0);
     }
 

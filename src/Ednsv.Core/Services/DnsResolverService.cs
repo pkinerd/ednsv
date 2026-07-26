@@ -336,8 +336,9 @@ public class DnsResolverService
     public int CacheSize => _queryCache.Count + _ptrCache.Count + _serverQueryCache.Count;
 
     // The maps that are not ProbeCaches. Counted separately because they answer a
-    // different question — whether anything here grows without bound — and each
-    // excludes entries that have expired but not yet been pruned.
+    // different question: whether anything here grows without bound. These are what each
+    // map is *holding*, expired-but-unswept entries included — see ExpiringMap.Count. For
+    // whether a given entry is still live, read it.
     public int UnreachableServerCount => _unreachableServerCounts.Count;
     public int AxfrCacheCount => _axfrCache.Count;
     public int AxfrResponseCacheCount => _axfrResponseCache.Count;
