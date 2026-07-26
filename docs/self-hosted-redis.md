@@ -26,9 +26,10 @@ So the design decisions an operator would normally agonise over mostly do not ap
 - **Replication and failover: skip them.** A restart costs in-flight jobs and a cache
   that refills itself. Sentinel or Cluster buys you very little here.
 - **Backups: none.** There is nothing to restore.
-- **Eviction under pressure: safe.** Set `maxmemory` with `allkeys-lru` and let it drop
-  whatever it likes. Evicted cache entries are refetched; an evicted job is one
-  resubmission.
+- **Eviction under pressure: safe, but pick the policy deliberately.** Set `maxmemory`
+  with **`volatile-lru`**, not `allkeys-*` — three small keys hold the cross-pod
+  coordination state and must never be evicted. See *Eviction policy* below; this is the
+  one setting here that is worth reading twice.
 
 The failure model this leans on is documented in full in
 [horizontal-scaling.md](horizontal-scaling.md) → *Failure model*.
@@ -48,8 +49,77 @@ up:
 | 1,000 | ~150 MB | 256 MB |
 | 5,000 | ~750 MB | 1 GB |
 
-Overshooting is not a failure mode — `allkeys-lru` evicts, and the cache refills. Under
-the default two-hour TTL, 256 MB comfortably covers most deployments.
+Overshooting is not a failure mode — with the policy below, eviction drops cache entries
+and they are refetched. Under the default two-hour TTL, 256 MB comfortably covers most
+deployments.
+
+## Eviction policy
+
+**Use `volatile-lru`.** The reason is that not every key here is a cache entry:
+
+| Key | TTL | Written | Read | Size | Count |
+|---|---|---|---|---|---|
+| `{instance}:cache:{type}:{key}` | `CacheTtlHours` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
+| `{instance}:job:{id}` | minutes | ~87× per validation | on each status poll | a few KB | tens |
+| `{instance}:config:head` | **none** | on a config change | every freshness check (memoised ~1s) | ~36 B | 1 |
+| `{instance}:users:head` | **none** | on a user change | every auth freshness check | ~36 B | 1 |
+| `{instance}:cache-epoch` | **none** | at startup, and on a re-warm | once per `SharedCacheWatchSeconds` | ~36 B | 1 |
+
+The last three are the cross-pod coordination state, they carry no TTL because they must
+not disappear on their own, and together they are about a hundred bytes.
+
+**Their access pattern is exactly what an eviction policy punishes.** The epoch nonce is
+read once every thirty seconds and written almost never; the beacons are read on a
+memoised path and written only when a human changes something. Against thousands of cache
+keys being touched continuously during validations, those three are permanently the
+least-recently-used and by far the least-frequently-used keys in the keyspace. An
+`allkeys-*` policy does not merely risk them — it selects them first.
+
+Measured on Redis 7.0.15 with `maxmemory 3mb`, driving TTL'd filler until eviction:
+
+| Policy | `config:head` | `cache-epoch` | Verdict |
+|---|---|---|---|
+| `allkeys-lru` | **evicted** | **evicted** | 26,379 keys evicted, and it took both coordination keys while 3,782 cache keys survived |
+| `volatile-lru` | survived | survived | 26,415 evicted, all of them cache keys |
+
+Repeated with the application running against it rather than a synthetic keyspace: 26,327
+keys evicted under sustained pressure, both coordination keys intact, `/health/ready` and
+a fresh validation both still returning 200, and no spurious re-warm triggered.
+
+### What losing them actually costs
+
+Not an outage, which is why this is easy to miss:
+
+- **`config:head`** — a pod that finds the beacon missing republishes *its own* head and
+  carries on; it does not reload from disk. So a pod whose in-memory config is behind the
+  file stays behind it until the next real config change moves the beacon.
+- **`users:head`** — the same, for user records. A token revoked on another pod may not
+  be noticed until something else changes the beacon.
+- **`cache-epoch`** — read as "the shared cache was flushed", triggering a full re-warm
+  from memory. Harmless in itself (the warm is add-if-absent), but it republishes several
+  hundred keys into a server that is already under memory pressure.
+
+### The other policies
+
+| Policy | Verdict |
+|---|---|
+| **`volatile-lru`** | **Recommended.** Only TTL'd keys are candidates, so the coordination keys are exempt by construction rather than by luck. |
+| `volatile-lfu` | Also safe. LFU favours keeping frequently-requested domains over recently-requested ones; either is defensible, LRU is the conventional and slightly cheaper choice. |
+| `volatile-ttl` | Safe for the coordination keys, but evicts whatever expires soonest — and job keys have much shorter TTLs than cache entries, so it targets the one thing that actually hurts. Avoid. |
+| `volatile-random` | Safe, but no reason to prefer it. |
+| `allkeys-lru` / `allkeys-lfu` / `allkeys-random` | Avoid. LFU is the worst of the three: these keys have the lowest access frequency in the entire keyspace. |
+| `noeviction` | Safe for the coordination keys, and it fails loudly rather than quietly — but when full, cache write-through is fire-and-forget so it degrades silently anyway, while job writes fail and validations become unpollable. Only sensible if you are confident in the sizing. |
+
+### One prerequisite
+
+`volatile-lru` needs something volatile to evict. **Keep `CacheTtlHours` above zero** —
+the default is 2. Setting it to `0` disables expiry, cache entries are then written with
+no TTL, and a full server has almost nothing it may evict: measured, 15,274 of 20,000
+writes were rejected with `OOM command not allowed when used memory > 'maxmemory'`.
+
+If you genuinely want `CacheTtlHours=0` on a multi-pod deployment, size `maxmemory`
+generously and use `noeviction` so the failure is explicit rather than a silently
+half-populated cache.
 
 ## Which server
 
@@ -114,7 +184,8 @@ spec:
             - --maxmemory
             - 256mb
             - --maxmemory-policy
-            - allkeys-lru     # evict freely; entries are all reproducible
+            - volatile-lru    # NOT allkeys-*: see Eviction policy — the coordination
+                              # keys carry no TTL and must never be candidates
           ports:
             - { containerPort: 6379, name: redis }
           resources:
@@ -193,7 +264,7 @@ services:
   redis:
     image: redis:7-alpine
     command: ["--save", "", "--appendonly", "no", "--maxmemory", "256mb",
-              "--maxmemory-policy", "allkeys-lru"]
+              "--maxmemory-policy", "volatile-lru"]   # not allkeys-* — see the doc
     # no ports: — reachable only on the compose network
   ednsv:
     image: ghcr.io/pkinerd/ednsv:latest
