@@ -136,18 +136,18 @@ public class DnsResolverService
     /// Pass null or empty to use Google Public DNS (default for CLI).
     /// </summary>
     public DnsResolverService(IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl = null, DnsTuning? tuning = null,
-        RedisConnection? redis = null, bool persistToDisk = true)
-        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning, redis, persistToDisk) { }
+        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true)
+        : this(useSystemResolvers: false, nameservers, cacheTtl, tuning, redis, persistToDisk, warmSharedCache) { }
 
     /// <summary>
     /// Creates a resolver that uses the OS-configured DNS resolvers.
     /// </summary>
     public static DnsResolverService CreateWithSystemResolvers(TimeSpan? cacheTtl = null, DnsTuning? tuning = null,
-        RedisConnection? redis = null, bool persistToDisk = true)
-        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning, redis, persistToDisk);
+        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true)
+        => new(useSystemResolvers: true, nameservers: null, cacheTtl, tuning, redis, persistToDisk, warmSharedCache);
 
     private DnsResolverService(bool useSystemResolvers, IReadOnlyList<IPAddress>? nameservers, TimeSpan? cacheTtl,
-        DnsTuning? tuning, RedisConnection? redis = null, bool persistToDisk = true)
+        DnsTuning? tuning, RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true)
     {
         var t = tuning ?? new DnsTuning();
         _queryTimeout = TimeSpan.FromSeconds(t.QueryTimeoutSeconds);
@@ -232,9 +232,9 @@ public class DnsResolverService
                     list => JsonSerializer.Serialize(list),
                     json => JsonSerializer.Deserialize<List<string>>(json))
                 : null;
-        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns"), persistToDisk);
-        _ptrCache = new ProbeCache<List<string>>(cacheTtl, ptrL2, persistToDisk);
-        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"), persistToDisk);
+        _queryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns"), persistToDisk, warmSharedCache);
+        _ptrCache = new ProbeCache<List<string>>(cacheTtl, ptrL2, persistToDisk, warmSharedCache);
+        _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"), persistToDisk, warmSharedCache);
     }
 
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
@@ -769,6 +769,11 @@ public class DnsResolverService
         _serverQueryCache.PruneSharedCacheIndex();
         _ptrCache.PruneSharedCacheIndex();
     }
+
+    /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>. Zero when no
+    /// index is kept, which is the whole point of it being observable.</summary>
+    public int SharedCacheIndexCount => _queryCache.SharedCacheIndexCount
+        + _serverQueryCache.SharedCacheIndexCount + _ptrCache.SharedCacheIndexCount;
 
     /// <summary>The persisted key for an AXFR result. The tuple key cannot be written
     /// as-is, and the pipe is safe: an IP never contains one.</summary>

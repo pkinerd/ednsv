@@ -108,7 +108,7 @@ Environment variables or command-line configuration. See [configuration.md](conf
 | `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` disables expiry; files are still swept after 24h |
 | `FlushIntervalSeconds` | 600 | Flush interval, and the cache-file granularity |
 | `CacheShutdownFlushSeconds` | 5 | Bound on the final flush at shutdown |
-| `SharedCacheWatchSeconds` | 30 | How often to check whether Redis has been emptied and republish memory into it. `0` disables |
+| `SharedCacheWatchSeconds` | 30 | How often to check whether Redis has been emptied and republish memory into it. `0` disables it (and the index it prunes — restart to re-enable) |
 | `DnsCacheMinTtlSeconds` | 0 | `0` = off; above zero, bound DNS entries by their record TTLs |
 | `DnsServer` | system | Custom DNS server(s), comma-separated |
 | `DkimSelectors` | (built-in seed) | Default DKIM selectors, comma-separated |

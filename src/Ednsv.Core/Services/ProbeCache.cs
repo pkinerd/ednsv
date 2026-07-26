@@ -151,8 +151,12 @@ public class ProbeCache<TValue> where TValue : class
     /// republished from memory after it has been emptied. <see cref="MemoryCache"/>
     /// cannot be enumerated on .NET 8, hence the parallel index.
     ///
-    /// <para>Null unless there is a shared tier to warm, so a single-instance
-    /// deployment pays nothing for it at all.</para>
+    /// <para>Null unless there is a shared tier to warm <i>and</i> something that will
+    /// warm it, so a single-instance deployment pays nothing for it at all. The second
+    /// half of that condition matters as much as the first: nothing else prunes this
+    /// index, so with the shared-cache watch turned off it would accumulate every
+    /// distinct key the process ever cached — expired entries included — for the life
+    /// of the process.</para>
     ///
     /// <para>It is a <i>hint</i>, not a second source of truth: every use checks the
     /// key against MemoryCache and drops it if it has gone. That makes a stale entry
@@ -161,13 +165,17 @@ public class ProbeCache<TValue> where TValue : class
     /// </summary>
     private readonly ConcurrentDictionary<string, DateTime>? _l2Index;
 
-    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true)
+    /// <param name="warmSharedCache">False when nothing will ever republish this cache
+    /// into the shared tier — no Redis, or the shared-cache watch disabled. Skips the
+    /// key index entirely; see <see cref="_l2Index"/>.</param>
+    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true,
+        bool warmSharedCache = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
         _persist = persist;
-        _l2Index = _l2 != null ? new ConcurrentDictionary<string, DateTime>() : null;
+        _l2Index = _l2 != null && warmSharedCache ? new ConcurrentDictionary<string, DateTime>() : null;
     }
 
     /// <summary>The expiry an entry cached now would carry.</summary>

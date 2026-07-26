@@ -203,4 +203,46 @@ public sealed class SharedCacheWarmTests
         Assert.Equal(0, cache.SharedCacheIndexCount);
         Assert.Equal(0, cache.WarmSharedCache());
     }
+
+    [Fact]
+    public void WithTheWatchDisabledThereIsNoIndexEither()
+    {
+        // The index is pruned only by the watch tick, so keeping it when the watch is
+        // off would leak: it would accumulate every distinct key the process ever
+        // cached, expired ones included, and nothing would ever read it. Configured
+        // Redis is enough to reach this — no server needs to answer, since
+        // RedisConnection.Enabled reflects configuration rather than reachability.
+        using var redis = new RedisConnection(
+            "127.0.0.1:6399,abortConnect=false,connectTimeout=150,syncTimeout=150,connectRetry=0");
+        Assert.True(redis.Enabled);
+
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), L2(redis, TimeSpan.FromMinutes(5)),
+            persist: false, warmSharedCache: false);
+
+        cache.Set("a", "va");
+        cache.Import("b", "vb", DateTime.UtcNow.AddMinutes(5));
+
+        Assert.Equal(0, cache.SharedCacheIndexCount);
+        Assert.Equal(0, cache.WarmSharedCache());
+        // ...while the entries themselves are still cached and served from memory.
+        Assert.True(cache.TryGet("a", out var a));
+        Assert.Equal("va", a);
+    }
+
+    [Fact]
+    public void WithTheWatchEnabledTheIndexIsKept()
+    {
+        // The other half of the pair: the flag must actually be what decides, so that
+        // flipping it in either direction is observable.
+        using var redis = new RedisConnection(
+            "127.0.0.1:6399,abortConnect=false,connectTimeout=150,syncTimeout=150,connectRetry=0");
+
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), L2(redis, TimeSpan.FromMinutes(5)),
+            persist: false, warmSharedCache: true);
+
+        cache.Set("a", "va");
+        cache.Import("b", "vb", DateTime.UtcNow.AddMinutes(5));
+
+        Assert.Equal(2, cache.SharedCacheIndexCount);
+    }
 }

@@ -50,8 +50,11 @@ public class HttpProbeService
     /// <param name="maxConcurrency">Cap on simultaneous outbound requests. Default 20.</param>
     /// <param name="persistToDisk">False when no cache directory is configured — see
     /// <see cref="SmtpProbeService"/>.</param>
+    /// <param name="warmSharedCache">False when nothing will republish this cache into
+    /// the shared tier — see <see cref="ProbeCache{T}"/>.</param>
     public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10,
-        int maxConcurrency = 20, RedisConnection? redis = null, bool persistToDisk = true)
+        int maxConcurrency = 20, RedisConnection? redis = null, bool persistToDisk = true,
+        bool warmSharedCache = true)
     {
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         ProbeCacheL2<GetResult>? getL2 =
@@ -74,8 +77,9 @@ public class HttpProbeService
                         return e == null ? null : new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType };
                     })
                 : null;
-        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2, persistToDisk);
-        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl, getHeadersL2, persistToDisk);
+        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2, persistToDisk, warmSharedCache);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(
+            cacheTtl, getHeadersL2, persistToDisk, warmSharedCache);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true
@@ -256,6 +260,10 @@ public class HttpProbeService
         _getCache.PruneSharedCacheIndex();
         _getWithHeadersCache.PruneSharedCacheIndex();
     }
+
+    /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>.</summary>
+    public int SharedCacheIndexCount =>
+        _getCache.SharedCacheIndexCount + _getWithHeadersCache.SharedCacheIndexCount;
 
     // ── Flush sources ────────────────────────────────────────────────────
 

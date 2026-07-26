@@ -260,6 +260,60 @@ public sealed class CacheDirSettingTests
     }
 
     [Fact]
+    public async Task TurningTheWatchOffAlsoTurnsOffTheIndexItWouldHavePruned()
+    {
+        // The index that makes a re-warm possible is pruned *only* by the watch tick, so
+        // keeping it with the watch off would grow it to every distinct key the process
+        // ever cached — expired ones included — with nothing ever reading it. This is
+        // the wiring, not the cache: the flag has to reach the probe services.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+        var seeded = false;
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["Redis:ConnectionString"] = DeadRedis,
+            ["SharedCacheWatchSeconds"] = "0"
+        }, dataDir, async f =>
+        {
+            seeded = await SeedACacheableFetchAsync(f);
+            if (!seeded) return;
+
+            var cacheManager = f.Services.GetRequiredService<CacheManager>();
+            var dns = f.Services.GetRequiredService<DnsResolverService>();
+
+            Assert.True(dns.CacheSize > 0, "results are still cached in memory");
+            Assert.Equal(0, cacheManager.SharedCacheIndexCount);
+        });
+
+        _ = seeded;
+    }
+
+    [Fact]
+    public async Task WithTheWatchOnTheIndexIsKeptSoARewarmCanFindSomething()
+    {
+        // The other half: with the watch running the index must actually be populated,
+        // or the re-warm would have nothing to republish and would silently do nothing.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+        var seeded = false;
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["Redis:ConnectionString"] = DeadRedis,
+            ["SharedCacheWatchSeconds"] = "30"
+        }, dataDir, async f =>
+        {
+            seeded = await SeedACacheableFetchAsync(f);
+            if (!seeded) return;
+
+            var cacheManager = f.Services.GetRequiredService<CacheManager>();
+            Assert.True(cacheManager.SharedCacheIndexCount > 0,
+                "the DNS answer just cached should be indexed for republishing");
+        });
+
+        _ = seeded;
+    }
+
+    [Fact]
     public async Task WithoutRedisThereIsNoWatchAtAll()
     {
         var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");

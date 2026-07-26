@@ -290,7 +290,9 @@ A Redis restart without persistence, a `FLUSHALL`, or a failover to an empty rep
 - **It needs no file I/O.** Re-reading and re-parsing every file on the mount, on every instance, is the expensive half of the alternative and buys nothing.
 - **It works where disk cannot.** A deployment running `CacheDir=none` has no disk tier at all, and its L1 is then the only copy of those results in existence. That is what makes skipping the disk tier a sound default alongside Redis.
 
-`MemoryCache` cannot be enumerated on .NET 8, so `ProbeCache` keeps a parallel key → expiry index. It exists only when there is a shared tier to warm, so a single-instance deployment pays nothing for it. It is a *hint* rather than a second source of truth: every use re-checks the key against MemoryCache and drops it if it has gone, which makes a stale entry harmless — eviction callbacks fire lazily and cannot keep an index exact. A periodic prune removes expired keys, without which the index would grow to every key the process had ever cached rather than the live set.
+`MemoryCache` cannot be enumerated on .NET 8, so `ProbeCache` keeps a parallel key → expiry index. It exists only when there is a shared tier to warm **and** something that will warm it — no Redis, or `SharedCacheWatchSeconds=0`, and the index is never allocated at all, so those deployments pay nothing for it. Both halves of that condition matter: the watch tick is the only thing that prunes the index, so keeping it with the watch off would accumulate every distinct key the process had ever cached, expired ones included, for the life of the process, and nothing would ever read it. The consequence is that turning the watch back on takes a restart, which the startup warning says.
+
+The index is a *hint* rather than a second source of truth: every use re-checks the key against MemoryCache and drops it if it has gone, which makes a stale entry harmless — eviction callbacks fire lazily and cannot keep an index exact. The periodic prune removes expired keys, without which the index would track every key ever cached rather than the live set.
 
 Two further details are load-bearing:
 

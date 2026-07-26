@@ -170,6 +170,11 @@ const string EntraBearerScheme = "EntraBearer"; // IdP-issued JWT access tokens
 // CacheTtlHours controls per-entry in-memory cache expiry.
 var inMemoryTtl = cacheTtlHours > 0 ? TimeSpan.FromHours(cacheTtlHours) : (TimeSpan?)null;
 
+// Whether the caches should keep the key index that lets them republish themselves
+// into the shared tier. Only the watch below ever reads or prunes it, so with the
+// watch off the index would grow for the life of the process and never be used.
+var warmSharedCache = redis.Enabled && sharedCacheWatchSeconds > 0;
+
 DnsResolverService dns;
 if (!string.IsNullOrEmpty(dnsServerStr))
 {
@@ -178,19 +183,19 @@ if (!string.IsNullOrEmpty(dnsServerStr))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
     dns = dnsServers.Count > 0
-        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled)
-        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled);
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled);
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 }
-var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis, persistToDisk: diskCacheEnabled);
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 // HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
 // BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
 // isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
 var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis, persistToDisk: diskCacheEnabled);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 if (!validateHttpsCerts)
     Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
@@ -584,7 +589,8 @@ if (redis.Enabled && sharedCacheWatchSeconds <= 0)
 {
     app.Logger.LogWarning(
         "Shared-cache watch disabled (SharedCacheWatchSeconds=0). An emptied Redis will not be "
-        + "repopulated, so the shared cache stays cold until entries age out of memory naturally.");
+        + "repopulated, so the shared cache stays cold until entries age out of memory naturally. "
+        + "The key index the re-warm needs is not kept either, so re-enabling it requires a restart.");
 }
 else if (redis.Enabled)
 {

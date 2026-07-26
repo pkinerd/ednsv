@@ -134,6 +134,15 @@ public sealed class CacheManager : IAsyncDisposable
     }
 
     /// <summary>
+    /// How many keys the shared-cache index is holding across every cache. Zero when
+    /// no index is kept — no Redis, or the watch that would use it turned off — which
+    /// is what makes "the index does not grow when nothing will ever prune it"
+    /// something a test can assert rather than something the wiring merely intends.
+    /// </summary>
+    public int SharedCacheIndexCount =>
+        _dns.SharedCacheIndexCount + _smtp.SharedCacheIndexCount + _http.SharedCacheIndexCount;
+
+    /// <summary>
     /// Records a domain's validation result for future recheck decisions. Visible
     /// to this process immediately; written out by the next flush.
     /// </summary>

@@ -47,8 +47,10 @@ public class SmtpProbeService
     /// <param name="portTimeoutSeconds">TCP port-open probe timeout. Default 5s.</param>
     /// <param name="persistToDisk">False when no cache directory is configured, so
     /// results are never queued for a write that will not happen.</param>
+    /// <param name="warmSharedCache">False when nothing will republish this cache into
+    /// the shared tier — see <see cref="ProbeCache{T}"/>.</param>
     public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5,
-        RedisConnection? redis = null, bool persistToDisk = true)
+        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true)
     {
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
@@ -63,7 +65,7 @@ public class SmtpProbeService
                     })
                 : null;
         _cacheTtl = cacheTtl;
-        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2, persistToDisk);
+        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2, persistToDisk, warmSharedCache);
         _portCache = new ProbeCacheValue<bool>(cacheTtl, persistToDisk);
         _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl, persistToDisk);
         _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl, persistToDisk);
@@ -642,6 +644,9 @@ public class SmtpProbeService
 
     /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
     public void PruneSharedCacheIndex() => _probeCache.PruneSharedCacheIndex();
+
+    /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>.</summary>
+    public int SharedCacheIndexCount => _probeCache.SharedCacheIndexCount;
 
     // ── Flush sources ────────────────────────────────────────────────────
 
