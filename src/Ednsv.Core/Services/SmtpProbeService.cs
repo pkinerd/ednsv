@@ -672,7 +672,6 @@ public class SmtpProbeService
     // The two maps that are not ProbeCaches — see DnsResolverService for why these are
     // counted at all, and ExpiringMap.Count for why an expired entry can still show up.
     public int RcptCacheCount => _rcptCache.Count;
-    public int RelayCacheCount => _relayCache.Count;
 
     // ── Flush sources ────────────────────────────────────────────────────
 

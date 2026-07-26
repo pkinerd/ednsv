@@ -341,8 +341,6 @@ public class DnsResolverService
     // whether a given entry is still live, read it.
     public int UnreachableServerCount => _unreachableServerCounts.Count;
     public int AxfrCacheCount => _axfrCache.Count;
-    public int AxfrResponseCacheCount => _axfrResponseCache.Count;
-    public int ServerClientCount => _serverClients.Count;
 
     private void AddError(string error)
     {

@@ -8,29 +8,21 @@ namespace Ednsv.Core.Services;
 /// and responses, unreachable-server counts, domain result summaries and the per-server
 /// <c>LookupClient</c> pool.
 ///
-/// <para><b>Expiry is MemoryCache's job, not ours.</b> It already does the whole of it —
-/// exact expiry on read, and a sweep for keys nobody reads again, triggered by a cache
-/// operation, rate-limited by <c>ExpirationScanFrequency</c> and dispatched to the
-/// thread pool. An earlier version of this type reimplemented that over a
-/// <see cref="System.Collections.Concurrent.ConcurrentDictionary{TKey,TValue}"/> and
-/// owned the sweep, its rate limit and its single-flight gate. Nothing needed it:
-/// tuple keys work here (the keys are <c>object</c>, and a <c>ValueTuple</c> compares
-/// structurally), the one caller wanting an atomic read-modify-write is served by a lock
-/// on a path that only runs when a DNS query has already failed, and enumerating the
-/// live set — the one thing MemoryCache genuinely cannot do before .NET 9 — turned out
-/// to have no production caller at all.</para>
+/// <para><b>Expiry is MemoryCache's, not ours</b> — exact on read, plus a sweep for keys
+/// nobody reads again that it triggers from a cache operation, rate-limits by
+/// <c>ExpirationScanFrequency</c> and runs on the thread pool.</para>
 ///
-/// <para><b>What this type is actually for</b> is the three rules that are ours rather
-/// than the platform's, each of which was a bug when it lived at the call sites instead:
+/// <para><b>What this type adds</b> is the three rules that belong to this project rather
+/// than the platform, each of which is a bug when it lives at the call sites instead:
 /// <list type="number">
-/// <item>the recheck bypass, so a validation rechecking this cache type reads a miss —
-/// omitted at four call sites until recently, which made <c>--recheck</c> a no-op for
-/// RCPT, relay and AXFR findings;</item>
+/// <item>the recheck bypass, so a validation rechecking this cache type reads a miss;</item>
 /// <item>a null TTL meaning "no expiry", which is what <c>CacheTtlHours=0</c> means
 /// everywhere else in the app;</item>
 /// <item>an import keeping the expiry stamped on its record rather than being handed a
 /// fresh full TTL, so a nearly-dead entry read from disk is not resurrected.</item>
-/// </list></para>
+/// </list>
+/// Plus a lock over the two compound writes MemoryCache has no primitive for: see
+/// <see cref="TryAdd(TKey,TValue)"/> and <see cref="AddOrUpdate"/>.</para>
 /// </summary>
 public sealed class ExpiringMap<TKey, TValue> where TKey : notnull
 {

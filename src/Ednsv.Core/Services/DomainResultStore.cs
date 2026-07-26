@@ -36,13 +36,6 @@ public sealed class DomainResultStore
         _bag = new WriteBag<DomainResultSummary>(ttl, persist);
     }
 
-    /// <summary>
-    /// How many summaries are held, including any that have expired but not yet been
-    /// swept — see <see cref="ExpiringMap{TKey,TValue}.Count"/>. Whether a particular
-    /// domain's summary is still live is a question for <see cref="TryGet"/>.
-    /// </summary>
-    public int Count => _results.Count;
-
     /// <summary>Record a validation that just completed. Queued for the next flush.</summary>
     public void Set(string domain, DomainResultSummary summary)
     {

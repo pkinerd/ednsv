@@ -351,16 +351,13 @@ itself is entirely the platform's: exact on read, plus a sweep for keys nobody r
 again, which MemoryCache triggers from a cache operation, rate-limits by
 `ExpirationScanFrequency` (one minute by default) and dispatches to the thread pool.
 
-The first version of this type reimplemented that over a `ConcurrentDictionary` — owning
-a sweep, its rate limit, its single-flight gate and its thread-pool dispatch — on the
-strength of three things MemoryCache supposedly could not do. Two were wrong or did not
-matter, and none of them was worth ~90 lines of maintenance code:
-
-| Claimed blocker | Reality |
-|---|---|
-| Non-string keys, for the `(ip, domain)` AXFR caches | Wrong. MemoryCache keys are `object` and a `ValueTuple` compares structurally — verified. |
-| Atomic read-modify-write, for the unreachable-server counter | Real, and one call site. A `lock` covers it, on a path only reached once a DNS query has already failed. |
-| Enumeration of the live set, for the domain summaries | Real before .NET 9 — and it had **no production caller**. Only tests read it, and they read better through `TryGet`. |
+Two things MemoryCache has no primitive for are covered by a lock over the compound
+write: add-if-absent, which the import path needs so exactly one of two racing importers
+stores; and the read-modify-write the unreachable-server counter needs, on a path only
+reached once a DNS query has already failed. Reads and plain `Set` stay lock-free.
+Enumerating the live set is the one thing MemoryCache genuinely cannot do before .NET 9,
+and nothing in production asks it to — which is also why `ProbeCache` has to keep a
+parallel key index for the Redis re-warm.
 
 What the wrapper is for is the three rules that are this project's rather than the
 platform's, each of which has been a bug when it lived at the call sites instead:

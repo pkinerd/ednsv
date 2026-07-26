@@ -109,7 +109,7 @@ public class DiskCacheService
 
     /// <summary>The retention actually applied: the configured TTL, or the floor above
     /// when expiry is switched off.</summary>
-    public static TimeSpan EffectiveRetention(TimeSpan ttl)
+    private static TimeSpan EffectiveRetention(TimeSpan ttl)
         => ttl > TimeSpan.Zero ? ttl : UncappedRetention;
 
     private static string NewRecordFileName(DateTime nowUtc) =>
