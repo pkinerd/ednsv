@@ -755,6 +755,21 @@ public class DnsResolverService
             vulnerable => JsonSerializer.SerializeToNode(vulnerable));
     }
 
+    // ── Shared-cache recovery ────────────────────────────────────────────
+
+    /// <summary>Republish this resolver's cached answers into the shared L2 — see
+    /// <see cref="ProbeCache{T}.WarmSharedCache"/>.</summary>
+    public int WarmSharedCache()
+        => _queryCache.WarmSharedCache() + _serverQueryCache.WarmSharedCache() + _ptrCache.WarmSharedCache();
+
+    /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
+    public void PruneSharedCacheIndex()
+    {
+        _queryCache.PruneSharedCacheIndex();
+        _serverQueryCache.PruneSharedCacheIndex();
+        _ptrCache.PruneSharedCacheIndex();
+    }
+
     /// <summary>The persisted key for an AXFR result. The tuple key cannot be written
     /// as-is, and the pipe is safe: an IP never contains one.</summary>
     private static string AxfrKey(string ip, string domain) => $"{ip}|{domain}";

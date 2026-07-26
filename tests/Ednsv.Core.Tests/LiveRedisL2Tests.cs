@@ -14,19 +14,24 @@ public sealed class LiveRedisL2Tests
     private const string Endpoint = "127.0.0.1:6380";
     private const string ConnString = Endpoint + ",abortConnect=false,connectTimeout=300,syncTimeout=500";
 
-    private static readonly Lazy<bool> Available = new(() =>
+    // Lazy<Task<bool>> rather than Lazy<bool>, and awaited rather than blocked on.
+    // A GetAwaiter().GetResult() here occupies a thread-pool thread while its own
+    // continuation waits for one, and Lazy's ExecutionAndPublication mode then blocks
+    // every other class calling .Value behind it — enough classes doing that at once
+    // starves the pool and the whole run stops dead.
+    private static readonly Lazy<Task<bool>> Available = new(async () =>
     {
         try
         {
             using var redis = new RedisConnection(ConnString);
-            return redis.IsHealthyAsync().GetAwaiter().GetResult();
+            return await redis.IsHealthyAsync();
         }
         catch { return false; }
     });
 
-    private static bool Ready()
+    private static async Task<bool> ReadyAsync()
     {
-        if (Available.Value) return true;
+        if (await Available.Value) return true;
         Console.WriteLine($"SKIPPED: no Redis on {Endpoint}");
         return false;
     }
@@ -37,7 +42,7 @@ public sealed class LiveRedisL2Tests
     [Fact]
     public async Task AnL2HitIsCachedInMemoryButNotQueuedForPersistence()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
         var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
 
@@ -67,7 +72,7 @@ public sealed class LiveRedisL2Tests
         // The disk tier is what turns a coordinated restart from "every instance
         // cold" into "warm after one load" — but only if the values it holds reach
         // the shared cache too.
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
         var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
         var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
@@ -80,12 +85,44 @@ public sealed class LiveRedisL2Tests
     }
 
     [Fact]
+    public async Task AnImportWarmsTheL2EvenWhenL1AlreadyHasTheKey()
+    {
+        // This is what makes re-warming an emptied Redis work at all. A re-warm
+        // re-runs the disk load on a process that has been serving for a while, so L1
+        // already holds nearly every key; a warm placed after the "do we have it
+        // locally?" check would therefore publish nothing. Holding a key locally says
+        // nothing about whether the shared cache holds it.
+        if (!await ReadyAsync()) return;
+        using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
+        var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
+
+        // Stand in for a process that has been running: the key is in L1 already.
+        cache.Import("k", "from-disk", DateTime.UtcNow.AddMinutes(4));
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+        Assert.NotNull(await l2.TryGetAsync("k"));
+
+        // Redis is emptied underneath it.
+        var db = redis.GetDatabase();
+        Assert.NotNull(db);
+        await db!.KeyDeleteAsync(redis.Key("cache:test:k"));
+        Assert.Null(await l2.TryGetAsync("k"));
+
+        // The re-warm: the same import again, with L1 unchanged.
+        Assert.False(cache.Import("k", "from-disk", DateTime.UtcNow.AddMinutes(4)),
+            "L1 already holds it, so the import itself is a no-op");
+
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+        Assert.Equal("from-disk", await l2.TryGetAsync("k"));
+    }
+
+    [Fact]
     public async Task WarmingTheL2DoesNotOverwriteAFresherValue()
     {
         // Every instance holds an overlapping view of the same files, so without
         // When.NotExists a rolling restart has them all racing to publish their own
         // copy over each other's.
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
         var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
 
@@ -105,7 +142,7 @@ public sealed class LiveRedisL2Tests
     {
         // A full TTL would resurrect a nearly-dead entry for another whole period,
         // every time any instance restarted.
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
         var l2 = StringL2(redis, TimeSpan.FromHours(5));
         var cache = new ProbeCache<string>(TimeSpan.FromHours(5), l2);
@@ -123,7 +160,7 @@ public sealed class LiveRedisL2Tests
     [Fact]
     public async Task AnL2MissStillQueuesTheNetworkResult()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var redis = new RedisConnection(ConnString, "l2test" + Guid.NewGuid().ToString("N")[..8]);
         var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), StringL2(redis, TimeSpan.FromMinutes(5)));
 

@@ -107,6 +107,33 @@ public sealed class CacheManager : IAsyncDisposable
     }
 
     /// <summary>
+    /// Republish everything held in memory into the shared Redis cache, for use when
+    /// that cache has been emptied underneath a running instance.
+    ///
+    /// <para>Memory, not disk. L1 is a superset of what this instance would find on
+    /// disk — the startup load imports every instance's live records into it, so it
+    /// holds those plus everything fetched since, including the last flush interval's
+    /// worth that has not reached disk yet. It needs no file I/O, and it is the only
+    /// source that exists at all when <c>CacheDir=none</c>.</para>
+    ///
+    /// <para>Returns the number of keys published.</para>
+    /// </summary>
+    public int WarmSharedCache()
+        => _dns.WarmSharedCache() + _smtp.WarmSharedCache() + _http.WarmSharedCache();
+
+    /// <summary>
+    /// Drop shared-cache index entries for keys that have expired. Cheap, and needed
+    /// periodically: MemoryCache expires lazily and never says so, and without this the
+    /// index would accumulate every key the process had ever cached.
+    /// </summary>
+    public void PruneSharedCacheIndex()
+    {
+        _dns.PruneSharedCacheIndex();
+        _smtp.PruneSharedCacheIndex();
+        _http.PruneSharedCacheIndex();
+    }
+
+    /// <summary>
     /// Records a domain's validation result for future recheck decisions. Visible
     /// to this process immediately; written out by the next flush.
     /// </summary>

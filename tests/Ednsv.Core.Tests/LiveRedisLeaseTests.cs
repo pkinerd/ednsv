@@ -15,21 +15,26 @@ public sealed class LiveRedisLeaseTests
     private const string Endpoint = "127.0.0.1:6380";
     private const string ConnString = Endpoint + ",abortConnect=false,connectTimeout=300,syncTimeout=500";
 
-    private static readonly Lazy<bool> Available = new(() =>
+    // Lazy<Task<bool>> rather than Lazy<bool>, and awaited rather than blocked on.
+    // A GetAwaiter().GetResult() here occupies a thread-pool thread while its own
+    // continuation waits for one, and Lazy's ExecutionAndPublication mode then blocks
+    // every other class calling .Value behind it — enough classes doing that at once
+    // starves the pool and the whole run stops dead.
+    private static readonly Lazy<Task<bool>> Available = new(async () =>
     {
         try
         {
             using var redis = new RedisConnection(ConnString);
-            return redis.IsHealthyAsync().GetAwaiter().GetResult();
+            return await redis.IsHealthyAsync();
         }
         catch { return false; }
     });
 
     /// <summary>True when the test body should run. Logs the skip so a silent
     /// pass is never mistaken for real coverage.</summary>
-    private static bool Ready()
+    private static async Task<bool> ReadyAsync()
     {
-        if (Available.Value) return true;
+        if (await Available.Value) return true;
         Console.WriteLine($"SKIPPED: no Redis on {Endpoint}");
         return false;
     }
@@ -39,9 +44,9 @@ public sealed class LiveRedisLeaseTests
     private static string TempDir() => Path.Combine(Path.GetTempPath(), $"ednsv-live-{Guid.NewGuid():N}");
 
     [Fact]
-    public void Lease_ExcludesASecondHolderAndFreesOnRelease()
+    public async Task Lease_ExcludesASecondHolderAndFreesOnRelease()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var ns = FreshNamespace();
         using var a = Connect(ns);
         using var b = Connect(ns);
@@ -58,9 +63,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void Lease_IsNamespacedPerDeployment()
+    public async Task Lease_IsNamespacedPerDeployment()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         using var one = Connect(FreshNamespace());
         using var two = Connect(FreshNamespace());
 
@@ -75,9 +80,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void Lease_ExpiresSoADeadHolderCannotBlockForever()
+    public async Task Lease_ExpiresSoADeadHolderCannotBlockForever()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var ns = FreshNamespace();
         using var dead = Connect(ns);
         using var next = Connect(ns);
@@ -93,9 +98,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void ConcurrentSavesAllLandWithACoherentHistory()
+    public async Task ConcurrentSavesAllLandWithACoherentHistory()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var dir = TempDir();
         var ns = FreshNamespace();
         const int writers = 6;
@@ -145,9 +150,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void StaleIfMatchIsStillRejectedUnderTheLease()
+    public async Task StaleIfMatchIsStillRejectedUnderTheLease()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var dir = TempDir();
         var ns = FreshNamespace();
 
@@ -181,9 +186,9 @@ public sealed class LiveRedisLeaseTests
     // ── Read paths must stay off the network ─────────────────────────────
 
     [Fact]
-    public void ConcurrentAuthenticationIsNotSerialisedBehindRedis()
+    public async Task ConcurrentAuthenticationIsNotSerialisedBehindRedis()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var dir = TempDir();
         var ns = FreshNamespace();
 
@@ -213,9 +218,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void RevocationOnAnotherInstanceLandsWithinTheFreshnessWindow()
+    public async Task RevocationOnAnotherInstanceLandsWithinTheFreshnessWindow()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var dir = TempDir();
         var ns = FreshNamespace();
         var window = TimeSpan.FromMilliseconds(300);
@@ -244,9 +249,9 @@ public sealed class LiveRedisLeaseTests
     }
 
     [Fact]
-    public void ZeroFreshnessWindowPropagatesRevocationImmediately()
+    public async Task ZeroFreshnessWindowPropagatesRevocationImmediately()
     {
-        if (!Ready()) return;
+        if (!await ReadyAsync()) return;
         var dir = TempDir();
         var ns = FreshNamespace();
 

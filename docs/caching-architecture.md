@@ -259,6 +259,27 @@ Files written by the previous one-file-per-cache-type layout (`dns-queries.json`
 
 When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
 
+#### Recovering an emptied L2
+
+A Redis restart without persistence, a `FLUSHALL`, or a failover to an empty replica leaves the shared cache cold — and **it does not refill on its own in any useful timeframe**. Every instance is still serving happily from its own L1 and disk tier and has no reason to refetch anything, so the L2 stays degraded until entries age out of L1 naturally. That silently breaks the recovery the recommended deployment leans on: a rescheduled pod with a pod-local cache directory is supposed to come back warm *from the L2*.
+
+`SharedCacheEpoch` notices. A single nonce key (`{InstanceName}:cache-epoch`, deliberately outside the `cache:` namespace) is established at startup and re-read on the flush interval. If it has vanished, everything else vanished with it; if it has *changed*, another instance has already noticed a flush and re-established it. Either way the response is the same: republish everything held in L1, with `SET NX` and each entry's remaining life.
+
+**Memory is the source, not disk** — and the first reason is the one that decides it:
+
+- **L1 is a superset of what disk would offer.** The startup load imports every instance's live records into L1, so afterwards L1 holds those *plus* everything fetched since, including the last flush interval's worth that has not reached disk yet.
+- **It needs no file I/O.** Re-reading and re-parsing every file on the mount, on every instance, is the expensive half of the alternative and buys nothing.
+- **It works where disk cannot.** A deployment running `CacheDir=none` has no disk tier at all, and its L1 is then the only copy of those results in existence. That is what makes skipping the disk tier a sound default alongside Redis.
+
+`MemoryCache` cannot be enumerated on .NET 8, so `ProbeCache` keeps a parallel key → expiry index. It exists only when there is a shared tier to warm, so a single-instance deployment pays nothing for it. It is a *hint* rather than a second source of truth: every use re-checks the key against MemoryCache and drops it if it has gone, which makes a stale entry harmless — eviction callbacks fire lazily and cannot keep an index exact. A periodic prune removes expired keys, without which the index would grow to every key the process had ever cached rather than the live set.
+
+Two further details are load-bearing:
+
+- **Every instance re-warms, not just the one that noticed.** Each holds only what it has fetched and imported, so a single warmer would republish a fraction of the fleet's knowledge. The redundant overlap costs N idempotent `SET NX` passes over the same keys, once, and cannot clobber a fresher value.
+- **An unreachable Redis is never mistaken for an empty one**, or an outage would trigger a re-warm on every tick for as long as it lasted. A failed read bails immediately, and a missing key is acted on only when the follow-up write succeeds, which proves the connection was live. (`GetDatabase()` is no help here: with `abortConnect=false` the multiplexer hands back a database whether or not a server is reachable, so the failure surfaces on the command.)
+
+It is a cheap heuristic for the case that actually hurts, not a consistency mechanism. Under an `allkeys-*` eviction policy the nonce can be evicted while other keys survive, producing a re-warm that was not needed — harmless, because the warm is add-if-absent. A partial eviction that spares the nonce goes unnoticed.
+
 ## Service Cache Inventory
 
 Each service maintains specific ProbeCache instances:

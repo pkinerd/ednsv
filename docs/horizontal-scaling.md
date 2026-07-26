@@ -144,6 +144,14 @@ The existing two-tier cache gains a shared L2:
    (subject to the existing `shouldPersist` predicate — transient errors stay L1
    only, never hitting Redis).
 
+If Redis is emptied while pods are running — a restart without persistence, a
+`FLUSHALL`, a failover to an empty replica — the shared cache does not refill on
+its own, because every pod is still serving from its own L1 and disk and has no
+reason to refetch. Pods detect this via a nonce key and republish their disk tier
+into it; see [caching-architecture.md](caching-architecture.md) →
+*Recovering an emptied L2*. Without that, a pod rescheduled afterwards would come
+back fully cold despite the L2 being configured.
+
 Cross-pod in-flight de-duplication is intentionally **not** implemented: at worst
 a few duplicate upstream queries happen the first time a key is requested
 concurrently on different pods. Caching is a load optimisation, not a correctness
@@ -151,27 +159,50 @@ mechanism, so any Redis error transparently falls through to the network. Redis
 entries carry a native per-key TTL derived from `CacheTtlHours`, or from the
 entry's own record TTL when `DnsCacheMinTtlSeconds` gating is enabled.
 
-### Put the disk cache on a pod-local volume
+### Skip the disk cache once Redis is present
 
-**Recommended whenever Redis is configured.** Point `CacheDir` at an `emptyDir`
-rather than leaving it on the shared RWX mount.
+**Recommended whenever Redis is configured across more than one pod: set
+`CacheDir=none`.** The disk tier earns its keep in a single-instance deployment,
+where it is the only thing that survives a restart. Alongside Redis it mostly does
+not, and it costs real I/O.
+
+What the disk tier is *for* is surviving a process restart with a warm cache. In a
+multi-pod deployment Redis already does that, and better — a pod that comes back
+with an empty L1 refills from the L2 without touching a file. That leaves the disk
+tier covering one case: **Redis itself being emptied**, by a restart without
+persistence, a `FLUSHALL`, or a failover to an empty replica. Pods now handle that
+themselves — they notice and republish their own memory into it (see
+[caching-architecture.md](caching-architecture.md) → *Recovering an emptied L2*) —
+so the disk tier is no longer what stands between a Redis flush and a cold fleet.
+
+That works because **Redis being emptied and pods restarting are largely independent
+events.** A managed Redis is patched, scaled and failed over on its own schedule; pod
+churn follows deploys and node operations. As long as one pod survives a flush, the
+fleet's cache is recovered from memory. What `none` gives up is the correlated case:
+Redis emptied *and* every pod restarted at once, which is a fully cold start. That is
+a cache, so it costs a burst of upstream queries and nothing else.
+
+What you gain is everything the disk tier costs: no per-flush file writes, no sweep,
+no startup read, and no shared-mount fan-out. The mount reverts to what it is
+genuinely needed for — `config.json`, `users.json` and the DataProtection keyring,
+all small, rarely written, and already coordinated.
+
+#### If you want a warm-start tier as well
+
+Point `CacheDir` at a pod-local `emptyDir` rather than the shared RWX mount.
 
 On the shared mount, startup file I/O scales with *replicas x files*: every pod
 reads every other pod's folder, and a rolling deploy has all of them doing it
-simultaneously against one NFS/Azure Files endpoint — the worst case being
-precisely the coordinated restart, and it degrades as you scale out. Pointed at an
-`emptyDir`, each pod reads only its own local disk, so startup is **O(1) per pod**
-and a 30-replica rollout costs the same per pod as a 3-replica one. The mount
-reverts to what it is genuinely needed for: `config.json`, `users.json` and the
-DataProtection keyring, all small, rarely written, and already coordinated.
+simultaneously against one NFS/Azure Files endpoint — the worst case being precisely
+the coordinated restart, and it degrades as you scale out. Pointed at an `emptyDir`,
+each pod reads only its own local disk, so startup is **O(1) per pod** and a
+30-replica rollout costs the same per pod as a 3-replica one.
 
 Be precise about what `emptyDir` survives: container restarts within the pod, not
-rescheduling — it is tied to the pod, not the node. That is not a real loss given
-the tiering. A container restart keeps the local disk warm; a rescheduled pod
-loses it and **is repopulated from the Redis L2, which the load path warms from**;
-losing Redis as well means a cold start and a refetch from the network. The shared
-mount only ever provided that middle layer, which Redis does better and without
-the fan-out.
+rescheduling — it is tied to the pod, not the node. A container restart keeps the
+local disk warm; a rescheduled pod loses it and is repopulated from the Redis L2.
+That narrow difference is the whole benefit over `none`, which is why `none` is the
+better default.
 
 The cross-pod merge still runs and simply finds only this pod's files — a harmless
 no-op. The per-pod subfolder stays uniform either way; the application cannot
@@ -179,26 +210,36 @@ distinguish a shared mount from a local volume, so any detection would be guessw
 
 | Deployment | `CacheDir` | Why |
 |---|---|---|
-| Single instance / no Redis | *(unset)* → `{DataDir}/cache` | The disk tier is the only cache across restarts, and with one writer there is no fan-out. |
-| **Multi-pod with Redis** | **pod-local `emptyDir`** | **Recommended.** Local-disk speed, O(1) startup I/O, and Redis already provides the cross-pod sharing. |
+| **Single instance** | *(unset)* → `{DataDir}/cache` | **Recommended.** The disk tier is the only thing that survives a restart, and with one writer there is no fan-out. |
+| **Multi-pod with Redis** | **`none`** | **Recommended.** Redis shares results between pods, and surviving pods republish it from memory whenever it is emptied. No file I/O, no sweep, no fan-out. |
 | Multi-pod without Redis | shared RWX mount | The only way to share a cache between pods. Accepts the fan-out above; this is what the per-pod folders and the merge exist for. |
-| Any, wanting no disk tier | `none` | L1 + Redis only. Warned about at startup if Redis is also unset. |
+| Multi-pod with Redis, wanting warm restarts | pod-local `emptyDir` | Keeps a local warm-start tier for a container restart. See the caveat below — it does not survive rescheduling. |
 
-`none` is a legitimate choice for an operator running a well-provisioned managed
-Redis who wants the shared mount kept quiet — on Azure Files in particular, where
-per-operation latency and cost are real. It should not be the reflex, because:
+#### What `none` does and does not give up
 
-- **Managed Redis is not a durability guarantee.** Basic/Standard Azure Cache
-  tiers have no persistence, so a node reboot, patch or scale operation empties
-  them; even with persistence, replication is async and a failover can drop recent
-  writes; and `maxmemory` eviction discards keys under pressure on any tier. The
-  disk tier turns each of those from "every pod cold at once" into "warm after one
-  load".
-- **Redis memory costs far more than file storage**, so a long retention window on
-  disk with a hot working set in Redis is the cheaper shape.
-- **It does not remove the mount.** `config.json`, `users.json` and the
-  DataProtection keyring still require the shared RWX volume; this only reduces
-  write traffic to it.
+**Managed Redis is not a durability guarantee**, and that used to be the argument
+against `none`. Basic/Standard Azure Cache tiers have no persistence, so a node
+reboot, patch or scale operation empties them; even with persistence, replication is
+async and a failover can drop recent writes; and `maxmemory` eviction discards keys
+under pressure on any tier.
+
+The durability now comes from the fleet rather than from Redis. Every pod holds the
+results it has fetched, notices when the shared cache has been emptied, and
+republishes into it — so **any one surviving pod restores the cache**. Redis being
+emptied is no longer the event the disk tier had to insure against.
+
+Two things `none` genuinely gives up:
+
+- **A correlated loss** — Redis emptied *and* every pod restarted, with no memory
+  anywhere left to republish from. That is a fully cold fleet and a burst of upstream
+  queries; it is a cache, so nothing is lost but time.
+- **A long retention window.** Redis memory costs far more than file storage, so if
+  you want to hold days of results rather than hours, disk is the cheaper place and
+  `CacheTtlHours` on a shared mount is the way to do it.
+
+It also **does not remove the mount**: `config.json`, `users.json` and the
+DataProtection keyring still require the shared RWX volume. `none` only stops the
+probe cache adding traffic to it.
 
 ## Config & user writes (beacon CAS)
 
@@ -271,7 +312,7 @@ settings have no effect unless `Redis:ConnectionString` is set.
 ```jsonc
 {
   "DataDir": "/data",                       // shared RWX mount
-  "CacheDir": "/cache",                     // pod-local emptyDir — see above
+  "CacheDir": "none",                       // no disk tier — Redis + memory only
   "Redis": {
     "ConnectionString": "redis-svc:6379,ssl=True,password={AccessKey}",
     "AccessKey": "<inject via env var Redis__AccessKey / k8s Secret>",
@@ -286,30 +327,32 @@ settings have no effect unless `Redis:ConnectionString` is set.
 }
 ```
 
-The two volumes are doing different jobs, and mixing them up is the easy mistake:
+With `CacheDir=none` there is one volume, and it is only for the things that must be
+shared and durable:
 
 ```yaml
       volumes:
         - name: data                        # config.json, users.json, keyring
           persistentVolumeClaim:
-            claimName: ednsv-data           # RWX — genuinely shared, small, rarely written
-        - name: cache                       # probe results
-          emptyDir: {}                      # pod-local; Redis does the cross-pod sharing
+            claimName: ednsv-data           # RWX — small, rarely written, already coordinated
       containers:
         - name: ednsv
           env:
             - name: DataDir
               value: /data
             - name: CacheDir
-              value: /cache
+              value: "none"                 # probe results live in memory + Redis
           volumeMounts:
-            - { name: data,  mountPath: /data }
-            - { name: cache, mountPath: /cache }
+            - { name: data, mountPath: /data }
 ```
 
-Without Redis, drop the `cache` volume and let `CacheDir` default to `/data/cache`
-— the shared mount is then the only way pods can see each other's results, and the
-per-pod subfolders and merge exist for exactly that case.
+To keep a warm-start tier as well, add a pod-local volume and point `CacheDir` at it
+instead — `- name: cache` / `emptyDir: {}` mounted at `/cache`. Note that the two
+volumes do different jobs: the PVC is shared and durable, the `emptyDir` is neither.
+
+Without Redis, drop `CacheDir` entirely and let it default to `/data/cache` — the
+shared mount is then the only way pods can see each other's results, and the per-pod
+subfolders and merge exist for exactly that case.
 
 Autoscale on CPU (HPA). Scaling up inherently increases aggregate upstream probe
 load, which is expected.

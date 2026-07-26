@@ -501,7 +501,9 @@ if (!diskCacheEnabled)
 {
     if (redis.Enabled)
         app.Logger.LogInformation(
-            "Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only.");
+            "Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only — "
+            + "the recommended shape for a multi-pod deployment, since instances republish their own cache into "
+            + "Redis whenever it is emptied.");
     else
         app.Logger.LogWarning(
             "Disk cache disabled (CacheDir=none) and no Redis is configured, so nothing survives a restart: "
@@ -557,6 +559,54 @@ _ = Task.Run(async () =>
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
 
+// ── Watch for the shared cache being emptied ─────────────────────────────
+//
+// A Redis restart without persistence, a FLUSHALL, or a failover to an empty
+// replica leaves the L2 cold, and it does not refill on its own: every instance is
+// still serving happily from its own L1 and has no reason to refetch anything. Left
+// alone the shared cache stays degraded until entries age out naturally, which
+// silently breaks the recovery a multi-pod deployment leans on — a rescheduled pod
+// is meant to come back warm from the L2.
+//
+// Republishing from memory needs no disk tier, so this runs wherever Redis does. It
+// is what lets a large Redis-backed deployment set CacheDir=none and still be
+// self-healing: its L1 is then the only copy of those results in existence.
+Timer? sharedCacheWatch = null;
+if (redis.Enabled)
+{
+    var epoch = new SharedCacheEpoch(redis);
+    var watchInterval = TimeSpan.FromSeconds(flushIntervalSeconds);
+
+    // The first tick comes soon rather than after a full interval, because it is the
+    // one that *establishes* the epoch — and the first check deliberately never asks
+    // for a re-warm, since startup has just warmed the L2 itself. Leaving it until the
+    // first full interval would mean a flush inside that window was absorbed by the
+    // first check and never noticed.
+    var firstTick = TimeSpan.FromSeconds(Math.Min(5, flushIntervalSeconds));
+
+    sharedCacheWatch = new Timer(_ => _ = Task.Run(async () =>
+    {
+        try
+        {
+            // Every tick, not just on a re-warm: MemoryCache expires lazily and never
+            // says so, so the index would otherwise accumulate every key ever cached.
+            cacheManager.PruneSharedCacheIndex();
+
+            if (!await epoch.ShouldRewarmAsync()) return;
+
+            app.Logger.LogInformation(
+                "Shared cache appears to have been emptied — republishing the cache held by this instance.");
+            var warmed = cacheManager.WarmSharedCache();
+            app.Logger.LogInformation("Shared cache re-warm complete ({Warmed} entries republished).", warmed);
+        }
+        catch (Exception ex)
+        {
+            // Unobserved: it must log rather than take the process down.
+            app.Logger.LogWarning(ex, "Shared cache re-warm failed; it will be retried on the next tick.");
+        }
+    }), null, firstTick, watchInterval);
+}
+
 // ── Graceful shutdown ────────────────────────────────────────────────────
 // These singletons are registered as pre-created instances, and the DI
 // container only disposes what it constructs itself — so nothing here is
@@ -585,6 +635,8 @@ app.Lifetime.ApplicationStopping.Register(() =>
         app.Logger.LogWarning(ex, "Shutdown cache flush failed.");
     }
 
+    // Before the connection it uses, and before the cache manager it would reload.
+    try { sharedCacheWatch?.Dispose(); } catch { /* best effort */ }
     try { validationTracker.Dispose(); } catch { /* best effort */ }
     try { redis.Dispose(); } catch { /* best effort */ }
 });

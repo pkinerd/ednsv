@@ -146,12 +146,35 @@ public class ProbeCache<TValue> where TValue : class
     // the life of the process.
     private readonly bool _persist;
 
+    /// <summary>
+    /// Key → absolute expiry for everything in L1, so the shared cache can be
+    /// republished from memory after it has been emptied. <see cref="MemoryCache"/>
+    /// cannot be enumerated on .NET 8, hence the parallel index.
+    ///
+    /// <para>Null unless there is a shared tier to warm, so a single-instance
+    /// deployment pays nothing for it at all.</para>
+    ///
+    /// <para>It is a <i>hint</i>, not a second source of truth: every use checks the
+    /// key against MemoryCache and drops it if it has gone. That makes a stale entry
+    /// harmless, which matters because eviction callbacks fire lazily and cannot be
+    /// relied on to keep an index exact.</para>
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime>? _l2Index;
+
     public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
         _persist = persist;
+        _l2Index = _l2 != null ? new ConcurrentDictionary<string, DateTime>() : null;
+    }
+
+    /// <summary>The expiry an entry cached now would carry.</summary>
+    private DateTime AbsoluteExpiry(TimeSpan? entryTtl)
+    {
+        var ttl = entryTtl ?? _ttl;
+        return ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
@@ -283,16 +306,18 @@ public class ProbeCache<TValue> where TValue : class
     public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
         var ttl = entryTtl ?? _ttl;
+        var expires = ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
 
         if (ttl.HasValue)
             _cache.Set(key, value, ttl.Value);
         else
             _cache.Set(key, value);
 
+        if (_l2Index != null) _l2Index[key] = expires;
+
         if (!_persist) return; // no disk tier — nothing would ever drain the bag
 
-        var now = DateTime.UtcNow;
-        _bag[key] = new BagEntry<TValue>(value, now, ttl.HasValue ? now + ttl.Value : DateTime.MaxValue);
+        _bag[key] = new BagEntry<TValue>(value, DateTime.UtcNow, expires);
     }
 
     /// <summary>
@@ -311,6 +336,8 @@ public class ProbeCache<TValue> where TValue : class
             _cache.Set(key, value, _ttl.Value);
         else
             _cache.Set(key, value);
+
+        if (_l2Index != null) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
     }
 
     /// <summary>
@@ -338,14 +365,20 @@ public class ProbeCache<TValue> where TValue : class
     public bool Import(string key, TValue value, DateTime? expiresUtc = null)
     {
         if (expiresUtc.HasValue && expiresUtc.Value <= DateTime.UtcNow) return false;
+
+        // Warm the shared tier *before* consulting L1, not after. Whether we already
+        // hold a key locally says nothing about whether the shared cache holds it —
+        // and it matters most in the case the ordering would break: re-running the
+        // load to repopulate an emptied Redis finds L1 already holding nearly
+        // everything, so a warm placed below these checks would publish nothing at
+        // all. `SetIfAbsent` makes it safe to attempt unconditionally.
+        if (expiresUtc.HasValue && _l2 != null)
+            _l2.SetIfAbsent(key, value, expiresUtc.Value - DateTime.UtcNow);
+
         if (_inflight.ContainsKey(key)) return false;
         if (_cache.TryGetValue(key, out TValue? live) && live != null) return false;
 
         SetMemoryOnly(key, value, expiresUtc);
-
-        if (expiresUtc.HasValue && _l2 != null)
-            _l2.SetIfAbsent(key, value, expiresUtc.Value - DateTime.UtcNow);
-
         return true;
     }
 
@@ -410,6 +443,62 @@ public class ProbeCache<TValue> where TValue : class
         return result;
     }
 
+    /// <summary>
+    /// Republish everything this instance holds in L1 into the shared cache, for use
+    /// after Redis has been emptied. Returns how many keys were published.
+    ///
+    /// <para>Memory rather than disk is the right source, and not only because it is
+    /// fresher and needs no file I/O: <b>L1 is a superset of what this instance would
+    /// have found on disk.</b> The startup load imports every instance's live records
+    /// into L1, so after startup L1 holds those <i>plus</i> everything fetched since —
+    /// including the last flush interval's worth, which is not on disk yet. It also
+    /// works where a disk re-read cannot: a deployment running <c>CacheDir=none</c>
+    /// against a managed Redis has no disk tier at all, and its L1 is then the only
+    /// copy of those results in existence.</para>
+    ///
+    /// <para><c>SetIfAbsent</c> with each entry's remaining life, so instances warming
+    /// concurrently cannot clobber each other or resurrect a nearly-dead value.</para>
+    /// </summary>
+    public int WarmSharedCache()
+    {
+        if (_l2 == null || _l2Index == null) return 0;
+
+        var now = DateTime.UtcNow;
+        var warmed = 0;
+
+        foreach (var kv in _l2Index)
+        {
+            if (kv.Value <= now || !_cache.TryGetValue(kv.Key, out TValue? live) || live == null)
+            {
+                _l2Index.TryRemove(kv.Key, out _); // gone from L1 — the index was only a hint
+                continue;
+            }
+
+            _l2.SetIfAbsent(kv.Key, live, kv.Value - now);
+            warmed++;
+        }
+
+        return warmed;
+    }
+
+    /// <summary>
+    /// Drop index entries whose keys have expired. Called periodically because
+    /// MemoryCache expires lazily and never tells us: without this the index would
+    /// accumulate every key the process had ever cached, rather than the live set.
+    /// </summary>
+    public void PruneSharedCacheIndex()
+    {
+        if (_l2Index == null) return;
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in _l2Index)
+            if (kv.Value <= now)
+                _l2Index.TryRemove(kv.Key, out _);
+    }
+
+    /// <summary>Keys currently tracked for a shared-cache warm. Diagnostics and tests.</summary>
+    public int SharedCacheIndexCount => _l2Index?.Count ?? 0;
+
     /// <summary>Remove entries matching a predicate.</summary>
     public void Remove(Func<string, bool> predicate)
     {
@@ -419,6 +508,7 @@ public class ProbeCache<TValue> where TValue : class
             {
                 _cache.Remove(key);
                 _bag.TryRemove(key, out _);
+                _l2Index?.TryRemove(key, out _);
             }
         }
     }

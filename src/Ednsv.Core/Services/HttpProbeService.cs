@@ -245,6 +245,18 @@ public class HttpProbeService
         }
     }
 
+    // ── Shared-cache recovery ────────────────────────────────────────────
+
+    /// <summary>Republish cached HTTP responses into the shared L2.</summary>
+    public int WarmSharedCache() => _getCache.WarmSharedCache() + _getWithHeadersCache.WarmSharedCache();
+
+    /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
+    public void PruneSharedCacheIndex()
+    {
+        _getCache.PruneSharedCacheIndex();
+        _getWithHeadersCache.PruneSharedCacheIndex();
+    }
+
     // ── Flush sources ────────────────────────────────────────────────────
 
     /// <summary>Everything this prober has fetched and not yet written out.</summary>

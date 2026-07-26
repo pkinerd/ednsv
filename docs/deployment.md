@@ -104,7 +104,7 @@ Environment variables or command-line configuration. See [configuration.md](conf
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` by default |
-| `CacheDir` | `{DataDir}/cache` | Where probe results are persisted. `none` disables the disk tier. With Redis and multiple pods, point this at a pod-local volume — see below. |
+| `CacheDir` | `{DataDir}/cache` | Where probe results are persisted. `none` disables the disk tier, which is the recommendation for multi-pod deployments with Redis — see below. |
 | `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` disables expiry; files are still swept after 24h |
 | `FlushIntervalSeconds` | 600 | Flush interval, and the cache-file granularity |
 | `CacheShutdownFlushSeconds` | 5 | Bound on the final flush at shutdown |
@@ -305,7 +305,7 @@ docker run --rm -p 8080:8080 ghcr.io/<owner>/ednsv:latest
 
 ### Scaling across multiple replicas
 
-A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, a Kubernetes-style example, and why the probe cache should go on a **pod-local** volume once Redis is present.
+A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, a Kubernetes-style example, and why the probe cache is better skipped entirely once Redis is present.
 
 ## Network egress (outbound ports)
 

@@ -634,6 +634,15 @@ public class SmtpProbeService
         }
     }
 
+    // ── Shared-cache recovery ────────────────────────────────────────────
+
+    /// <summary>Republish cached SMTP probes into the shared L2. The port cache has no
+    /// L2, so there is nothing to republish for it.</summary>
+    public int WarmSharedCache() => _probeCache.WarmSharedCache();
+
+    /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
+    public void PruneSharedCacheIndex() => _probeCache.PruneSharedCacheIndex();
+
     // ── Flush sources ────────────────────────────────────────────────────
 
     /// <summary>Everything this prober has fetched and not yet written out.</summary>
