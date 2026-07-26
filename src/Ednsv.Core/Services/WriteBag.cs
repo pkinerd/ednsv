@@ -4,9 +4,10 @@ using System.Text.Json.Nodes;
 namespace Ednsv.Core.Services;
 
 /// <summary>
-/// The write queue for caches that keep their entries in a plain dictionary rather
-/// than a <see cref="ProbeCache{T}"/> — RCPT probes, relay tests, AXFR results,
-/// unreachable-server counts and domain result summaries.
+/// The write queue for caches that keep their entries in an
+/// <see cref="ExpiringMap{TKey,TValue}"/> rather than a <see cref="ProbeCache{T}"/> —
+/// RCPT probes, relay tests, AXFR results, unreachable-server counts and domain result
+/// summaries.
 ///
 /// <para>These could have been written out whole on every flush instead, since they
 /// are small. They are not, because the bag is also the dirty flag: with any
@@ -14,10 +15,11 @@ namespace Ednsv.Core.Services;
 /// write a file whether or not anything had changed, which is the amplification this
 /// design exists to remove. Queueing each write keeps an idle process silent.</para>
 ///
-/// <para>Unlike a <see cref="ProbeCache{T}"/> bag there is no MemoryCache behind
-/// this to check an entry against — these dictionaries hold their values for the
-/// life of the process — so a queued entry is written as it stands. Expiry applies
-/// on disk via <see cref="BagEntry{TValue}.ExpiresUtc"/> and on the next load.</para>
+/// <para>Unlike a <see cref="ProbeCache{T}"/> bag there is no MemoryCache behind this
+/// to check an entry against, so a queued entry is written as it stands. It cannot
+/// outlive its cached value by much: both take their expiry from the same TTL, and the
+/// bag is drained on the next flush. Expiry applies on disk via
+/// <see cref="BagEntry{TValue}.ExpiresUtc"/> and on the next load.</para>
 /// </summary>
 public sealed class WriteBag<TValue>
 {

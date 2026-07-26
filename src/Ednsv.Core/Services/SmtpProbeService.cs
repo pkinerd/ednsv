@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -69,10 +68,14 @@ public class SmtpProbeService
         _portCache = new ProbeCacheValue<bool>(cacheTtl, persistToDisk);
         _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl, persistToDisk);
         _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl, persistToDisk);
+        _rcptCache = new ExpiringMap<string, (bool accepted, string response)>(cacheTtl);
+        _relayCache = new ExpiringMap<string, (bool isRelay, string description)>(cacheTtl);
     }
     private readonly TimeSpan? _cacheTtl;
-    private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
-    private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
+    // Not a ProbeCache: no L2, no in-flight dedup, and their own write queues. They
+    // do expire, though — see ExpiringMap.
+    private readonly ExpiringMap<string, (bool accepted, string response)> _rcptCache;
+    private readonly ExpiringMap<string, (bool isRelay, string description)> _relayCache;
 
     // Plain dictionaries rather than ProbeCaches, so they carry their own write
     // queues — see WriteBag.
@@ -617,13 +620,13 @@ public class SmtpProbeService
                 case CacheTypes.Rcpt:
                 {
                     var entry = value.Deserialize<RcptCacheEntry>();
-                    if (entry != null) _rcptCache.TryAdd(key, (entry.Accepted, entry.Response));
+                    if (entry != null) _rcptCache.TryAdd(key, (entry.Accepted, entry.Response), expiresUtc);
                     return true;
                 }
                 case CacheTypes.Relay:
                 {
                     var entry = value.Deserialize<RelayCacheEntry>();
-                    if (entry != null) _relayCache.TryAdd(key, (entry.IsRelay, entry.Description));
+                    if (entry != null) _relayCache.TryAdd(key, (entry.IsRelay, entry.Description), expiresUtc);
                     return true;
                 }
                 default:
@@ -647,6 +650,11 @@ public class SmtpProbeService
 
     /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>.</summary>
     public int SharedCacheIndexCount => _probeCache.SharedCacheIndexCount;
+
+    // The two maps that are not ProbeCaches — see DnsResolverService for why these are
+    // counted at all. Expired entries are excluded whether or not they have been pruned.
+    public int RcptCacheCount => _rcptCache.Count;
+    public int RelayCacheCount => _relayCache.Count;
 
     // ── Flush sources ────────────────────────────────────────────────────
 

@@ -359,7 +359,7 @@ public class DiskCacheService
             var imported = dns.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
                 || smtp.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
                 || http.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
-                || TryImportDomainResult(domainResults, id.Type, id.Key, value);
+                || TryImportDomainResult(domainResults, id.Type, id.Key, value, winner.ExpiresUtc);
             if (!imported) continue;
 
             CountRecord(result, id.Type);
@@ -431,7 +431,8 @@ public class DiskCacheService
         catch (JsonException) { return false; }
     }
 
-    private static bool TryImportDomainResult(DomainResultStore? store, string type, string key, JsonNode? value)
+    private static bool TryImportDomainResult(DomainResultStore? store, string type, string key,
+        JsonNode? value, DateTime expiresUtc)
     {
         if (type != CacheTypes.DomainResults) return false;
         if (store == null || value == null) return true; // ours, but nowhere to put it
@@ -439,7 +440,7 @@ public class DiskCacheService
         try
         {
             var summary = value.Deserialize<DomainResultSummary>();
-            if (summary != null) store.Import(key, summary);
+            if (summary != null) store.Import(key, summary, expiresUtc);
         }
         catch { /* ours, but unreadable — skip the record, not the file */ }
         return true;

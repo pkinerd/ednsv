@@ -96,16 +96,20 @@ public class DnsResolverService
     // Tracks servers that are completely unreachable (network/timeout failures).
     // Once a server fails MaxRetries times within the decay window, skip it.
     // Entries older than _unreachableDecay are ignored, allowing recovery.
-    private readonly ConcurrentDictionary<string, (int count, DateTime lastFailure)> _unreachableServerCounts = new();
+    private readonly ExpiringMap<string, (int count, DateTime lastFailure)> _unreachableServerCounts;
     private readonly TimeSpan _unreachableDecay;
-    private readonly ConcurrentDictionary<(string ip, string domain), bool> _axfrCache = new();
+    private readonly ExpiringMap<(string ip, string domain), bool> _axfrCache;
 
-    // These two live in plain dictionaries rather than a ProbeCache, so they carry
-    // their own write queues. See WriteBag for why they are queued rather than
-    // written out whole on every flush.
+    // The two ExpiringMap caches above are not ProbeCaches, so they carry their own
+    // write queues. See WriteBag for why they are queued rather than written out whole
+    // on every flush.
     private readonly WriteBag<int> _unreachableBag;
     private readonly WriteBag<bool> _axfrBag;
-    private readonly ConcurrentDictionary<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache = new();
+    // The zone transfers themselves. Not persisted — a whole zone is far too large to
+    // write out — but expiring all the same: an AXFR response is the largest thing this
+    // service caches, so holding one per (nameserver, domain) for the life of the
+    // process is the most expensive way to leak.
+    private readonly ExpiringMap<(string ip, string domain), IDnsQueryResponse> _axfrResponseCache;
 
     // One LookupClient per target server IP, reused across queries. LookupClient is
     // thread-safe, holds an internal UDP socket pool, and is not IDisposable, so
@@ -114,7 +118,11 @@ public class DnsResolverService
     // (e.g. propagation / lame-delegation / SOA-serial checks that hit each NS IP
     // for multiple record types). The per-server options are identical to what was
     // built inline, so behaviour is unchanged.
-    private readonly ConcurrentDictionary<string, LookupClient> _serverClients = new();
+    // Expires on the cache TTL like everything else, which for a pool rather than a
+    // cache means only that a client unused for that long is rebuilt on next use. The
+    // alternative is one LookupClient — and its socket pool — per nameserver IP ever
+    // queried, held for the life of the process.
+    private readonly ExpiringMap<string, LookupClient> _serverClients;
 
     private LookupClient GetServerClient(IPAddress server) =>
         _serverClients.GetOrAdd(server.ToString(), _ =>
@@ -212,6 +220,10 @@ public class DnsResolverService
         _dnsMinTtl = t.CacheMinTtlSeconds > 0 ? TimeSpan.FromSeconds(t.CacheMinTtlSeconds) : TimeSpan.Zero;
         _unreachableBag = new WriteBag<int>(cacheTtl, persistToDisk);
         _axfrBag = new WriteBag<bool>(cacheTtl, persistToDisk);
+        _unreachableServerCounts = new ExpiringMap<string, (int count, DateTime lastFailure)>(cacheTtl);
+        _axfrCache = new ExpiringMap<(string ip, string domain), bool>(cacheTtl);
+        _axfrResponseCache = new ExpiringMap<(string ip, string domain), IDnsQueryResponse>(cacheTtl);
+        _serverClients = new ExpiringMap<string, LookupClient>(cacheTtl);
         ProbeCacheL2<IDnsQueryResponse>? DnsL2(string type) =>
             redis != null && redis.Enabled
                 ? new ProbeCacheL2<IDnsQueryResponse>(redis, type, cacheTtl,
@@ -322,6 +334,14 @@ public class DnsResolverService
     /// <summary>Number of network DNS queries that have completed (success or error).</summary>
     public int ResponsesReceived => _responsesReceived;
     public int CacheSize => _queryCache.Count + _ptrCache.Count + _serverQueryCache.Count;
+
+    // The maps that are not ProbeCaches. Counted separately because they answer a
+    // different question — whether anything here grows without bound — and each
+    // excludes entries that have expired but not yet been pruned.
+    public int UnreachableServerCount => _unreachableServerCounts.Count;
+    public int AxfrCacheCount => _axfrCache.Count;
+    public int AxfrResponseCacheCount => _axfrResponseCache.Count;
+    public int ServerClientCount => _serverClients.Count;
 
     private void AddError(string error)
     {
@@ -472,7 +492,7 @@ public class DnsResolverService
                 Interlocked.Increment(ref _responsesReceived);
                 if (!result.HasError)
                 {
-                    _unreachableServerCounts.TryRemove(serverStr, out _);
+                    _unreachableServerCounts.TryRemove(serverStr);
                     _unreachableBag.Remove(serverStr); // recovered — don't persist the old count
                 }
                 return result;
@@ -483,7 +503,7 @@ public class DnsResolverService
                 AddError($"DNS query to {server} failed for {type} {domain}: {ex.Message}");
                 var updated = _unreachableServerCounts.AddOrUpdate(serverStr,
                     (1, DateTime.UtcNow),
-                    (_, existing) => (existing.count + 1, DateTime.UtcNow));
+                    existing => (existing.count + 1, DateTime.UtcNow));
                 _unreachableBag.Add(serverStr, updated.count);
                 return EmptyResponse.Instance;
             }
@@ -689,9 +709,8 @@ public class DnsResolverService
 
     /// <summary>
     /// Import one record from a cache file. Keys are this service's own cache keys,
-    /// written verbatim by <see cref="CollectPendingWrites"/> — no disk-key
-    /// translation, unlike the legacy per-type files. Returns false when the record
-    /// belongs to another service.
+    /// written verbatim by <see cref="CollectPendingWrites"/>, so there is no disk-key
+    /// translation. Returns false when the record belongs to another service.
     /// </summary>
     public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
@@ -720,13 +739,14 @@ public class DnsResolverService
                 case CacheTypes.Unreachable:
                 {
                     var count = value.Deserialize<int>();
-                    _unreachableServerCounts.TryAdd(key, (count, DateTime.UtcNow));
+                    _unreachableServerCounts.TryAdd(key, (count, DateTime.UtcNow), expiresUtc);
                     return true;
                 }
                 case CacheTypes.Axfr:
                 {
                     var parts = key.Split('|', 2);
-                    if (parts.Length == 2) _axfrCache.TryAdd((parts[0], parts[1]), value.Deserialize<bool>());
+                    if (parts.Length == 2)
+                        _axfrCache.TryAdd((parts[0], parts[1]), value.Deserialize<bool>(), expiresUtc);
                     return true;
                 }
                 default:

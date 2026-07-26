@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 
 namespace Ednsv.Core.Services;
@@ -17,13 +16,15 @@ namespace Ednsv.Core.Services;
 /// interval of these notes, so an affected domain's next targeted recheck bypasses
 /// nothing and serves from cache — a recheck less aggressive than asked for, not a
 /// wrong answer. The running process is unaffected, since the map is updated inline,
-/// and a graceful shutdown flushes. Folding it in also fixes its unbounded growth for
-/// free, because queued entries carry an expiry and the old file never expired
-/// anything.</para>
+/// and a graceful shutdown flushes.</para>
+///
+/// <para>The map expires on the configured TTL, so a summary cannot outlive the probe
+/// results a recheck decision would be made against. The file it replaced expired
+/// nothing at all, and recheck decisions could rest on month-old records.</para>
 /// </summary>
 public sealed class DomainResultStore
 {
-    private readonly ConcurrentDictionary<string, DomainResultSummary> _results = new();
+    private readonly ExpiringMap<string, DomainResultSummary> _results;
     private readonly WriteBag<DomainResultSummary> _bag;
 
     /// <param name="persist">False when there is no disk tier configured: the map is
@@ -31,28 +32,40 @@ public sealed class DomainResultStore
     /// nothing is queued for a write that will never happen.</param>
     public DomainResultStore(TimeSpan? ttl, bool persist = true)
     {
+        _results = new ExpiringMap<string, DomainResultSummary>(ttl);
         _bag = new WriteBag<DomainResultSummary>(ttl, persist);
     }
 
-    /// <summary>Every summary this process knows, keyed by lowercased domain.</summary>
-    public ConcurrentDictionary<string, DomainResultSummary> Results => _results;
+    /// <summary>Every live summary this process knows, keyed by lowercased domain. A
+    /// snapshot: expired entries are already excluded, and it does not track later
+    /// writes.</summary>
+    public Dictionary<string, DomainResultSummary> Results
+        => _results.Snapshot().ToDictionary(kv => kv.Key, kv => kv.Value);
+
+    /// <summary>How many summaries are held. Expired ones do not count.</summary>
+    public int Count => _results.Count;
 
     /// <summary>Record a validation that just completed. Queued for the next flush.</summary>
     public void Set(string domain, DomainResultSummary summary)
     {
         var key = domain.ToLowerInvariant();
-        _results[key] = summary;
+        _results.Set(key, summary);
         _bag.Add(key, summary);
     }
 
     /// <summary>
     /// Take a summary read from disk. Memory only — it is already persisted — and
     /// add-if-absent, so a validation that completed while the background load was
-    /// running keeps its result rather than being overwritten by an older one, and a
-    /// record file beats a legacy file for the same domain.
+    /// running keeps its result rather than being overwritten by an older one.
+    ///
+    /// <para><paramref name="expiresUtc"/> is the expiry stamped on the record, kept
+    /// rather than replaced with a fresh full TTL so a nearly-dead summary is not
+    /// resurrected for another whole period.</para>
     /// </summary>
-    public bool Import(string domain, DomainResultSummary summary)
-        => _results.TryAdd(domain.ToLowerInvariant(), summary);
+    public bool Import(string domain, DomainResultSummary summary, DateTime? expiresUtc = null)
+        => expiresUtc.HasValue
+            ? _results.TryAdd(domain.ToLowerInvariant(), summary, expiresUtc.Value)
+            : _results.TryAdd(domain.ToLowerInvariant(), summary);
 
     public bool TryGet(string domain, out DomainResultSummary summary)
         => _results.TryGetValue(domain.ToLowerInvariant(), out summary!);

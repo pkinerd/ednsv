@@ -10,6 +10,7 @@ flowchart TD
         direction TB
         PC["ProbeCache&lt;T&gt;<br/><i>MemoryCache, per-entry TTL</i>"]
         DEDUP["In-Flight Deduplication<br/><i>Lazy&lt;Task&lt;T&gt;&gt; per key</i>"]
+        EM["ExpiringMap&lt;K,V&gt;<br/><i>RCPT, relay, AXFR,<br/>unreachable, summaries</i>"]
         PC --> DEDUP
     end
 
@@ -38,6 +39,7 @@ flowchart TD
     PC -->|"write-through, if shouldPersist"| REDIS
 
     PC -->|"write bag, if shouldPersist"| BG["BackgroundCacheFlusher<br/><i>timer only</i>"]
+    EM -->|"WriteBag&lt;T&gt;"| BG
     BG -->|"drain bags → one new file"| DCACHE
 
     CM["CacheManager"] -->|"LoadAsync<br/><i>background, at startup</i>"| DCACHE
@@ -123,7 +125,7 @@ This is how transient failures are kept out of the on-disk cache while still avo
 | `SmtpProbeService._portCache` | port was open OR at least one attempt got a definitive refusal |
 | `HttpProbeService._getCache` / `_getWithHeadersCache` | `result.Success || result.StatusCode > 0` (any HTTP status counts as definitive; only network-level failures with status 0 are skipped) |
 
-Predicates that aren't supplied (`AXFR`, in-flight RCPT/relay caches that use raw `ConcurrentDictionary`) follow the same intent in their own code: only definitive results are stored.
+Predicates that aren't supplied (`AXFR`, and the RCPT/relay caches, which are an `ExpiringMap`) follow the same intent in their own code: only definitive results are stored.
 
 ### `onHit` Callback
 
@@ -143,7 +145,7 @@ That last exclusion is the one that mattered: an import that fed back into the w
 
 A flush snapshots the bag, writes those records, and removes **exactly what it wrote**, matched by reference. Nothing leaves the bag until the file has landed, so a failed write simply retries next tick, and a fresher value that arrived for the same key mid-write survives. `BagEntry` states its reference equality explicitly rather than inheriting it: `ConcurrentDictionary.TryRemove(KeyValuePair)` compares values with `EqualityComparer<T>.Default`, so any value-based equality there would let a flush silently delete the newer entry that replaced the one it persisted.
 
-The four caches that live in plain dictionaries rather than a `ProbeCache` — RCPT probes, relay tests, AXFR results and unreachable-server counts — carry a `WriteBag<T>` for the same reason. Serialising them whole on each flush would mean a flush always found something to write, which defeats the dirty-flag behaviour below.
+The four caches that live in an `ExpiringMap` rather than a `ProbeCache` — RCPT probes, relay tests, AXFR results and unreachable-server counts — carry a `WriteBag<T>` for the same reason. Serialising them whole on each flush would mean a flush always found something to write, which defeats the dirty-flag behaviour below.
 
 ### Value-Type Variant
 
@@ -257,7 +259,7 @@ Pod-name reuse is not a hazard in either direction: Deployment names are never r
 
 **Files are still swept, after a 24-hour floor.** The two tiers are not symmetric, and the difference is easy to miss:
 
-- **Memory is self-bounding.** `MemoryCache` is keyed, so the working set is the number of *distinct* keys — bounded by the domains checked. Refetching a key replaces its entry.
+- **Memory is self-bounding.** Both memory primitives are keyed — `MemoryCache` in a `ProbeCache`, a `ConcurrentDictionary` in an `ExpiringMap` — so the working set is the number of *distinct* keys, bounded by the domains checked. Refetching a key replaces its entry.
 - **Disk is append-only by design.** Every flush writes a new immutable file, so a key fetched again later appears *again* in a later file rather than replacing anything. Rechecks refetch on purpose, and each instance writes its own copy of what it fetched. Nothing collapses those duplicates — the sweep is the only thing that ever removes them.
 
 So switching the sweep off along with expiry would grow the directory without bound while memory stayed flat. `DiskCacheService.UncappedRetention` is the floor that prevents it; at a ten-minute flush that is 145 files per instance, which is where the file-count arithmetic below still lands comfortably. Startup logs the floor rather than leaving it to be discovered from a file listing.
@@ -299,8 +301,9 @@ It is a cheap heuristic for the case that actually hurts, not a consistency mech
 
 Two shapes appear here, and the difference matters for both persistence and recheck:
 a `ProbeCache<T>`, which owns a MemoryCache, an in-flight dedup map, a write bag and
-an optional Redis L2; and a plain `ConcurrentDictionary` paired with a `WriteBag<T>`,
-which owns none of that and is read with a direct `TryGetValue`.
+an optional Redis L2; and an `ExpiringMap<K,V>`, usually paired with a `WriteBag<T>`,
+which owns none of that and is read with a direct `TryGetValue`. Both expire on
+`CacheTtlHours`.
 
 ### DnsResolverService
 | Cache | Type | Key format | Recheck |
@@ -308,17 +311,18 @@ which owns none of that and is read with a direct `TryGetValue`.
 | `_queryCache` | `ProbeCache<IDnsQueryResponse>` | `q:domain:queryType` | `CacheDep.Dns` |
 | `_ptrCache` | `ProbeCache<List<string>>` | `ptr:ip` | `CacheDep.Ptr` |
 | `_serverQueryCache` | `ProbeCache<IDnsQueryResponse>` | `sq:server:domain:queryType` | `CacheDep.ServerDns` |
-| `_axfrCache` + `_axfrBag` | `ConcurrentDictionary<(ip,domain), bool>` | `ip\|domain` on disk | **not bypassed** |
-| `_axfrResponseCache` | `ConcurrentDictionary<(ip,domain), IDnsQueryResponse>` | tuple | not persisted, not bypassed |
-| `_unreachableServerCounts` + `_unreachableBag` | `ConcurrentDictionary<string, (count, lastFailure)>` | server IP | not bypassed — see *Unreachable-server decay* |
+| `_axfrCache` + `_axfrBag` | `ExpiringMap<(ip,domain), bool>` | `ip\|domain` on disk | **not bypassed** |
+| `_axfrResponseCache` | `ExpiringMap<(ip,domain), IDnsQueryResponse>` | tuple | not persisted, not bypassed |
+| `_unreachableServerCounts` + `_unreachableBag` | `ExpiringMap<string, (count, lastFailure)>` | server IP | not bypassed — see *Unreachable-server decay* |
+| `_serverClients` | `ExpiringMap<string, LookupClient>` | server IP | n/a — a client pool, not results |
 
 ### SmtpProbeService
 | Cache | Type | Key format | Recheck |
 |-------|------|-----------|---------|
 | `_probeCache` | `ProbeCache<SmtpProbeResult>` | `smtp:host:port` | `CacheDep.Smtp` |
 | `_portCache` | `ProbeCacheValue<bool>` | `port:host:port` | `CacheDep.Port` |
-| `_rcptCache` + `_rcptBag` | `ConcurrentDictionary<string, (accepted, response)>` | `host\|email` | **not bypassed** |
-| `_relayCache` + `_relayBag` | `ConcurrentDictionary<string, (isRelay, description)>` | `relay:host\|domain` | **not bypassed** |
+| `_rcptCache` + `_rcptBag` | `ExpiringMap<string, (accepted, response)>` | `host\|email` | **not bypassed** |
+| `_relayCache` + `_relayBag` | `ExpiringMap<string, (isRelay, description)>` | `relay:host\|domain` | **not bypassed** |
 
 ### HttpProbeService
 | Cache | Type | Key format | Recheck |
@@ -326,34 +330,59 @@ which owns none of that and is read with a direct `TryGetValue`.
 | `_getCache` | `ProbeCache<GetResult>` | `url` (or `url\nAccept:<media-type>` for `GetWithAcceptAsync`) | `CacheDep.Http` |
 | `_getWithHeadersCache` | `ProbeCache<GetWithHeadersResult>` | `url` | `CacheDep.Http` |
 
+`DomainResultStore` holds one more: `ExpiringMap<string, DomainResultSummary>` keyed by
+lowercased domain, plus its own `WriteBag`.
+
 Only `_probeCache`, `_queryCache`, `_serverQueryCache`, `_ptrCache`, `_getCache` and
-`_getWithHeadersCache` have a Redis L2; `_portCache` and the plain dictionaries are L1
+`_getWithHeadersCache` have a Redis L2; `_portCache` and the `ExpiringMap` caches are L1
 and disk only, so they are never shared between instances.
 
-### Known gap: recheck does not reach the plain dictionaries
+### ExpiringMap
+
+Seven caches are not a `ProbeCache`, and until recently that meant they were plain
+`ConcurrentDictionary` fields with **no expiry at all**: an entry lived for the life of
+the process, so the working set grew with every distinct key the process had ever seen.
+The two AXFR caches were the worst of it — a zone transfer response is the largest thing
+this service holds, kept per `(nameserver, domain)` — and `_serverClients` held a
+`LookupClient`, and its socket pool, per nameserver IP ever queried.
+
+`ExpiringMap<K,V>` is a `ConcurrentDictionary` of value-plus-expiry. It is not a
+`MemoryCache` because three of those callers need something MemoryCache does not offer:
+an atomic read-modify-write (the unreachable-server counter), a non-string key (the AXFR
+caches are keyed by a tuple), and enumeration of what is live (the domain summaries).
+
+Two mechanisms, doing two different jobs:
+
+- **Expiry is enforced on read.** An entry past its expiry is a miss and is removed as it
+  is found, so the TTL holds exactly whether or not anything has swept. Read-side removal
+  matches the whole entry, so a fresher value written in between survives.
+- **A prune every 256 writes bounds memory**, for keys written once and never read again.
+  Tying it to writes rather than a timer means a map nobody writes to needs no upkeep,
+  since it cannot be growing either. `AllocatedCount` minus `Count` is the resulting lag.
+
+An import keeps the expiry stamped on its record rather than getting a fresh full TTL, so
+a nearly-dead entry is not resurrected — and one already past its expiry is refused. A
+null TTL (`CacheTtlHours=0`) means no expiry, exactly as it does everywhere else.
+
+`_serverClients` is a pool rather than a cache, so expiry there means only that a client
+unused for a whole TTL is rebuilt on next use — a trade of one socket-pool reconstruction
+against unbounded retention.
+
+### Known gap: recheck does not reach the ExpiringMap caches
 
 `CacheDep.Rcpt` exists, and `RecheckHelper` maps the **Postmaster** and **Abuse**
 categories to it — but nothing consults it. `_rcptCache`, `_relayCache` and `_axfrCache`
 are read with a bare `TryGetValue`, with no `RecheckHelper` check, so a recheck does not
-refetch them. Within a process, once one of those results is cached it is served for the
-process lifetime: those dictionaries have no TTL of their own either.
+refetch them.
 
 The relay cache has the same problem by a different route: `CacheDep.Smtp` refreshes
 `_probeCache`, but `TestRelayAsync` reads `_relayCache` directly, so a recheck of an SMTP
 finding re-probes the handshake and reuses the cached relay verdict. `_axfrCache` was
 never wired to a flag at all.
 
-All nine `Remove*Entries` methods on the three services — including
-`RemoveRcptEntries` and `RemoveRelayEntries`, which used to clear these — now have
-**no callers**. The last went in commit `5277d94`, which unified CLI and web rechecks
-onto the AsyncLocal bypass and left the plain dictionaries behind. They would not work
-as written anyway: they iterate the write bag, which since it replaced `_exportLog`
-holds only entries not yet flushed rather than everything cached.
-
 Practical effect: `--recheck` on a Postmaster or Abuse finding re-runs the check but
-reuses the cached RCPT verdict, and restarting the process is the only way to clear it.
-Documented rather than quietly fixed — closing it is a behaviour change, not a docs
-correction.
+reuses the cached RCPT verdict until it expires on its own. Documented rather than
+quietly fixed — closing it is a behaviour change, not a docs correction.
 
 ### Unreachable-server decay
 

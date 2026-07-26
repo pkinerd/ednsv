@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Ednsv.Core.Models;
 
 namespace Ednsv.Core.Services;
@@ -163,10 +162,9 @@ public sealed class CacheManager : IAsyncDisposable
         return RecheckHelper.GetDependenciesForIssues(summary, minSeverity);
     }
 
-    /// <summary>
-    /// Previous domain results loaded from the cache (for recheck decisions).
-    /// </summary>
-    public ConcurrentDictionary<string, DomainResultSummary> PreviousResults => _domainResults.Results;
+    /// <summary>How many domain summaries are held for recheck decisions. Expired ones
+    /// do not count.</summary>
+    public int DomainResultCount => _domainResults.Count;
 
     public async ValueTask DisposeAsync()
     {
