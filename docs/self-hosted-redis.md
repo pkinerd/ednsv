@@ -70,9 +70,11 @@ The widely adopted, well-trodden choices for self-hosting:
 Both are packaged as official container images and as Helm charts (Bitnami's are the
 most commonly used for either). Either is a boring, safe choice.
 
-Others exist — KeyDB, Redict, Microsoft's Garnet, Dragonfly among them — with varying
-maturity, activity and RESP coverage. They are viable but less trodden; see *Checking a
-substitute* below before adopting one.
+Others exist — KeyDB, Redict, Microsoft's Garnet, Dragonfly among them. **Garnet** is
+worth a mention for a .NET shop: MIT-licensed, from Microsoft Research, written in .NET,
+and it passes every compatibility check in this repository (see below). What the others
+cost you is familiarity — fewer runbooks, fewer people who have operated them, less
+material when something misbehaves at 3am — not compatibility with this application.
 
 **On licensing:** these projects sit under a mix of licences (BSD, AGPL, LGPL, MIT and
 source-available terms), and the terms have changed more than once in recent years.
@@ -228,6 +230,27 @@ dotnet test tests/Ednsv.Core.Tests --filter "FullyQualifiedName~LiveRedis|FullyQ
 Green means the server does everything this application asks of it. The compare-and-set
 in `LiveRedisLeaseTests` is the one to watch: it is the only operation beyond simple
 string commands, and the most likely gap in a partial RESP implementation.
+
+### Results
+
+Run in July 2026, each server started with the flags in the manifest above:
+
+| Server | Version | Harness | Beacon CAS | Full validation | Re-warm after `FLUSHALL` |
+|---|---|---|---|---|---|
+| Redis | 7.0.15 | 31/31 | honoured | 162 keys | 169 keys republished |
+| Valkey | 7.2.13 | 31/31 | honoured | 162 keys | 169 keys republished |
+| Garnet | 2.1.0 | 31/31 | honoured | 162 keys | 169 keys republished |
+
+Identical on every measure. *Beacon CAS* was checked separately from the harness, at
+protocol level: a transaction carrying a **stale** `Condition.StringEqual` must be
+rejected and a correct one must commit. All three reject and commit as required, so
+config and user writes are safe on any of them. Both alternatives report a
+`redis_version` for client compatibility — Valkey 7.2.4, Garnet 7.4.3 — which is why
+`StackExchange.Redis` connects unchanged.
+
+What this does **not** cover: behaviour under sustained load, memory behaviour at the
+`maxmemory` boundary, TLS, or cluster mode. None of those are exercised by this
+application's usage, but none of them were measured either.
 
 ## Why there is no first-party coordinator
 
