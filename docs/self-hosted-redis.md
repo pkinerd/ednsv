@@ -55,6 +55,29 @@ deployments.
 
 ## Eviction policy
 
+### What the defaults give you
+
+Out of the box (verified on Redis 7.0.15 and Valkey 7.2.13):
+
+| Setting | Default | Consequence here |
+|---|---|---|
+| `maxmemory` | **`0` — no limit** | Nothing is ever evicted. The server grows until the container's memory limit kills it. |
+| `maxmemory-policy` | **`noeviction`** | Irrelevant while `maxmemory` is `0`, and safe for the coordination keys once it is not. |
+| `save` | **`3600 1 300 100 60 10000`** | RDB snapshots are **on by default** — periodic disk writes of data that is worthless. This is why the manifests pass `--save ""`. |
+| `appendonly` | `no` | Already what you want. |
+
+So the out-of-the-box failure mode is not eviction, it is an **OOMKill**: the pod is
+killed and restarted, which drops every key including the coordination ones, along with
+any in-flight jobs. The application recovers — that is the documented failure model — but
+abruptly, and at a moment of its choosing rather than yours.
+
+Setting `maxmemory` converts that into graceful, continuous eviction. That is the
+improvement, and it is also what makes the policy matter: **the danger described below
+only exists once you set `maxmemory`.** The default would never have evicted a
+coordination key, because it never evicts anything.
+
+### Which policy
+
 **Use `volatile-lru`.** The reason is that not every key here is a cache entry:
 
 | Key | TTL | Written | Read | Size | Count |
@@ -142,9 +165,13 @@ most commonly used for either). Either is a boring, safe choice.
 
 Others exist — KeyDB, Redict, Microsoft's Garnet, Dragonfly among them. **Garnet** is
 worth a mention for a .NET shop: MIT-licensed, from Microsoft Research, written in .NET,
-and it passes every compatibility check in this repository (see below). What the others
-cost you is familiarity — fewer runbooks, fewer people who have operated them, less
-material when something misbehaves at 3am — not compatibility with this application.
+and it passes every compatibility check in this repository (see below). Note that it does
+not implement `maxmemory` or `maxmemory-policy` at all — it bounds memory through its own
+options instead — so the eviction guidance above does not transfer, and you would need to
+work out the equivalent from its documentation. That is the shape of what the less common
+servers cost: not wire compatibility, but familiarity and transferable operational
+knowledge — fewer runbooks, fewer people who have run them, less material when something
+misbehaves at 3am.
 
 **On licensing:** these projects sit under a mix of licences (BSD, AGPL, LGPL, MIT and
 source-available terms), and the terms have changed more than once in recent years.
