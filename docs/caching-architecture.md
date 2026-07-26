@@ -257,6 +257,8 @@ Pod-name reuse is not a hazard in either direction: Deployment names are never r
 
 `CacheTtlHours=0` disables expiry: values never expire in memory, per-entry expiry is not stamped, and the load reads whatever is on disk without a staleness cutoff.
 
+**The two bounded tiers keep a floor.** Disk files are still swept after 24 hours, and Redis keys are still written with a 24-hour lifetime rather than none — `DiskCacheService.UncappedRetention` is the single constant behind both. Memory can be told never to expire because it is keyed and so bounded by distinct domains; a shared Redis allocation and an append-only directory cannot. A Redis key with no TTL is also invisible to a `volatile-*` eviction policy, so an unbounded write there does not merely grow the cache — it removes the server's ability to shed it. See [self-hosted-redis.md](self-hosted-redis.md) → *Eviction policy*.
+
 **Files are still swept, after a 24-hour floor.** The two tiers are not symmetric, and the difference is easy to miss:
 
 - **Memory is self-bounding.** Both memory primitives are keyed — `MemoryCache` in a `ProbeCache`, a `ConcurrentDictionary` in an `ExpiringMap` — so the working set is the number of *distinct* keys, bounded by the domains checked. Refetching a key replaces its entry.

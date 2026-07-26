@@ -36,6 +36,21 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     /// <summary>True when the backing Redis connection is configured.</summary>
     public bool Enabled => _redis.Enabled;
 
+    /// <summary>
+    /// The lifetime a value written now would get. With a TTL configured that is the
+    /// TTL; without one it is <see cref="DiskCacheService.UncappedRetention"/>, the same
+    /// floor the disk tier applies for the same reason.
+    ///
+    /// <para><c>CacheTtlHours=0</c> means "do not expire" for the memory tier, which is
+    /// keyed and therefore self-bounding. Redis is neither: it is a fixed, and usually
+    /// small, allocation shared by every pod. Writing keys there with no expiry at all
+    /// left the shared cache growing until something evicted it — and left the
+    /// <c>volatile-*</c> eviction policies with nothing they were allowed to evict, so a
+    /// full server rejected writes outright instead of shedding a cache entry.</para>
+    /// </summary>
+    private TimeSpan LifetimeFor(TimeSpan? ttl)
+        => ttl is { } t && t > TimeSpan.Zero ? t : DiskCacheService.UncappedRetention;
+
     /// <summary>Read a value from the L2, or null on miss / any error.</summary>
     public async Task<TValue?> TryGetAsync(string key)
     {
@@ -62,7 +77,11 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         try { payload = _serialize(value); }
         catch { return; }
         if (payload == null) return;
-        try { db.StringSet(_redis.Key(_prefix + key), payload, entryTtl ?? _ttl, flags: CommandFlags.FireAndForget); }
+        try
+        {
+            db.StringSet(_redis.Key(_prefix + key), payload, LifetimeFor(entryTtl ?? _ttl),
+                flags: CommandFlags.FireAndForget);
+        }
         catch { /* best effort — an L2 write failure just means the next pod refills */ }
     }
 
@@ -80,6 +99,15 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     public void SetIfAbsent(string key, TValue value, TimeSpan ttl)
     {
         if (ttl <= TimeSpan.Zero) return;
+
+        // Capped at what a fresh write would get, so the same entry does not end up with
+        // a different lifetime depending on which path published it. Without this an
+        // entry carrying no expiry — a record written by a process running with
+        // CacheTtlHours=0, or an L1 entry whose expiry is DateTime.MaxValue — arrived
+        // here as a remaining life of nearly eight thousand years, and Redis stored it.
+        var max = LifetimeFor(_ttl);
+        if (ttl > max) ttl = max;
+
         var db = _redis.GetDatabase();
         if (db == null) return;
         string? payload;

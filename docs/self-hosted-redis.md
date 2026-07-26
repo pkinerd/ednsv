@@ -82,7 +82,7 @@ coordination key, because it never evicts anything.
 
 | Key | TTL | Written | Read | Size | Count |
 |---|---|---|---|---|---|
-| `{instance}:cache:{type}:{key}` | `CacheTtlHours` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
+| `{instance}:cache:{type}:{key}` | `CacheTtlHours`, or 24h when that is `0` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
 | `{instance}:job:{id}` | minutes | ~87× per validation | on each status poll | a few KB | tens |
 | `{instance}:config:head` | **none** | on a config change | every freshness check (memoised ~1s) | ~36 B | 1 |
 | `{instance}:users:head` | **none** | on a user change | every auth freshness check | ~36 B | 1 |
@@ -133,16 +133,21 @@ Not an outage, which is why this is easy to miss:
 | `allkeys-lru` / `allkeys-lfu` / `allkeys-random` | Avoid. LFU is the worst of the three: these keys have the lowest access frequency in the entire keyspace. |
 | `noeviction` | Safe for the coordination keys, and it fails loudly rather than quietly — but when full, cache write-through is fire-and-forget so it degrades silently anyway, while job writes fail and validations become unpollable. Only sensible if you are confident in the sizing. |
 
-### One prerequisite
+### Every key here is evictable, including under `CacheTtlHours=0`
 
-`volatile-lru` needs something volatile to evict. **Keep `CacheTtlHours` above zero** —
-the default is 2. Setting it to `0` disables expiry, cache entries are then written with
-no TTL, and a full server has almost nothing it may evict: measured, 15,274 of 20,000
-writes were rejected with `OOM command not allowed when used memory > 'maxmemory'`.
+`volatile-lru` only evicts keys that carry a TTL, so it is worth knowing that the shared
+cache never writes one without. `CacheTtlHours=0` means "do not expire" for the memory
+tier — which is safe there, because it is keyed and so bounded by the number of distinct
+domains — but Redis is a fixed allocation shared by every pod. Keys written there always
+get a lifetime: the configured TTL, or a **24-hour floor** when there is none, the same
+floor and the same reasoning the disk tier uses (`DiskCacheService.UncappedRetention`).
 
-If you genuinely want `CacheTtlHours=0` on a multi-pod deployment, size `maxmemory`
-generously and use `noeviction` so the failure is explicit rather than a silently
-half-populated cache.
+The floor is a fallback, not a cap. `CacheTtlHours=168` puts a week on the Redis keys
+too; only "no expiry at all" is translated into something finite.
+
+Measured with `CacheTtlHours=0`, `maxmemory 3mb`, `volatile-lru`: keys land with an
+86,394-second TTL, 26,334 of them evict cleanly under pressure with **zero write
+errors**, and both coordination keys survive.
 
 ## Which server
 
