@@ -82,7 +82,7 @@ coordination key, because it never evicts anything.
 
 | Key | TTL | Written | Read | Size | Count |
 |---|---|---|---|---|---|
-| `{instance}:cache:{type}:{key}` | `CacheTtlHours`, or 24h when that is `0` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
+| `{instance}:cache:{type}:{key}` | `CacheTtlHours`, or the 24h L2 floor when that is `0` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
 | `{instance}:job:{id}` | minutes | ~87× per validation | on each status poll | a few KB | tens |
 | `{instance}:config:head` | **none** | on a config change | every freshness check (memoised ~1s) | ~36 B | 1 |
 | `{instance}:users:head` | **none** | on a user change | every auth freshness check | ~36 B | 1 |
@@ -148,8 +148,15 @@ lost-beacon path is written to assume it will happen:
 cache never writes one without. `CacheTtlHours=0` means "do not expire" for the memory
 tier — which is safe there, because it is keyed and so bounded by the number of distinct
 domains — but Redis is a fixed allocation shared by every pod. Keys written there always
-get a lifetime: the configured TTL, or a **24-hour floor** when there is none, the same
-floor and the same reasoning the disk tier uses (`DiskCacheService.UncappedRetention`).
+get a lifetime: the configured TTL, or a **24-hour floor** when there is none
+(`ProbeCacheL2.UncappedLifetime`).
+
+A day is the right size for what the L2 is *for*: sharing work a sibling pod has just
+done, and warming a pod that has just come back. Both are about recent results — a
+running pod reads its own L1 first and never consults this — so a longer floor would
+multiply the working set of a fixed allocation to hold entries nobody profits from. The
+disk tier has a floor of its own that happens to be the same number for unrelated
+reasons; they are separate constants precisely so this one can be sized against Redis.
 
 The floor is a fallback, not a cap. `CacheTtlHours=168` puts a week on the Redis keys
 too; only "no expiry at all" is translated into something finite.

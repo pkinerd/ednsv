@@ -10,8 +10,9 @@ namespace Ednsv.Core.Tests;
 /// allocation shared by every pod, so the same setting there meant keys that never
 /// aged out — and, because a <c>volatile-*</c> eviction policy may only evict keys
 /// carrying a TTL, a full server with none of them rejected writes rather than shedding
-/// a cache entry. The disk tier already had a floor for exactly this
-/// (<see cref="DiskCacheService.UncappedRetention"/>); this is the same floor.</para>
+/// a cache entry. So the L2 carries its own floor,
+/// <see cref="ProbeCacheL2.UncappedLifetime"/> — the disk tier's floor is a separate
+/// constant solving a separate problem, and these tests pin this one.</para>
 ///
 /// <para>Needs a real Redis; self-skips without one.</para>
 /// </summary>
@@ -75,7 +76,7 @@ public sealed class L2LifetimeTests
 
         var ttl = await TtlOfAsync(redis, "k");
         Assert.NotNull(ttl);
-        AssertNear(DiskCacheService.UncappedRetention, ttl!.Value);
+        AssertNear(ProbeCacheL2.UncappedLifetime, ttl!.Value);
     }
 
     [Fact]
@@ -123,7 +124,7 @@ public sealed class L2LifetimeTests
 
         var ttl = await TtlOfAsync(redis, "k");
         Assert.NotNull(ttl);
-        AssertNear(DiskCacheService.UncappedRetention, ttl!.Value);
+        AssertNear(ProbeCacheL2.UncappedLifetime, ttl!.Value);
     }
 
     [Fact]

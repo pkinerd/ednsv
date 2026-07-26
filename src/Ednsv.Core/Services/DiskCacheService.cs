@@ -103,7 +103,16 @@ public class DiskCacheService
     /// instance at a ten-minute flush.</para>
     ///
     /// <para>Only <i>retention</i> is capped. Reading stays uncapped, so whatever
-    /// survives on disk is still loaded in full.</para>
+    /// survives on disk is still loaded in full. That makes this floor the <i>only</i>
+    /// staleness bound in this mode: with no TTL the load applies no cutoff of its own
+    /// and the writer stamps no per-entry expiry, so what the sweep leaves is what gets
+    /// served after a restart.</para>
+    ///
+    /// <para>This is the disk tier's floor and nothing else's. The shared L2 has its own
+    /// (<see cref="ProbeCacheL2.UncappedLifetime"/>), currently the same number for
+    /// entirely different reasons — see there. They are deliberately separate: the two
+    /// tiers are configured independently, and in the recommended layouts they are not
+    /// even used together.</para>
     /// </summary>
     public static readonly TimeSpan UncappedRetention = TimeSpan.FromHours(24);
 

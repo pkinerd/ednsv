@@ -257,7 +257,14 @@ Pod-name reuse is not a hazard in either direction: Deployment names are never r
 
 `CacheTtlHours=0` disables expiry: values never expire in memory, per-entry expiry is not stamped, and the load reads whatever is on disk without a staleness cutoff.
 
-**The two bounded tiers keep a floor.** Disk files are still swept after 24 hours, and Redis keys are still written with a 24-hour lifetime rather than none — `DiskCacheService.UncappedRetention` is the single constant behind both. Memory can be told never to expire because it is keyed and so bounded by distinct domains; a shared Redis allocation and an append-only directory cannot. A Redis key with no TTL is also invisible to a `volatile-*` eviction policy, so an unbounded write there does not merely grow the cache — it removes the server's ability to shed it. See [self-hosted-redis.md](self-hosted-redis.md) → *Eviction policy*.
+**The two bounded tiers keep a floor, and they are separate floors.** Memory can be told never to expire because it is keyed and so bounded by distinct domains; a shared Redis allocation and an append-only directory cannot. Both currently land on 24 hours, for reasons that have nothing to do with each other:
+
+| Tier | Constant | Why it cannot honour "never" |
+|---|---|---|
+| Disk | `DiskCacheService.UncappedRetention` | Every flush appends a new file and nothing dedupes them, so the sweep is the only thing that removes anything. It is also the *only* staleness bound in this mode — the load applies no cutoff of its own and the writer stamps no per-entry expiry, so what the sweep leaves is what gets served after a restart. |
+| Redis | `ProbeCacheL2.UncappedLifetime` | A fixed allocation shared by every pod, and a key with no TTL is invisible to a `volatile-*` eviction policy — so writing without one does not merely grow the cache, it removes the server's ability to shed it. The useful window is short anyway: a running pod reads its own L1 first and never consults the L2. See [self-hosted-redis.md](self-hosted-redis.md) → *Eviction policy*. |
+
+They are deliberately not one constant. The tiers are configured independently, and in the recommended layouts they are not even used together — a single instance runs the disk tier without Redis, and a multi-pod deployment runs Redis with `CacheDir=none`. Sharing a number meant a change made for one silently resized the other.
 
 **Files are still swept, after a 24-hour floor.** The two tiers are not symmetric, and the difference is easy to miss:
 

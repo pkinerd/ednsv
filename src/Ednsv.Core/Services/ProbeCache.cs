@@ -5,6 +5,40 @@ using StackExchange.Redis;
 
 namespace Ednsv.Core.Services;
 
+/// <summary>Policy that belongs to the shared L2 itself rather than to any one
+/// value type it caches.</summary>
+public static class ProbeCacheL2
+{
+    /// <summary>
+    /// The lifetime given to shared-cache keys when no TTL is configured
+    /// (<c>CacheTtlHours=0</c>).
+    ///
+    /// <para><b>Why the L2 cannot honour "never expire".</b> Two reasons, both specific
+    /// to Redis. It is a fixed allocation shared by every pod, so unbounded writes grow
+    /// until something evicts them — and a key with no TTL is invisible to a
+    /// <c>volatile-*</c> policy, which is what the deployment guidance recommends
+    /// precisely so the coordination keys stay exempt. Writing without an expiry
+    /// therefore does not merely grow the cache; it removes the server's ability to shed
+    /// it, and a full server rejects writes instead.</para>
+    ///
+    /// <para><b>Why a day.</b> The L2 exists to share work a sibling pod has just done
+    /// and to warm a pod that has just come back. Both are about recent results: a
+    /// running pod reads its own L1 first and never consults this, and a fresh pod
+    /// warming from a week-old entry has taken a cache miss it would rather have taken
+    /// honestly. A day covers the useful window at a seventh of the memory a week costs.</para>
+    ///
+    /// <para><b>Deliberately not shared with
+    /// <see cref="DiskCacheService"/>'s floor</b>, which happens to be the same number
+    /// for unrelated reasons — an append-only directory that nothing dedupes, and a load
+    /// path that applies no other staleness cutoff when expiry is off. The two tiers are
+    /// configured independently and, in the recommended layouts, are not even used
+    /// together: a single instance runs the disk tier without Redis, and a multi-pod
+    /// deployment runs Redis with <c>CacheDir=none</c>. Sharing one constant meant a
+    /// change made for one tier silently resized the other.</para>
+    /// </summary>
+    public static readonly TimeSpan UncappedLifetime = TimeSpan.FromHours(24);
+}
+
 /// <summary>
 /// Optional shared L2 for a <see cref="ProbeCache{T}"/>: a Redis-backed,
 /// per-key-TTL cache sitting behind the per-pod L1 <see cref="MemoryCache"/>.
@@ -37,19 +71,13 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     public bool Enabled => _redis.Enabled;
 
     /// <summary>
-    /// The lifetime a value written now would get. With a TTL configured that is the
-    /// TTL; without one it is <see cref="DiskCacheService.UncappedRetention"/>, the same
-    /// floor the disk tier applies for the same reason.
-    ///
-    /// <para><c>CacheTtlHours=0</c> means "do not expire" for the memory tier, which is
-    /// keyed and therefore self-bounding. Redis is neither: it is a fixed, and usually
-    /// small, allocation shared by every pod. Writing keys there with no expiry at all
-    /// left the shared cache growing until something evicted it — and left the
-    /// <c>volatile-*</c> eviction policies with nothing they were allowed to evict, so a
-    /// full server rejected writes outright instead of shedding a cache entry.</para>
+    /// The lifetime a value written now would get: the configured TTL, or
+    /// <see cref="ProbeCacheL2.UncappedLifetime"/> when expiry is switched off.
+    /// <c>CacheTtlHours=0</c> means "do not expire" for the memory tier, which is keyed
+    /// and therefore self-bounding; see that field for why the L2 cannot follow suit.
     /// </summary>
     private TimeSpan LifetimeFor(TimeSpan? ttl)
-        => ttl is { } t && t > TimeSpan.Zero ? t : DiskCacheService.UncappedRetention;
+        => ttl is { } t && t > TimeSpan.Zero ? t : ProbeCacheL2.UncappedLifetime;
 
     /// <summary>Read a value from the L2, or null on miss / any error.</summary>
     public async Task<TValue?> TryGetAsync(string key)
