@@ -36,14 +36,91 @@ public sealed class ProbeCacheBagTests
     }
 
     [Fact]
-    public void TheTimestampedImportOverloadIsAlsoMemoryOnly()
+    public void ImportWithAnExpiryIsAlsoMemoryOnly()
     {
         var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
 
-        cache.Import("k", "from-disk", DateTime.UtcNow.AddHours(-3));
+        cache.Import("k", "from-disk", DateTime.UtcNow.AddMinutes(5));
 
         Assert.True(cache.TryGet("k", out _));
         Assert.Empty(cache.Export());
+    }
+
+    [Fact]
+    public void ImportRefusesAnEntryAlreadyPastItsExpiry()
+    {
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(10));
+
+        Assert.False(cache.Import("expired", "stale", DateTime.UtcNow.AddSeconds(-1)));
+        Assert.False(cache.TryGet("expired", out _));
+    }
+
+    [Fact]
+    public async Task ImportExpiresAtTheEntrysOwnTimeNotAFreshTtl()
+    {
+        // An entry with a moment left must be cached for that moment, not handed a
+        // whole new TTL — otherwise every restart resurrects a nearly-dead value for
+        // another full period, indefinitely.
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(10));
+
+        Assert.True(cache.Import("brief", "v", DateTime.UtcNow.AddMilliseconds(200)));
+        Assert.True(cache.TryGet("brief", out _), "it should be cached until its own expiry");
+
+        await Task.Delay(500);
+
+        Assert.False(cache.TryGet("brief", out _),
+            "the entry outlived its record expiry — it was given the cache's TTL instead");
+    }
+
+    [Fact]
+    public async Task ImportDoesNotClobberAValueAlreadyFetched()
+    {
+        // The load runs in the background while the instance serves, so a validation
+        // can cache a key before the loader reaches it. That value came off the
+        // network just now; the disk copy did not.
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        await cache.GetOrCreateAsync("k", () => Fresh("from-network"));
+
+        Assert.False(cache.Import("k", "from-disk"));
+
+        Assert.True(cache.TryGet("k", out var got));
+        Assert.Equal("from-network", got);
+    }
+
+    [Fact]
+    public async Task ImportDoesNotClobberAFetchStillInFlight()
+    {
+        // A fetch that has not returned yet will cache its result on completion, so
+        // it counts as present — otherwise the import would land first and be
+        // immediately overwritten, which is harmless, or land second, which is not.
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(10));
+        var release = new TaskCompletionSource<string>();
+        var inflight = cache.GetOrCreateAsync("k", () => release.Task);
+
+        Assert.False(cache.Import("k", "from-disk"));
+
+        release.SetResult("from-network");
+        Assert.Equal("from-network", await inflight);
+        Assert.True(cache.TryGet("k", out var got));
+        Assert.Equal("from-network", got);
+    }
+
+    [Fact]
+    public async Task ValueCache_ImportDoesNotClobberOrResurrect()
+    {
+        var cache = new ProbeCacheValue<bool>(TimeSpan.FromHours(10));
+
+        Assert.True(cache.Import("k", true, DateTime.UtcNow.AddMinutes(5)));
+        Assert.False(cache.Import("k", false, DateTime.UtcNow.AddMinutes(5)));
+        Assert.True(cache.TryGet("k", out var v));
+        Assert.True(v);
+
+        Assert.False(cache.Import("dead", true, DateTime.UtcNow.AddSeconds(-1)));
+        Assert.False(cache.TryGet("dead", out _));
+
+        Assert.True(cache.Import("brief", true, DateTime.UtcNow.AddMilliseconds(200)));
+        await Task.Delay(500);
+        Assert.False(cache.TryGet("brief", out _));
     }
 
     [Fact]

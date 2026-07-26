@@ -304,10 +304,13 @@ public class DiskCacheService
     /// Loads caches from disk and primes the services. Returns null if the
     /// directory doesn't exist or contains no usable entries.
     ///
-    /// <para>Legacy per-type files are read first and the record files applied on
-    /// top, so a key present in both takes its newer value from the record files.
-    /// Within the record files the entry with the latest fetch time wins, which is
-    /// what merges several instances' folders into one view.</para>
+    /// <para>Record files are read first and the legacy per-type files second. Every
+    /// import is add-if-absent, so first writer wins and the ordering settles two
+    /// things at once: a record file beats a legacy file for the same key — the
+    /// legacy ones were frozen at upgrade — and a value fetched from the network
+    /// while this load runs beats both. Within the record files the entry with the
+    /// latest fetch time wins, which is what merges several instances' folders into
+    /// one view.</para>
     /// </summary>
     public static async Task<CacheLoadResult?> LoadAsync(string cacheDir, TimeSpan ttl, SmtpProbeService smtp,
         HttpProbeService http, DnsResolverService dns, bool retryErrors = false,
@@ -326,8 +329,8 @@ public class DiskCacheService
 
         var cutoff = DateTime.UtcNow - ttl;
 
-        var (legacy, legacyOldest) = await LoadLegacyAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
         var (records, recordOldest) = await LoadRecordFilesAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
+        var (legacy, legacyOldest) = await LoadLegacyAsync(cacheDir, cutoff, smtp, http, dns, domainResults, retryErrors);
 
         // Summed rather than de-duplicated. A key present in both models is counted
         // twice, which overstates the startup log line by however much overlap an
@@ -364,6 +367,13 @@ public class DiskCacheService
     /// which is this reader's configured cap: an entry written by a process running
     /// without a TTL carries no expiry of its own, and the reader's setting must
     /// still bound how stale a value it will accept.</para>
+    ///
+    /// <para><b>The payload is not parsed during the scan.</b> Reading the envelope
+    /// with a <see cref="Utf8JsonReader"/> and skipping <c>v</c> makes the scan
+    /// O(all lines) in cheap work, leaving the expensive part — rebuilding a full
+    /// <c>IDnsQueryResponse</c> per entry, which dominates the load — O(live keys).
+    /// Every superseded copy of a key across every instance's files, and everything
+    /// already expired, is discarded having never been deserialised.</para>
     /// </summary>
     private static async Task<(CacheLoadResult, DateTime)> LoadRecordFilesAsync(string cacheDir, DateTime cutoff,
         SmtpProbeService smtp, HttpProbeService http, DnsResolverService dns,
@@ -378,59 +388,125 @@ public class DiskCacheService
         if (files.Length == 0) return (result, oldest);
 
         var now = DateTime.UtcNow;
-        var winners = new Dictionary<(string Type, string Key), CacheRecord>();
+        // The winner's raw bytes, kept so the payload can be parsed once at the end.
+        var winners = new Dictionary<(string Type, string Key), (byte[] Line, DateTime WrittenUtc, DateTime ExpiresUtc)>();
 
         foreach (var path in files)
         {
-            string[] lines;
-            try { lines = await File.ReadAllLinesAsync(path); }
+            byte[] content;
+            try { content = await File.ReadAllBytesAsync(path); }
             catch { continue; }
 
-            foreach (var line in lines)
+            foreach (var line in EnumerateLines(content))
             {
-                if (line.Length == 0) continue;
+                if (!TryReadEnvelope(content.AsSpan(line.Start, line.Length),
+                        out var type, out var key, out var written, out var expires))
+                {
+                    continue; // one bad line must not lose the rest of the file
+                }
+                if (expires <= now || written < cutoff) continue;
 
-                CacheRecord? record;
-                try { record = JsonSerializer.Deserialize<CacheRecord>(line, RecordOptions); }
-                catch { continue; }
-
-                if (record == null || record.Type.Length == 0 || record.Key.Length == 0) continue;
-                if (record.ExpiresUtc <= now || record.WrittenUtc < cutoff) continue;
-
-                var id = (record.Type, record.Key);
-                if (winners.TryGetValue(id, out var seen) && seen.WrittenUtc >= record.WrittenUtc) continue;
-                winners[id] = record;
+                var id = (type, key);
+                if (winners.TryGetValue(id, out var seen) && seen.WrittenUtc >= written) continue;
+                winners[id] = (content[line.Start..(line.Start + line.Length)], written, expires);
             }
         }
 
-        foreach (var record in winners.Values)
+        foreach (var (id, winner) in winners)
         {
-            if (retryErrors && !PassesRetryFilter(record.Type, record.Value)) continue;
+            JsonNode? value;
+            try { value = JsonSerializer.Deserialize<CacheRecord>(winner.Line, RecordOptions)?.Value; }
+            catch { continue; }
+            if (value == null) continue;
+
+            if (retryErrors && !PassesRetryFilter(id.Type, value)) continue;
 
             // Each service claims the types it owns and reports whether it did, so a
             // record for a type nobody recognises is dropped rather than miscounted.
-            var imported = dns.TryImportRecord(record.Type, record.Key, record.Value)
-                || smtp.TryImportRecord(record.Type, record.Key, record.Value)
-                || http.TryImportRecord(record.Type, record.Key, record.Value)
-                || TryImportDomainResult(domainResults, record);
+            var imported = dns.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
+                || smtp.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
+                || http.TryImportRecord(id.Type, id.Key, value, winner.ExpiresUtc)
+                || TryImportDomainResult(domainResults, id.Type, id.Key, value);
             if (!imported) continue;
 
-            CountRecord(result, record.Type);
-            if (record.WrittenUtc != default && record.WrittenUtc < oldest) oldest = record.WrittenUtc;
+            CountRecord(result, id.Type);
+            if (winner.WrittenUtc != default && winner.WrittenUtc < oldest) oldest = winner.WrittenUtc;
         }
 
         return (result, oldest);
     }
 
-    private static bool TryImportDomainResult(DomainResultStore? store, CacheRecord record)
+    /// <summary>
+    /// Line spans within a JSONL file, skipping blanks. Works on the raw bytes so the
+    /// envelope scan never has to materialise a string per line. A trailing carriage
+    /// return needs no special handling: CR is JSON whitespace, so the reader ignores
+    /// it, and a line consisting only of one parses as no value and is rejected.
+    /// </summary>
+    private static IEnumerable<(int Start, int Length)> EnumerateLines(byte[] content)
     {
-        if (record.Type != CacheTypes.DomainResults) return false;
-        if (store == null || record.Value == null) return true; // ours, but nowhere to put it
+        var start = 0;
+        for (var i = 0; i <= content.Length; i++)
+        {
+            if (i != content.Length && content[i] != (byte)'\n') continue;
+
+            if (i > start) yield return (start, i - start);
+            start = i + 1;
+        }
+    }
+
+    /// <summary>
+    /// Reads a record's type, key and timestamps without touching its payload.
+    /// Returns false for anything malformed or missing a type or key.
+    /// </summary>
+    private static bool TryReadEnvelope(ReadOnlySpan<byte> line,
+        out string type, out string key, out DateTime writtenUtc, out DateTime expiresUtc)
+    {
+        type = ""; key = ""; writtenUtc = default; expiresUtc = default;
+        try
+        {
+            var reader = new Utf8JsonReader(line);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject) return false;
+
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                if (reader.ValueTextEquals("t"u8))
+                {
+                    if (!reader.Read()) return false;
+                    type = reader.GetString() ?? "";
+                }
+                else if (reader.ValueTextEquals("k"u8))
+                {
+                    if (!reader.Read()) return false;
+                    key = reader.GetString() ?? "";
+                }
+                else if (reader.ValueTextEquals("w"u8))
+                {
+                    if (!reader.Read() || !reader.TryGetDateTime(out writtenUtc)) return false;
+                }
+                else if (reader.ValueTextEquals("e"u8))
+                {
+                    if (!reader.Read() || !reader.TryGetDateTime(out expiresUtc)) return false;
+                }
+                else
+                {
+                    reader.Skip(); // the payload, and anything a later version adds
+                }
+            }
+
+            return type.Length > 0 && key.Length > 0;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static bool TryImportDomainResult(DomainResultStore? store, string type, string key, JsonNode? value)
+    {
+        if (type != CacheTypes.DomainResults) return false;
+        if (store == null || value == null) return true; // ours, but nowhere to put it
 
         try
         {
-            var summary = record.Value.Deserialize<DomainResultSummary>();
-            if (summary != null) store.Import(record.Key, summary);
+            var summary = value.Deserialize<DomainResultSummary>();
+            if (summary != null) store.Import(key, summary);
         }
         catch { /* ours, but unreadable — skip the record, not the file */ }
         return true;

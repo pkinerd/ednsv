@@ -476,13 +476,33 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// ── Load cache from disk at startup ──────────────────────────────────────
-var cacheResult = await cacheManager.LoadAsync();
-if (cacheResult != null)
-    app.Logger.LogInformation("Loaded cache ({Total} entries, {Age:F0}m old): {Dns} DNS, {Smtp} SMTP, {Rcpt} RCPT, {Http} HTTP, {Ptr} PTR, {Port} port",
-        cacheResult.Total, cacheResult.Age.TotalMinutes,
-        cacheResult.DnsQueries, cacheResult.SmtpProbes, cacheResult.RcptProbes,
-        cacheResult.HttpRequests, cacheResult.PtrLookups, cacheResult.PortProbes);
+// ── Load cache from disk, in the background ──────────────────────────────
+//
+// Awaiting this would make startup latency scale with the number of replicas: on a
+// shared mount every instance reads every other instance's files, and a rolling
+// deploy has all of them doing it at once against one endpoint. The instance serves
+// immediately with a cold cache and warms behind it — validations that arrive first
+// simply refetch, and the importer never overwrites a key they have already cached.
+//
+// /health/ready deliberately does not wait on this. Its own try/catch is not
+// optional: an unobserved exception on a background task must log, not take the
+// process down.
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var cacheResult = await cacheManager.LoadAsync();
+        if (cacheResult != null)
+            app.Logger.LogInformation("Loaded cache ({Total} entries, {Age:F0}m old): {Dns} DNS, {Smtp} SMTP, {Rcpt} RCPT, {Http} HTTP, {Ptr} PTR, {Port} port",
+                cacheResult.Total, cacheResult.Age.TotalMinutes,
+                cacheResult.DnsQueries, cacheResult.SmtpProbes, cacheResult.RcptProbes,
+                cacheResult.HttpRequests, cacheResult.PtrLookups, cacheResult.PortProbes);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Background cache load failed; continuing with a cold cache.");
+    }
+});
 
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));

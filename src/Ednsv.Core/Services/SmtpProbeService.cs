@@ -593,7 +593,7 @@ public class SmtpProbeService
 
     /// <summary>Import one record from a cache file — see
     /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
-    public bool TryImportRecord(string type, string key, JsonNode? value)
+    public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
         if (value == null) return false;
         try
@@ -603,11 +603,11 @@ public class SmtpProbeService
                 case CacheTypes.Smtp:
                 {
                     var entry = value.Deserialize<SmtpProbeCacheEntry>();
-                    if (entry != null) _probeCache.Import(key, FromCacheEntry(entry));
+                    if (entry != null) _probeCache.Import(key, FromCacheEntry(entry), expiresUtc);
                     return true;
                 }
                 case CacheTypes.Port:
-                    _portCache.Import(key, value.Deserialize<bool>());
+                    _portCache.Import(key, value.Deserialize<bool>(), expiresUtc);
                     return true;
                 case CacheTypes.Rcpt:
                 {

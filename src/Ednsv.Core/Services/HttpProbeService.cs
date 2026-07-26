@@ -211,7 +211,7 @@ public class HttpProbeService
 
     /// <summary>Import one record from a cache file — see
     /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
-    public bool TryImportRecord(string type, string key, JsonNode? value)
+    public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
         if (value == null) return false;
         try
@@ -222,14 +222,14 @@ public class HttpProbeService
                 {
                     var e = value.Deserialize<HttpGetCacheEntry>();
                     if (e != null)
-                        _getCache.Import(key, new GetResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode });
+                        _getCache.Import(key, new GetResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode }, expiresUtc);
                     return true;
                 }
                 case CacheTypes.HttpGetHeaders:
                 {
                     var e = value.Deserialize<HttpGetWithHeadersCacheEntry>();
                     if (e != null)
-                        _getWithHeadersCache.Import(key, new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType });
+                        _getWithHeadersCache.Import(key, new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType }, expiresUtc);
                     return true;
                 }
                 default:

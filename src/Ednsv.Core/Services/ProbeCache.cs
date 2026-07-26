@@ -62,6 +62,34 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         try { db.StringSet(_redis.Key(_prefix + key), payload, _ttl, flags: CommandFlags.FireAndForget); }
         catch { /* best effort — an L2 write failure just means the next pod refills */ }
     }
+
+    /// <summary>
+    /// Publish a value read from disk into the shared L2, but only if no value is
+    /// there already. Used to warm Redis from the disk tier at startup.
+    ///
+    /// <para>Both halves matter. <paramref name="ttl"/> is the entry's <i>remaining</i>
+    /// life, not a fresh full TTL, or loading a nearly-dead entry would resurrect it
+    /// for another whole period. <c>When.NotExists</c> keeps a cluster-wide restart
+    /// idempotent and stops one instance overwriting a fresher value another has
+    /// already published — every instance holds an overlapping view of the same
+    /// files, so without it they would all race to publish their own copies.</para>
+    /// </summary>
+    public void SetIfAbsent(string key, TValue value, TimeSpan ttl)
+    {
+        if (ttl <= TimeSpan.Zero) return;
+        var db = _redis.GetDatabase();
+        if (db == null) return;
+        string? payload;
+        try { payload = _serialize(value); }
+        catch { return; }
+        if (payload == null) return;
+        try
+        {
+            db.StringSet(_redis.Key(_prefix + key), payload, ttl,
+                when: When.NotExists, flags: CommandFlags.FireAndForget);
+        }
+        catch { /* best effort */ }
+    }
 }
 
 /// <summary>
@@ -248,28 +276,51 @@ public class ProbeCache<TValue> where TValue : class
     /// instance already persisted them), and entries imported from disk (they are
     /// on disk by definition).
     /// </summary>
-    private void SetMemoryOnly(string key, TValue value)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
     {
-        if (_ttl.HasValue)
+        if (absoluteExpiryUtc.HasValue)
+            _cache.Set(key, value, new DateTimeOffset(
+                DateTime.SpecifyKind(absoluteExpiryUtc.Value, DateTimeKind.Utc)));
+        else if (_ttl.HasValue)
             _cache.Set(key, value, _ttl.Value);
         else
             _cache.Set(key, value);
     }
 
-    /// <summary>Import an entry read from disk into MemoryCache. It is not queued
-    /// for persistence: it came from disk, so writing it back is the redundancy this
-    /// design exists to remove.</summary>
-    public void Import(string key, TValue value)
+    /// <summary>
+    /// Take an entry read from disk. Never queued for persistence — it came from
+    /// disk, so writing it back is the redundancy this design exists to remove.
+    ///
+    /// <para><b>Present keys are left alone.</b> The load runs in the background
+    /// while the instance is already serving, so a validation can fetch and cache a
+    /// key before the loader reaches it. That value came from the network just now
+    /// and the disk copy did not; overwriting it would age the cache backwards. A
+    /// fetch still in flight counts as present, since it will cache its result on
+    /// completion. The check is not atomic against a fetch that both starts and
+    /// finishes inside it — the cost of closing that window is a lock on every read,
+    /// and the consequence of losing it is one key holding a slightly older value
+    /// until its expiry.</para>
+    ///
+    /// <para><paramref name="expiresUtc"/> is the entry's own expiry from its record.
+    /// Honouring it means an entry with ten minutes left is cached for ten minutes
+    /// rather than being handed a fresh full TTL and resurrected; one already past
+    /// its expiry is refused outright. Records written before per-entry expiry
+    /// existed pass null and fall back to the cache's TTL.</para>
+    ///
+    /// <para>Returns whether the value was taken.</para>
+    /// </summary>
+    public bool Import(string key, TValue value, DateTime? expiresUtc = null)
     {
-        SetMemoryOnly(key, value);
-    }
+        if (expiresUtc.HasValue && expiresUtc.Value <= DateTime.UtcNow) return false;
+        if (_inflight.ContainsKey(key)) return false;
+        if (_cache.TryGetValue(key, out TValue? live) && live != null) return false;
 
-    /// <summary>Import an entry read from disk, carrying its original fetch time.
-    /// Same rule as the other overload — MemoryCache only, never the bag.</summary>
-    public void Import(string key, TValue value, DateTime cachedAtUtc)
-    {
-        _ = cachedAtUtc; // the on-disk record already carries it
-        SetMemoryOnly(key, value);
+        SetMemoryOnly(key, value, expiresUtc);
+
+        if (expiresUtc.HasValue && _l2 != null)
+            _l2.SetIfAbsent(key, value, expiresUtc.Value - DateTime.UtcNow);
+
+        return true;
     }
 
     /// <summary>
@@ -462,19 +513,28 @@ public class ProbeCacheValue<TValue> where TValue : struct
         _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
     }
 
-    private void SetMemoryOnly(string key, TValue value)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
     {
         var box = new Box { Value = value };
-        if (_ttl.HasValue)
+        if (absoluteExpiryUtc.HasValue)
+            _cache.Set(key, box, new DateTimeOffset(
+                DateTime.SpecifyKind(absoluteExpiryUtc.Value, DateTimeKind.Utc)));
+        else if (_ttl.HasValue)
             _cache.Set(key, box, _ttl.Value);
         else
             _cache.Set(key, box);
     }
 
-    /// <summary>Import from disk into MemoryCache only — never the bag.</summary>
-    public void Import(string key, TValue value)
+    /// <summary>See <see cref="ProbeCache{T}.Import"/> — same rules, no L2 behind
+    /// this variant.</summary>
+    public bool Import(string key, TValue value, DateTime? expiresUtc = null)
     {
-        SetMemoryOnly(key, value);
+        if (expiresUtc.HasValue && expiresUtc.Value <= DateTime.UtcNow) return false;
+        if (_inflight.ContainsKey(key)) return false;
+        if (_cache.TryGetValue(key, out Box? live) && live != null) return false;
+
+        SetMemoryOnly(key, value, expiresUtc);
+        return true;
     }
 
     /// <summary>See <see cref="ProbeCache{T}.CollectPending"/>.</summary>

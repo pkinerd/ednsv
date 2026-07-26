@@ -664,7 +664,7 @@ public class DnsResolverService
     /// translation, unlike the legacy per-type files. Returns false when the record
     /// belongs to another service.
     /// </summary>
-    public bool TryImportRecord(string type, string key, JsonNode? value)
+    public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
         if (value == null) return false;
         try
@@ -678,14 +678,14 @@ public class DnsResolverService
                     if (entry == null) return true;
                     var response = DnsCacheSerializer.DeserializeResponse(entry);
                     if (response == null) return true;
-                    if (type == CacheTypes.Dns) _queryCache.Import(key, response);
-                    else _serverQueryCache.Import(key, response);
+                    if (type == CacheTypes.Dns) _queryCache.Import(key, response, expiresUtc);
+                    else _serverQueryCache.Import(key, response, expiresUtc);
                     return true;
                 }
                 case CacheTypes.Ptr:
                 {
                     var names = value.Deserialize<List<string>>();
-                    if (names != null) _ptrCache.Import(key, names);
+                    if (names != null) _ptrCache.Import(key, names, expiresUtc);
                     return true;
                 }
                 case CacheTypes.Unreachable:
@@ -767,7 +767,7 @@ public class DnsResolverService
             if (parts.Length != 2 || !Enum.TryParse<QueryType>(parts[1], out var type))
                 continue;
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response, kvp.Value.CachedAtUtc);
+            _queryCache.Import($"q:{parts[0].ToLowerInvariant()}:{type}", response);
         }
     }
 
@@ -779,7 +779,7 @@ public class DnsResolverService
             if (parts.Length != 3 || !Enum.TryParse<QueryType>(parts[2], out var type))
                 continue;
             var response = DnsCacheSerializer.DeserializeResponse(kvp.Value);
-            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response, kvp.Value.CachedAtUtc);
+            _serverQueryCache.Import($"sq:{parts[0]}:{parts[1].ToLowerInvariant()}:{type}", response);
         }
     }
 

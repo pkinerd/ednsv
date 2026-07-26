@@ -42,9 +42,14 @@ public sealed class DomainResultStore
         _bag.Add(key, summary);
     }
 
-    /// <summary>Take a summary read from disk. Memory only — it is already persisted.</summary>
-    public void Import(string domain, DomainResultSummary summary)
-        => _results[domain.ToLowerInvariant()] = summary;
+    /// <summary>
+    /// Take a summary read from disk. Memory only — it is already persisted — and
+    /// add-if-absent, so a validation that completed while the background load was
+    /// running keeps its result rather than being overwritten by an older one, and a
+    /// record file beats a legacy file for the same domain.
+    /// </summary>
+    public bool Import(string domain, DomainResultSummary summary)
+        => _results.TryAdd(domain.ToLowerInvariant(), summary);
 
     public bool TryGet(string domain, out DomainResultSummary summary)
         => _results.TryGetValue(domain.ToLowerInvariant(), out summary!);

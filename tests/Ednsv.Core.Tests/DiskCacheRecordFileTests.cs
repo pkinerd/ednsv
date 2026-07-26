@@ -62,15 +62,26 @@ public sealed class DiskCacheRecordFileTests : IDisposable
     }
 
     /// <summary>Writes a record file into a named folder as if another instance had
-    /// flushed it, with a filename timestamp of <paramref name="writtenUtc"/>.</summary>
+    /// flushed it, with a filename timestamp of <paramref name="writtenUtc"/>. Note
+    /// that the sweep deletes by that timestamp, so a test wanting its file read back
+    /// must date it inside the TTL.</summary>
     private string WriteForeignFile(string instance, DateTime writtenUtc, params CacheRecord[] records)
+        => WriteRawFile(instance, writtenUtc, records.Select(r => JsonSerializer.Serialize(r)).ToArray());
+
+    /// <summary>As <see cref="WriteForeignFile"/>, but with the lines written
+    /// verbatim — for exercising the envelope scanner against JSON this codebase
+    /// would not itself produce.</summary>
+    private string WriteRawFile(string instance, DateTime writtenUtc, params string[] lines)
+        => WriteRawFile(instance, writtenUtc, string.Concat(lines.Select(l => l + "\n")));
+
+    private string WriteRawFile(string instance, DateTime writtenUtc, string contents)
     {
         var dir = Path.Combine(_dir, instance);
         Directory.CreateDirectory(dir);
         var name = $"cache.{writtenUtc.ToString("yyyyMMdd'T'HHmmssfff'Z'", CultureInfo.InvariantCulture)}"
                    + $".{Guid.NewGuid().ToString("N")[..8]}.jsonl";
         var path = Path.Combine(dir, name);
-        File.WriteAllLines(path, records.Select(r => JsonSerializer.Serialize(r)));
+        File.WriteAllText(path, contents);
         return path;
     }
 
@@ -259,9 +270,15 @@ public sealed class DiskCacheRecordFileTests : IDisposable
     [Fact]
     public async Task AnUnparseableLineIsSkippedAndTheRestOfTheFileLoads()
     {
+        // Bad lines on both sides of the good one, so a reader that gave up on the
+        // first failure could not pass this by accident.
         var now = DateTime.UtcNow;
-        var path = WriteForeignFile("poda", now, DomainRecord("good.example", now, now.AddHours(1), 1));
-        File.AppendAllLines(path, new[] { "{ not json", "", "{\"t\":\"nope\"}" });
+        WriteRawFile("poda", now,
+            "{ not json",
+            "",
+            JsonSerializer.Serialize(DomainRecord("good.example", now, now.AddHours(1), 1)),
+            "{\"t\":\"nope\"}",
+            "  binary noise");
 
         var (_, store) = await LoadAsync();
 
@@ -303,6 +320,106 @@ public sealed class DiskCacheRecordFileTests : IDisposable
         var (result, _) = await LoadAsync();
 
         Assert.Equal(1, result?.PtrLookups);
+    }
+
+    // ── The envelope scan ────────────────────────────────────────────────
+    //
+    // Lines are scanned for t/k/w/e with a Utf8JsonReader that skips the payload, so
+    // the expensive typed deserialisation only ever runs for keys that survive the
+    // merge. The scanner has to stay in sync with the reader across whatever the
+    // payload happens to contain, which is what these pin.
+
+    [Fact]
+    public async Task TheEnvelopeIsFoundWhateverOrderTheFieldsAreIn()
+    {
+        // The payload is skipped rather than parsed, so a nested object before the
+        // fields we want must not throw the reader off — a Skip that mis-counted
+        // depth would lose every field after v.
+        var now = DateTime.UtcNow;
+        var summary = JsonSerializer.Serialize(new DomainResultSummary { ValidatedAtUtc = now, PassCount = 7 });
+        var line = "{\"v\":" + summary + ",\"t\":\"" + CacheTypes.DomainResults + "\",\"k\":\"ordered.example\""
+                   + ",\"w\":\"" + now.ToString("O") + "\",\"e\":\"" + now.AddHours(1).ToString("O") + "\"}";
+        WriteRawFile("poda", now, line);
+
+        var (_, store) = await LoadAsync();
+
+        Assert.True(store.TryGet("ordered.example", out var got));
+        Assert.Equal(7, got.PassCount);
+    }
+
+    [Fact]
+    public async Task FieldsAddedByALaterVersionAreSkippedRatherThanFailingTheLine()
+    {
+        // The unknown fields come first, so a skip that lost track of nesting depth
+        // would take the fields we actually need down with them.
+        var now = DateTime.UtcNow;
+        var summary = JsonSerializer.Serialize(new DomainResultSummary { ValidatedAtUtc = now, PassCount = 3 });
+        var line = "{\"x\":[1,2,{\"y\":[3,{\"z\":null}]}],\"q\":\"trailing\""
+                   + ",\"t\":\"" + CacheTypes.DomainResults + "\",\"k\":\"future.example\""
+                   + ",\"w\":\"" + now.ToString("O") + "\",\"e\":\"" + now.AddHours(1).ToString("O") + "\""
+                   + ",\"v\":" + summary + "}";
+        WriteRawFile("poda", now, line);
+
+        var (_, store) = await LoadAsync();
+
+        Assert.True(store.TryGet("future.example", out var got));
+        Assert.Equal(3, got.PassCount);
+    }
+
+    [Fact]
+    public async Task CrlfLineEndingsAreRead()
+    {
+        var now = DateTime.UtcNow;
+        var records = new[]
+        {
+            DomainRecord("a.example", now, now.AddHours(1), 1),
+            DomainRecord("b.example", now, now.AddHours(1), 1)
+        };
+        WriteRawFile("poda", now,
+            string.Join("\r\n", records.Select(r => JsonSerializer.Serialize(r))) + "\r\n");
+
+        var (_, store) = await LoadAsync();
+
+        Assert.Contains("a.example", store.Results.Keys);
+        Assert.Contains("b.example", store.Results.Keys);
+    }
+
+    [Fact]
+    public async Task ALineMissingItsTypeOrKeyIsSkipped()
+    {
+        var now = DateTime.UtcNow;
+        var path = WriteForeignFile("poda", now, DomainRecord("good.example", now, now.AddHours(1), 1));
+        File.AppendAllLines(path, new[]
+        {
+            "{\"k\":\"no-type\",\"w\":\"" + now.ToString("O") + "\",\"e\":\"" + now.AddHours(1).ToString("O") + "\",\"v\":1}",
+            "{\"t\":\"dns\",\"w\":\"" + now.ToString("O") + "\",\"e\":\"" + now.AddHours(1).ToString("O") + "\",\"v\":1}"
+        });
+
+        var (result, store) = await LoadAsync();
+
+        Assert.Contains("good.example", store.Results.Keys);
+        Assert.Equal(0, result?.DnsQueries ?? 0);
+    }
+
+    [Fact]
+    public async Task ARecordFileBeatsALegacyFileForTheSameKey()
+    {
+        // Every import is add-if-absent and record files are read first, so the
+        // frozen legacy copy cannot win over one written since the upgrade.
+        var now = DateTime.UtcNow;
+        WriteForeignFile("poda", now, DomainRecord("both.example", now, now.AddHours(1), passCount: 42));
+        File.WriteAllText(Path.Combine(_dir, "domain-results.podb.json"),
+            JsonSerializer.Serialize(
+                new Dictionary<string, DomainResultSummary>
+                {
+                    ["both.example"] = new() { ValidatedAtUtc = now, PassCount = 1 }
+                },
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+
+        var (_, store) = await LoadAsync();
+
+        Assert.True(store.TryGet("both.example", out var got));
+        Assert.Equal(42, got.PassCount);
     }
 
     [Fact]
