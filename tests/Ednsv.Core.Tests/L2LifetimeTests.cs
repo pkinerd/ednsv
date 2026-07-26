@@ -46,6 +46,15 @@ public sealed class L2LifetimeTests
     private static void AssertNear(TimeSpan expected, TimeSpan actual) =>
         Assert.InRange(actual, expected - TimeSpan.FromMinutes(1), expected + TimeSpan.FromMinutes(1));
 
+    /// <summary>Present, and with no expiry — so a `volatile-*` policy cannot touch it.</summary>
+    private static async Task AssertPersistentAsync(RedisConnection redis, string suffix)
+    {
+        var db = redis.GetDatabase();
+        var key = redis.Key(suffix);
+        Assert.True(await db!.KeyExistsAsync(key), $"{suffix} was never written");
+        Assert.Null(await db.KeyTimeToLiveAsync(key));
+    }
+
     private static async Task<TimeSpan?> TtlOfAsync(RedisConnection redis, string key)
     {
         var db = redis.GetDatabase();
@@ -131,6 +140,57 @@ public sealed class L2LifetimeTests
         var ttl = await TtlOfAsync(redis, "k");
         Assert.NotNull(ttl);
         AssertNear(TimeSpan.FromMinutes(5), ttl!.Value);
+    }
+
+    [Fact]
+    public async Task TheCoordinationKeysAreLeftPersistentSoNothingCanEvictThem()
+    {
+        // The other half of the eviction contract, and the reason the floor above lives
+        // in ProbeCacheL2 rather than anywhere shared: config:head and cache-epoch must
+        // carry NO TTL, because `volatile-*` may only evict keys that have one. Give
+        // them a lifetime "for consistency" and they become eviction candidates — and
+        // losing config:head leaves a pod serving stale config, or missing a token
+        // revocation, with nothing logged.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+        var db = redis.GetDatabase();
+        Assert.NotNull(db);
+
+        var dir = Path.Combine(Path.GetTempPath(), $"ednsv-persist-{Guid.NewGuid():N}");
+        try
+        {
+            var cfg = new ConfigService(dir, redis, freshnessWindow: TimeSpan.Zero);
+
+            // The beacon is published lazily on first load, not by the constructor —
+            // so Snapshot() is what exercises that path, and asserting before it would
+            // pass against a key that simply is not there yet.
+            _ = cfg.Snapshot();
+            await new SharedCacheEpoch(redis).ShouldRewarmAsync();
+            L2(redis, null).Set("k", "v");
+            await Task.Delay(300);
+
+            await AssertPersistentAsync(redis, "config:head");
+            await AssertPersistentAsync(redis, "cache-epoch");
+
+            // ConfigService has a third beacon write, in InitBeaconLocked. It is not
+            // covered here and cannot be: EnsureFresh runs first and publishes the key,
+            // so that branch only ever sees a beacon already present and adopts it
+            // instead of writing. Giving it a TTL is therefore a mutation no test kills,
+            // because the line does not execute.
+
+            // The second beacon write path: republished when EnsureFresh finds it gone.
+            await db!.KeyDeleteAsync(redis.Key("config:head"));
+            cfg.EnsureFresh(force: true);
+            await Task.Delay(200);
+            await AssertPersistentAsync(redis, "config:head");
+
+            // ...while the cache entry beside them is evictable.
+            Assert.NotNull(await db.KeyTimeToLiveAsync(redis.Key("cache:test:k")));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
     }
 
     [Fact]
