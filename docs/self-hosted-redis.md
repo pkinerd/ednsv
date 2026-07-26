@@ -111,13 +111,22 @@ a fresh validation both still returning 200, and no spurious re-warm triggered.
 
 ### What losing them actually costs
 
-Not an outage, which is why this is easy to miss:
+Not an outage, and not stale data either — but the second part is only true because the
+lost-beacon path is written to assume it will happen:
 
-- **`config:head`** — a pod that finds the beacon missing republishes *its own* head and
-  carries on; it does not reload from disk. So a pod whose in-memory config is behind the
-  file stays behind it until the next real config change moves the beacon.
-- **`users:head`** — the same, for user records. A token revoked on another pod may not
-  be noticed until something else changes the beacon.
+- **`config:head` / `users:head`** — a pod that finds the beacon missing re-reads the
+  shared file *before* republishing a head, and adopts a peer's head only once it has
+  successfully read what that head names. Both matter, because a head is an opaque GUID:
+  it carries no information about the content it stands for, so a head published against
+  unverified state would satisfy every subsequent "has it changed?" check forever. That is
+  the shape of a pod serving month-old config, or honouring a revoked token, with nothing
+  logged. Cheap to get wrong and impossible to notice; see `BeaconLossTests`.
+- **Belt and braces** — every freshness check that finds the head unchanged also compares
+  `config.json` / `users.json` against the version the pod actually loaded, and re-reads on
+  a mismatch. This is the backstop for anything a single key in an evictable store cannot
+  express, including an operator editing the file on the mount by hand. It relies on
+  timestamps, so an NFS attribute cache (`acregmax`, typically 60s) can delay it; the
+  beacon remains the fast path.
 - **`cache-epoch`** — read as "the shared cache was flushed", triggering a full re-warm
   from memory. Harmless in itself (the warm is add-if-absent), but it republishes several
   hundred keys into a server that is already under memory pressure.

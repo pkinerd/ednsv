@@ -270,6 +270,30 @@ revision GUID** promoted via a Redis beacon:
 The head GUID is the identity used for concurrency; the sequential revision ids
 shown in the history UI are unchanged and remain the human-facing reference.
 
+### Losing the beacon
+
+The beacon is one key in a store that can be flushed, evicted, restarted or
+failed over to an empty replica, so its disappearance is a normal event rather
+than an exceptional one. Because the head is an opaque GUID it cannot be checked
+against anything — once published it satisfies every later "has it changed?"
+test — so two rules keep a lost beacon from turning into permanent staleness:
+
+- A pod that finds the beacon gone re-reads the shared file **before**
+  republishing a head, so whoever republishes speaks for what is actually on the
+  mount rather than for whatever it happened to be holding.
+- A pod adopts a peer's head only once it has **successfully read** the file that
+  head names. A read that fails leaves the pod on its last known-good copy and on
+  its own head, so it retries rather than recording a claim it cannot back — and
+  a write attempted in that state fails the CAS and returns an error rather than
+  overwriting the peer's change.
+
+As a backstop for anything a single key cannot express — including an operator
+editing `config.json` or `users.json` on the mount by hand — a freshness check
+that finds the head unchanged also compares the file against the version the pod
+loaded, and re-reads on a mismatch. That check uses file timestamps, so an NFS
+attribute cache (`acregmax`, typically 60s) can delay it; the beacon stays the
+fast path.
+
 ## Egress identity
 
 SMTP/PTR/FCrDNS and registered-resolver DNSBL results depend on the source IP.

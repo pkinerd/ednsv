@@ -57,6 +57,10 @@ public sealed class AuthService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "users:head";
 
+    // Last (mtime, length) observed for users.json, so a change the beacon failed
+    // to announce is still noticed. See CheckDiskDriftLocked.
+    private (long Ticks, long Length) _diskStamp;
+
     // Serialises the users.json read-modify-write across instances. users.json is
     // rewritten whole, and the beacon CAS releases before that write lands, so two
     // saves could interleave and one could silently drop the other's change — for
@@ -116,10 +120,12 @@ public sealed class AuthService
         if (Disabled) return;
         AtomicFile.SweepStaleTemps(_filePath);
         InitBeacon(); // publish/adopt the cluster head before reading the file
-        if (!File.Exists(_filePath)) return;
+        // Stamped after the read below, and here for the paths that read nothing, so
+        // the drift check has a baseline from the moment this pod's copy was formed.
+        if (!File.Exists(_filePath)) { lock (_lock) NoteDiskStampLocked(); return; }
 
         var json = File.ReadAllText(_filePath);
-        if (string.IsNullOrWhiteSpace(json)) return;
+        if (string.IsNullOrWhiteSpace(json)) { lock (_lock) NoteDiskStampLocked(); return; }
 
         var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
         if (file?.Users != null)
@@ -148,8 +154,9 @@ public sealed class AuthService
             }
             catch { /* best-effort migration */ }
 
-            lock (_lock) _users = file.Users;
+            lock (_lock) { _users = file.Users; NoteDiskStampLocked(); }
         }
+        else lock (_lock) NoteDiskStampLocked();
     }
 
     private void SaveLocked()
@@ -158,6 +165,7 @@ public sealed class AuthService
         var file = new UsersFile { Users = _users };
         var json = JsonSerializer.Serialize(file, JsonOpts);
         AtomicFile.WriteAllText(_filePath, json);
+        NoteDiskStampLocked(); // our own write is not drift
     }
 
     // ── Distributed coordination (beacon) ────────────────────────────────
@@ -196,19 +204,32 @@ public sealed class AuthService
 
         if (v.IsNullOrEmpty)
         {
-            string head;
-            lock (_lock) head = _headGuid;
-            try { db.StringSet(beacon, head, when: When.NotExists); } catch { /* best effort */ }
+            lock (_lock) PublishHeadForLostBeaconLocked(db, beacon);
             return;
         }
 
         string remote = v!;
         lock (_lock)
         {
-            if (remote == _headGuid) return;
-            ReloadUsersFromDiskLocked();
+            if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+            if (!ReloadUsersFromDiskLocked()) return;
             _headGuid = remote;
         }
+    }
+
+    /// <summary>
+    /// Republish this pod's head after the beacon has gone (never set, evicted,
+    /// flushed, or lost to a restart). Whoever republishes defines the cluster head,
+    /// and a head is an opaque GUID — once published it satisfies every "has it
+    /// moved?" check forever. Publishing an unverified in-memory head would therefore
+    /// pin this pod, and every peer that adopts it, to a users file the disk has
+    /// already moved past: a revoked token would keep authenticating indefinitely.
+    /// Read the file first, and stay quiet if it cannot be read. Must hold _lock.
+    /// </summary>
+    private void PublishHeadForLostBeaconLocked(IDatabase db, string beacon)
+    {
+        if (!ReloadUsersFromDiskLocked()) return;
+        try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
     }
 
     /// <summary>True at most once per freshness window. Racing callers may both
@@ -242,12 +263,12 @@ public sealed class AuthService
         MarkFresh();
         if (v.IsNullOrEmpty)
         {
-            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            PublishHeadForLostBeaconLocked(db, beacon);
             return;
         }
         string remote = v!;
-        if (remote == _headGuid) return;
-        ReloadUsersFromDiskLocked();
+        if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+        if (!ReloadUsersFromDiskLocked()) return;
         _headGuid = remote;
     }
 
@@ -296,17 +317,61 @@ public sealed class AuthService
         catch { /* best effort — fall back to local head */ }
     }
 
-    private void ReloadUsersFromDiskLocked()
+    /// <summary>
+    /// Re-read the shared users file. Returns whether this pod now definitely holds
+    /// what is on disk — false when the file could not be read or parsed, in which
+    /// case the in-memory copy is kept and the caller must <b>not</b> adopt the remote
+    /// head. An absent or empty file is a definite answer, not a failure: users.json
+    /// is only missing before the first user is written.
+    /// </summary>
+    private bool ReloadUsersFromDiskLocked()
     {
-        if (!File.Exists(_filePath)) { _users = new List<User>(); return; }
+        var ok = false;
+        if (!File.Exists(_filePath)) { _users = new List<User>(); ok = true; }
+        else
+        {
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                if (string.IsNullOrWhiteSpace(json)) { _users = new List<User>(); ok = true; }
+                else
+                {
+                    var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
+                    if (file?.Users != null) { _users = file.Users; ok = true; }
+                }
+            }
+            catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+        }
+        // Stamped only on success. The stamp means "this is the version I hold"; taking
+        // it from a file we failed to read would record that claim against content we
+        // never loaded, and the drift check would then see nothing to do.
+        if (ok) NoteDiskStampLocked();
+        return ok;
+    }
+
+    /// <summary>Record the file identity this pod's in-memory users came from.</summary>
+    private void NoteDiskStampLocked() => _diskStamp = ReadDiskStamp();
+
+    private (long Ticks, long Length) ReadDiskStamp()
+    {
         try
         {
-            var json = File.ReadAllText(_filePath);
-            if (string.IsNullOrWhiteSpace(json)) { _users = new List<User>(); return; }
-            var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
-            if (file?.Users != null) _users = file.Users;
+            var fi = new FileInfo(_filePath);
+            return fi.Exists ? (fi.LastWriteTimeUtc.Ticks, fi.Length) : default;
         }
-        catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+        catch { return _diskStamp; } // unreadable: report no change rather than churn
+    }
+
+    /// <summary>
+    /// Backstop for the beacon, which is a single key in a store that can be flushed,
+    /// evicted or restarted, and whose value is a GUID that cannot be checked against
+    /// anything. This notices what the beacon structurally cannot: users.json changed
+    /// while the head did not. Must hold _lock.
+    /// </summary>
+    private void CheckDiskDriftLocked()
+    {
+        if (ReadDiskStamp() == _diskStamp) return;
+        ReloadUsersFromDiskLocked();
     }
 
     public static string Hash(string token)

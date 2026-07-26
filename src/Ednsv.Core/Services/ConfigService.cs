@@ -195,6 +195,10 @@ public sealed class ConfigService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "config:head";
 
+    // Last (mtime, length) observed for config.json, so a disk change that the
+    // beacon failed to announce is still noticed. See CheckDiskDriftLocked.
+    private (long Ticks, long Length) _diskStamp;
+
     // Serialises the config read-modify-write across instances. The TTL bounds
     // how long a writer that dies mid-save can block others; the wait bounds how
     // long a save blocks before reporting 503 rather than hanging the request.
@@ -282,6 +286,7 @@ public sealed class ConfigService
                     lock (_lock)
                     {
                         _current = parsed;
+                        NoteDiskStampLocked();
                         SeedBaselineRevisionLocked();
                         InitBeaconLocked();
                     }
@@ -607,15 +612,27 @@ public sealed class ConfigService
         MarkFresh();
         if (v.IsNullOrEmpty)
         {
-            // Beacon absent (never set or flushed): publish our head so peers converge.
-            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            // Beacon absent (never set, evicted, or flushed). Whoever republishes it
+            // defines the cluster head, so it must name what is on the shared mount:
+            // a head is an opaque GUID, so once published it satisfies every "has it
+            // moved?" check forever. Publishing an unverified in-memory head would
+            // therefore pin this pod — and every peer that adopts it — to a config the
+            // disk has already moved past, permanently. Read the file first.
+            lock (_lock)
+            {
+                if (!ReloadFromDiskLocked()) return; // can't read the truth, don't speak for it
+                try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            }
             return;
         }
         string remote = v!;
         lock (_lock)
         {
-            if (remote == _headGuid) return;
-            ReloadFromDiskLocked();
+            if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+            // Adopt the remote head only once we actually hold what it names. A failed
+            // read here used to be swallowed and the head adopted anyway, which left
+            // this pod matching the beacon while serving the config it had before.
+            if (!ReloadFromDiskLocked()) return;
             _headGuid = remote;
         }
     }
@@ -637,8 +654,16 @@ public sealed class ConfigService
         catch { /* best effort — fall back to local head */ }
     }
 
-    private void ReloadFromDiskLocked()
+    /// <summary>
+    /// Re-read the shared config file. Returns whether this pod now definitely holds
+    /// what is on disk — false when the file could not be read or parsed, in which
+    /// case the in-memory copy is kept and the caller must <b>not</b> treat the
+    /// remote head as adopted: a head recorded against content we never loaded is
+    /// indistinguishable from being current, forever.
+    /// </summary>
+    private bool ReloadFromDiskLocked()
     {
+        var ok = false;
         if (File.Exists(_filePath))
         {
             try
@@ -652,12 +677,50 @@ public sealed class ConfigService
                         parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors ?? new Dictionary<string, List<string>>());
                         parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains ?? new List<string>());
                         _current = parsed;
+                        ok = true;
                     }
                 }
             }
             catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
         }
+        // Stamped only on success. The stamp means "this is the version I hold"; taking
+        // it from a file we failed to read would record that claim against content we
+        // never loaded, and the drift check would then see nothing to do.
+        if (ok) NoteDiskStampLocked();
         LoadHistory(); // re-sync revision metadata and next-id from the shared index.
+        return ok;
+    }
+
+    /// <summary>Record the file identity this pod's in-memory copy came from.</summary>
+    private void NoteDiskStampLocked() => _diskStamp = ReadDiskStamp();
+
+    private (long Ticks, long Length) ReadDiskStamp()
+    {
+        try
+        {
+            var fi = new FileInfo(_filePath);
+            return fi.Exists ? (fi.LastWriteTimeUtc.Ticks, fi.Length) : default;
+        }
+        catch { return _diskStamp; } // unreadable: report no change rather than churn
+    }
+
+    /// <summary>
+    /// Backstop for the beacon. The beacon is the fast path — it says "something
+    /// changed" without anyone having to stat a shared mount — but it is a single
+    /// key in a store that can be flushed, evicted or restarted, and a head that is
+    /// merely a GUID cannot be checked against anything. This notices the case the
+    /// beacon structurally cannot: config.json changed while the head did not, either
+    /// through an out-of-band edit or a beacon lost in the window between a writer's
+    /// compare-and-set and its file write.
+    ///
+    /// <para>Only meaningful in distributed mode, where the mount is shared. Attribute
+    /// caching (NFS <c>acregmax</c>, typically 60s) can delay it, which is why it is
+    /// the backstop and not the mechanism.</para>
+    /// </summary>
+    private void CheckDiskDriftLocked()
+    {
+        if (ReadDiskStamp() == _diskStamp) return;
+        ReloadFromDiskLocked();
     }
 
     /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.
@@ -753,6 +816,7 @@ public sealed class ConfigService
         Directory.CreateDirectory(_dataDir);
         var json = JsonSerializer.Serialize(_current, JsonOpts);
         AtomicFile.WriteAllText(_filePath, json);
+        NoteDiskStampLocked(); // our own write is not drift
     }
 
     // ── Revision history ──────────────────────────────────────────────────

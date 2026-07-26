@@ -161,22 +161,18 @@ public sealed class L2LifetimeTests
         {
             var cfg = new ConfigService(dir, redis, freshnessWindow: TimeSpan.Zero);
 
-            // The beacon is published lazily on first load, not by the constructor —
-            // so Snapshot() is what exercises that path, and asserting before it would
-            // pass against a key that simply is not there yet.
-            _ = cfg.Snapshot();
+            // LoadOrSeed, not just the constructor: the beacon is published from
+            // InitBeaconLocked once the config file exists, and asserting before that
+            // would pass against a key that simply is not there yet. It also matches
+            // how every real caller starts, which matters — EnsureFresh will not
+            // publish a head for a config file it has not been able to read.
+            _ = cfg.LoadOrSeed(new AppConfig());
             await new SharedCacheEpoch(redis).ShouldRewarmAsync();
             L2(redis, null).Set("k", "v");
             await Task.Delay(300);
 
             await AssertPersistentAsync(redis, "config:head");
             await AssertPersistentAsync(redis, "cache-epoch");
-
-            // ConfigService has a third beacon write, in InitBeaconLocked. It is not
-            // covered here and cannot be: EnsureFresh runs first and publishes the key,
-            // so that branch only ever sees a beacon already present and adopts it
-            // instead of writing. Giving it a TTL is therefore a mutation no test kills,
-            // because the line does not execute.
 
             // The second beacon write path: republished when EnsureFresh finds it gone.
             await db!.KeyDeleteAsync(redis.Key("config:head"));
