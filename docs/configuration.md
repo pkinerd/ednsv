@@ -99,7 +99,7 @@ behaves exactly as the single-instance settings above describe.
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode; set → distributed mode (Redis-backed jobs + probe-cache L2 + config/user coordination). May contain a `{AccessKey}` placeholder. |
+| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode; set → distributed mode (Redis-backed jobs + probe-cache L2 + config/user coordination). May contain a `{AccessKey}` placeholder. Self-hosting rather than using a managed service: [self-hosted-redis.md](self-hosted-redis.md). |
 | `Redis:AccessKey` | *(unset)* | Secret injected into `Redis:ConnectionString` at startup by replacing the literal `{AccessKey}` placeholder — keeps the key out of `appsettings.json` (supply via env var `Redis__AccessKey` / a mounted secret). |
 | `Redis:InstanceName` | `ednsv` | Key prefix (namespacing) for all EDNSV keys on a shared Redis. |
 | `JobRetentionMinutes` | `5` | Minutes a completed/failed async job is retained in Redis before expiry. |

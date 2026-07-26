@@ -53,6 +53,7 @@ Start with the architecture overview, then dive into the area you need:
 | [Deployment & API](docs/deployment.md) | CLI options, the REST API (all endpoints), the web UI, Docker, and CI/CD |
 | [Configuration](docs/configuration.md) | Environment variables, runtime config, probe tuning, and the editable probe data lists |
 | [Horizontal scaling](docs/horizontal-scaling.md) | Running `Ednsv.Web` across multiple replicas: Redis-backed jobs/cache, shared keyring, config/user coordination |
+| [Running without a managed Redis](docs/self-hosted-redis.md) | Self-hosting the shared store: why one pod with no persistence is enough, sizing, manifests, and checking a substitute server |
 | [Entra ID setup](docs/entra-setup.md) | Single sign-on (OIDC) for users and client-credentials API access for service accounts |
 
 Copyright 2026, all rights reserved.

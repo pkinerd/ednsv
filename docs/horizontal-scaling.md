@@ -19,6 +19,11 @@ connection string is configured:
 | **unset** (default) | Single-instance | In-memory job registry, on-disk probe cache, in-process config lock — exactly as before. Safe for `replicas: 1`. |
 | **set** | Distributed | Async jobs and the probe-cache L2 live in Redis; config/user writes coordinate through a Redis beacon. Safe for `replicas: N`. |
 
+No managed Redis available? You do not need one — a single pod with persistence and
+replication *switched off* covers everything below, because none of what lives there is
+durable. See [self-hosted-redis.md](self-hosted-redis.md) for manifests, sizing and
+alternative servers.
+
 Two backing stores are used, each chosen for its durability characteristics:
 
 - **Redis** — *ephemeral, possibly untrusted.* Holds only derivable/disposable
@@ -299,7 +304,7 @@ settings have no effect unless `Redis:ConnectionString` is set.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode. Set → distributed mode. May contain a `{AccessKey}` placeholder (see `Redis:AccessKey`). |
+| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode. Set → distributed mode. May contain a `{AccessKey}` placeholder (see `Redis:AccessKey`). Any RESP-compatible server works — see [self-hosted-redis.md](self-hosted-redis.md). |
 | `Redis:AccessKey` | *(unset)* | Secret injected into `Redis:ConnectionString` at startup by replacing the literal `{AccessKey}` placeholder. Keeps the key out of `appsettings.json` (supply via env var / mounted secret). |
 | `Redis:InstanceName` | `ednsv` | Key prefix for all EDNSV keys in Redis (namespacing on a shared Redis). |
 | `JobRetentionMinutes` | `5` | Minutes a completed/failed async job is retained in Redis before expiry. |
