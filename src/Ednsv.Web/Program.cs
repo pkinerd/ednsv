@@ -73,6 +73,14 @@ var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSec
 // Upper bound on the shutdown cache flush, so a slow mount cannot push the
 // process past its termination grace period.
 var shutdownFlushSeconds = builder.Configuration.GetValue<int>("CacheShutdownFlushSeconds", 5);
+// How often to check whether the shared Redis cache has been emptied. Its own key
+// rather than the flush interval's, because the two have nothing in common: a flush
+// serialises and writes a file, this is a single Redis GET — a rounding error against
+// the hundreds of L2 operations a single validation already performs. Borrowing the
+// flush interval also left the recommended deployment (CacheDir=none, where no
+// flusher runs at all) taking its recovery latency from a key that governs nothing.
+// 0 disables the watch.
+var sharedCacheWatchSeconds = builder.Configuration.GetValue<int>("SharedCacheWatchSeconds", 30);
 
 // ── Distributed mode (opt-in) ─────────────────────────────────────────────
 // Redis is OPT-IN: unset connection string keeps the single-instance behaviour
@@ -572,17 +580,27 @@ cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
 // is what lets a large Redis-backed deployment set CacheDir=none and still be
 // self-healing: its L1 is then the only copy of those results in existence.
 Timer? sharedCacheWatch = null;
-if (redis.Enabled)
+if (redis.Enabled && sharedCacheWatchSeconds <= 0)
+{
+    app.Logger.LogWarning(
+        "Shared-cache watch disabled (SharedCacheWatchSeconds=0). An emptied Redis will not be "
+        + "repopulated, so the shared cache stays cold until entries age out of memory naturally.");
+}
+else if (redis.Enabled)
 {
     var epoch = new SharedCacheEpoch(redis);
-    var watchInterval = TimeSpan.FromSeconds(flushIntervalSeconds);
+    var watchInterval = TimeSpan.FromSeconds(sharedCacheWatchSeconds);
 
     // The first tick comes soon rather than after a full interval, because it is the
     // one that *establishes* the epoch — and the first check deliberately never asks
     // for a re-warm, since startup has just warmed the L2 itself. Leaving it until the
     // first full interval would mean a flush inside that window was absorbed by the
     // first check and never noticed.
-    var firstTick = TimeSpan.FromSeconds(Math.Min(5, flushIntervalSeconds));
+    var firstTick = TimeSpan.FromSeconds(Math.Min(5, sharedCacheWatchSeconds));
+
+    app.Logger.LogInformation(
+        "Watching the shared cache every {Interval}s; an emptied Redis is repopulated from memory.",
+        sharedCacheWatchSeconds);
 
     sharedCacheWatch = new Timer(_ => _ = Task.Run(async () =>
     {

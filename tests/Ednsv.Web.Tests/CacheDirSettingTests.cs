@@ -185,4 +185,91 @@ public sealed class CacheDirSettingTests
             return Task.CompletedTask;
         });
     }
+
+    // ── The shared-cache watch ───────────────────────────────────────────
+    //
+    // A dead Redis endpoint is enough for all of these: RedisConnection.Enabled
+    // reflects whether a connection string was configured, not whether a server
+    // answers, and none of them let the watch tick reach a server.
+
+    private const string DeadRedis =
+        "127.0.0.1:6399,abortConnect=false,connectTimeout=150,syncTimeout=150,connectRetry=0";
+
+    [Fact]
+    public async Task TheSharedCacheWatchRunsOnItsOwnIntervalNotTheFlushInterval()
+    {
+        // Its own key, because a single GET has nothing in common with serialising
+        // and writing a file — and because CacheDir=none, the recommended multi-pod
+        // shape, runs no flusher at all and would otherwise take its recovery
+        // latency from a setting that governs nothing.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["CacheDir"] = "none",
+            ["Redis:ConnectionString"] = DeadRedis,
+            ["SharedCacheWatchSeconds"] = "17"   // distinct from FlushIntervalSeconds=3600
+        }, dataDir, f =>
+        {
+            Assert.Contains(f.LogSnapshot(), l =>
+                l.Level == LogLevel.Information
+                && l.Message.Contains("Watching the shared cache every 17s", StringComparison.Ordinal));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task TheShippedConfigurationWatchesEveryThirtySeconds()
+    {
+        // This pins what an operator actually gets, which comes from the value in
+        // appsettings.json rather than the `GetValue` fallback in code — the two are
+        // kept equal, but only the shipped one is observable here.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["Redis:ConnectionString"] = DeadRedis
+        }, dataDir, f =>
+        {
+            Assert.Contains(f.LogSnapshot(), l =>
+                l.Message.Contains("Watching the shared cache every 30s", StringComparison.Ordinal));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task TheSharedCacheWatchCanBeTurnedOffAndSaysSo()
+    {
+        // Losing self-healing is a real cost, so it is announced rather than silent.
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+
+        await WithFactoryAsync(new Dictionary<string, string?>
+        {
+            ["Redis:ConnectionString"] = DeadRedis,
+            ["SharedCacheWatchSeconds"] = "0"
+        }, dataDir, f =>
+        {
+            var logs = f.LogSnapshot();
+            Assert.Contains(logs, l =>
+                l.Level == LogLevel.Warning
+                && l.Message.Contains("Shared-cache watch disabled", StringComparison.Ordinal));
+            Assert.DoesNotContain(logs, l =>
+                l.Message.Contains("Watching the shared cache", StringComparison.Ordinal));
+            return Task.CompletedTask;
+        });
+    }
+
+    [Fact]
+    public async Task WithoutRedisThereIsNoWatchAtAll()
+    {
+        var dataDir = Path.Combine(Path.GetTempPath(), $"ednsv-watch-{Guid.NewGuid():N}");
+
+        await WithFactoryAsync(new Dictionary<string, string?>(), dataDir, f =>
+        {
+            Assert.DoesNotContain(f.LogSnapshot(), l =>
+                l.Message.Contains("shared cache", StringComparison.OrdinalIgnoreCase)
+                && l.Message.Contains("Watching", StringComparison.Ordinal));
+            return Task.CompletedTask;
+        });
+    }
 }
