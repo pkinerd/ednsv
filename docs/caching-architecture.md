@@ -257,6 +257,16 @@ Pod-name reuse is not a hazard in either direction: Deployment names are never r
 
 `CacheTtlHours=0` disables expiry: values never expire in memory, per-entry expiry is not stamped, and the load reads whatever is on disk without a staleness cutoff.
 
+**It reads like the longest retention and it is the shortest durable one.** Memory keeps everything for the life of the process, but both tiers that survive a restart are capped at 24 hours, while an explicit setting is honoured in full:
+
+| `CacheTtlHours` | Memory | Survives a restart |
+|---|---|---|
+| `24` | 24h | 24h |
+| `168` | 168h | **168h** |
+| `0` | never expires | **24h** |
+
+So a process restarting under `0` comes back with less cache than one restarting under `168`. Set `0` when you want a long-lived process never to re-fetch; set a large explicit value when you want restarts to stay warm.
+
 **The two bounded tiers keep a floor, and they are separate floors.** Memory can be told never to expire because it is keyed and so bounded by distinct domains; a shared Redis allocation and an append-only directory cannot. Both currently land on 24 hours, for reasons that have nothing to do with each other:
 
 | Tier | Constant | Why it cannot honour "never" |
