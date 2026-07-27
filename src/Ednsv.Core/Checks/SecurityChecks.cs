@@ -1148,6 +1148,13 @@ public class ZoneTransferCheck : ICheck
             return new List<CheckResult> { result };
         }
 
+        // A zone transfer is raw TCP/53 straight at each authoritative server, so it is
+        // exactly what --no-direct-dns opts out of. Every sibling direct-DNS check gates
+        // here; this one did not, and enabling AXFR in a restricted environment sent the
+        // transfers anyway — against the flag's own promise.
+        if (!ctx.Options.EnableDirectDns)
+            return CheckContext.SkippedResult(this, "Skipped: direct DNS to authoritative nameservers disabled");
+
         try
         {
             int vulnerable = 0;
