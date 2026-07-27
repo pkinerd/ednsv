@@ -18,6 +18,207 @@ public sealed class ConfigServiceTests : IDisposable
 
     private static AppConfig Seed() => new() { EnableSmtpProbes = true, KnownDomains = new() { "example.com" } };
 
+    // ── Corrupt config: quarantine, recover, stay up ────────────────────────
+    // The seed branch writes to disk, so treating a bad config.json as "no config
+    // yet" would silently replace the operator's settings with env-var defaults.
+    // Instead the bad content is preserved and the newest valid revision restored,
+    // so corruption never takes an instance down and nothing is lost.
+
+    private const string Corrupt = "{ this is not valid json";
+
+    private ConfigService WithSavedConfigThenCorruption()
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());
+        svc.Replace(new AppConfig { EnableSmtpProbes = false, EnableDnsbl = false }, "alice@contoso.com");
+        File.WriteAllText(Path.Combine(_dir, "config.json"), Corrupt);
+        return new ConfigService(_dir);
+    }
+
+    [Fact]
+    public void LoadOrSeed_CorruptConfigRestoresNewestValidRevision()
+    {
+        var svc = WithSavedConfigThenCorruption();
+
+        var warnings = new List<string>();
+        var cfg = svc.LoadOrSeed(Seed(), warnings.Add);
+
+        // The saved revision, not the seed — Seed() has EnableSmtpProbes = true.
+        Assert.False(cfg.EnableSmtpProbes);
+        Assert.False(cfg.EnableDnsbl);
+        Assert.Single(warnings);
+        Assert.Contains("corrupt", warnings[0], StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LoadOrSeed_CorruptConfigIsRepublishedSoPeersConverge()
+    {
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+
+        // config.json no longer holds the corrupt text, and reloads cleanly.
+        var reopened = new ConfigService(_dir);
+        Assert.False(reopened.LoadOrSeed(Seed()).EnableSmtpProbes);
+    }
+
+    [Fact]
+    public void LoadOrSeed_CorruptConfigIsQuarantinedAndListedForInspection()
+    {
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+
+        var corrupt = svc.ListRevisions().Where(r => r.IsCorrupt).ToList();
+        var entry = Assert.Single(corrupt);
+        Assert.NotNull(entry.Key);
+        Assert.Equal(0, entry.Id); // addressed by key, never by a revision id
+
+        // Readable as raw text, and byte-identical to what was on disk.
+        Assert.Equal(Corrupt, svc.GetQuarantinedRaw(entry.Key!));
+        // But never offered to the editor as configuration.
+        Assert.Null(svc.GetRevision(entry.Id));
+    }
+
+    [Fact]
+    public void QuarantineKeyIsStableAcrossLaterCorruptions()
+    {
+        // The bug this replaces: positional ids meant a second corruption
+        // renumbered the first, so a client that listed then fetched could be
+        // handed a different artifact than the one it selected.
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+        var first = svc.ListRevisions().Single(r => r.IsCorrupt).Key!;
+
+        // A second, different corruption arrives.
+        File.WriteAllText(Path.Combine(_dir, "config.json"), "{ a completely different mess");
+        var reopened = new ConfigService(_dir);
+        reopened.LoadOrSeed(Seed());
+
+        var keys = reopened.ListRevisions().Where(r => r.IsCorrupt).Select(r => r.Key).ToList();
+        Assert.Equal(2, keys.Count);
+        Assert.Contains(first, keys);
+        // The original key still resolves to the original content.
+        Assert.Equal(Corrupt, reopened.GetQuarantinedRaw(first));
+    }
+
+    [Theory]
+    [InlineData("../../../etc/passwd")]
+    [InlineData("..%2Fconfig")]
+    [InlineData("abc/def")]
+    [InlineData("ABCDEF12")]   // keys are lowercase hex
+    [InlineData("zzzzzzzz")]
+    [InlineData("")]
+    public void GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(string key)
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());
+        Assert.Null(svc.GetQuarantinedRaw(key));
+    }
+
+    [Fact]
+    public void LoadOrSeed_QuarantineIsListedFirstAlongsideRealRevisions()
+    {
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+
+        var revs = svc.ListRevisions();
+        Assert.True(revs[0].IsCorrupt);
+        Assert.Contains(revs, r => !r.IsCorrupt); // real history is still there
+    }
+
+    [Fact]
+    public void LoadOrSeed_RepeatedCorruptionOfSameContentQuarantinesOnce()
+    {
+        // Replicas all tripping over one corrupt file must converge on a single
+        // artifact rather than each leaving its own copy.
+        var svc = WithSavedConfigThenCorruption();
+        svc.LoadOrSeed(Seed());
+
+        File.WriteAllText(Path.Combine(_dir, "config.json"), Corrupt);
+        new ConfigService(_dir).LoadOrSeed(Seed());
+
+        Assert.Single(new ConfigService(_dir).ListRevisions().Where(r => r.IsCorrupt));
+    }
+
+    [Fact]
+    public void LoadOrSeed_CorruptConfigWithNoUsableHistoryFallsBackToSeed()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "config.json"), Corrupt);
+
+        var svc = new ConfigService(_dir);
+        var warnings = new List<string>();
+        var cfg = svc.LoadOrSeed(Seed(), warnings.Add);
+
+        Assert.True(cfg.EnableSmtpProbes); // the seed
+        Assert.Contains("example.com", cfg.KnownDomains);
+        Assert.Single(warnings);
+        // Still preserved even though there was nothing to restore.
+        Assert.Single(svc.ListRevisions().Where(r => r.IsCorrupt));
+    }
+
+    [Fact]
+    public void LoadOrSeed_ConfigParsingToNullIsTreatedAsCorrupt()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "config.json"), "null");
+
+        var svc = new ConfigService(_dir);
+        var cfg = svc.LoadOrSeed(Seed());
+
+        Assert.True(cfg.EnableSmtpProbes);
+        Assert.Equal("null", svc.GetQuarantinedRaw(svc.ListRevisions().First(r => r.IsCorrupt).Key!));
+    }
+
+    [Fact]
+    public void GetRevisionRaw_UnknownIdsReturnNull()
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());
+
+        Assert.Null(svc.GetRevisionRaw(9999));       // no such revision
+        Assert.Null(svc.GetQuarantinedRaw("deadbeef")); // no such quarantined config
+    }
+
+    [Fact]
+    public void LoadOrSeed_EmptyConfigStillSeeds()
+    {
+        // Nothing to lose in a zero-byte file, so this keeps the self-healing path.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "config.json"), "   ");
+
+        var svc = new ConfigService(_dir);
+        var cfg = svc.LoadOrSeed(Seed());
+
+        Assert.True(cfg.EnableSmtpProbes);
+        Assert.Contains("example.com", cfg.KnownDomains);
+    }
+
+    [Fact]
+    public void LoadOrSeed_ValidConfigIsPreferredOverSeed()
+    {
+        var first = new ConfigService(_dir);
+        first.LoadOrSeed(Seed());
+        first.Replace(new AppConfig { EnableSmtpProbes = false }, "alice@contoso.com");
+
+        var reopened = new ConfigService(_dir);
+        var cfg = reopened.LoadOrSeed(Seed());
+
+        Assert.False(cfg.EnableSmtpProbes); // saved value wins, seed is ignored
+    }
+
+    [Fact]
+    public void LoadOrSeed_SweepsStaleTempFiles()
+    {
+        Directory.CreateDirectory(_dir);
+        var stale = Path.Combine(_dir, "config.json.deadbeef.tmp");
+        File.WriteAllText(stale, "orphaned by a killed writer");
+        File.SetLastWriteTimeUtc(stale, DateTime.UtcNow.AddHours(-2));
+
+        new ConfigService(_dir).LoadOrSeed(Seed());
+
+        Assert.False(File.Exists(stale));
+    }
+
     [Fact]
     public void SeedsBaselineRevisionOnFirstLoad()
     {

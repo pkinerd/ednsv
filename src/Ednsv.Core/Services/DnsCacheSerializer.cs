@@ -7,9 +7,8 @@ namespace Ednsv.Core.Services;
 /// <summary>
 /// Serializable DTO for a cached DNS query response.
 /// </summary>
-public class DnsCacheEntry : ICacheEntry
+public class DnsCacheEntry
 {
-    public DateTime CachedAtUtc { get; set; }
     public bool HasError { get; set; }
     public string? ErrorMessage { get; set; }
     /// <summary>DNS header RCODE (0=NoError, 3=NXDOMAIN, …). Persisted so a reloaded

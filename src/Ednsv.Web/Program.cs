@@ -50,10 +50,37 @@ else
 
 // ── Configuration ────────────────────────────────────────────────────────
 var dataDir = builder.Configuration.GetValue<string>("DataDir") ?? ".ednsv-data";
-var cacheDir = Path.Combine(dataDir, "cache");
+// Defaults to {DataDir}/cache, so an existing deployment is unchanged. Set it to a
+// pod-local volume to keep cache traffic off a shared mount — the recommended shape
+// alongside Redis — or to "none" to turn the disk tier off entirely.
+//
+// Blank resolves to the default rather than to "off". It has to: GetValue<string>
+// returns the empty string for a JSON null, so anything looser would disable the disk
+// cache for every deployment whose settings file so much as mentions the key.
+var cacheDirSetting = builder.Configuration.GetValue<string>("CacheDir");
+var cacheDir = string.IsNullOrWhiteSpace(cacheDirSetting)
+    ? Path.Combine(dataDir, "cache")
+    : cacheDirSetting.Trim();
+var diskCacheEnabled = !CacheManager.IsDisabled(cacheDir);
 var authDir = Path.Combine(dataDir, "auth");
-var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 24);
-var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 120);
+// 2h rather than 24h. With the disk cache no longer rewriting everything it knows on
+// every flush, a shorter retention costs little and bounds both the file count and
+// how stale a served answer can be. 0 still means "no cap".
+var cacheTtlHours = builder.Configuration.GetValue<int>("CacheTtlHours", 2);
+// The flush timer is now the only writer, so the interval is also the file
+// granularity: live files per instance are TTL / interval + 1, or 13 at the defaults.
+var flushIntervalSeconds = builder.Configuration.GetValue<int>("FlushIntervalSeconds", 600);
+// Upper bound on the shutdown cache flush, so a slow mount cannot push the
+// process past its termination grace period.
+var shutdownFlushSeconds = builder.Configuration.GetValue<int>("CacheShutdownFlushSeconds", 5);
+// How often to check whether the shared Redis cache has been emptied. Its own key
+// rather than the flush interval's, because the two have nothing in common: a flush
+// serialises and writes a file, this is a single Redis GET — a rounding error against
+// the hundreds of L2 operations a single validation already performs. Borrowing the
+// flush interval also left the recommended deployment (CacheDir=none, where no
+// flusher runs at all) taking its recovery latency from a key that governs nothing.
+// 0 disables the watch.
+var sharedCacheWatchSeconds = builder.Configuration.GetValue<int>("SharedCacheWatchSeconds", 30);
 
 // ── Distributed mode (opt-in) ─────────────────────────────────────────────
 // Redis is OPT-IN: unset connection string keeps the single-instance behaviour
@@ -64,6 +91,11 @@ var redisConnString = builder.Configuration.GetValue<string>("Redis:ConnectionSt
 var redisInstanceName = builder.Configuration.GetValue<string>("Redis:InstanceName") ?? "ednsv";
 var redisAccessKey = builder.Configuration.GetValue<string>("Redis:AccessKey");
 var jobRetentionMinutes = builder.Configuration.GetValue<int>("JobRetentionMinutes", 5);
+// How long a config/users beacon read is reused by read paths. These run on the
+// hot path of every request, so a Redis round-trip per read is not affordable.
+// Bounds how stale a peer's config change or token revocation can be. 0 = always check.
+var freshnessWindow = TimeSpan.FromMilliseconds(
+    builder.Configuration.GetValue<int>("Redis:FreshnessCheckMs", 1000));
 var redis = new RedisConnection(redisConnString, redisInstanceName, redisAccessKey);
 builder.Services.AddSingleton(redis);
 
@@ -88,7 +120,11 @@ var dnsTuning = new DnsTuning
     QueryTimeoutSeconds     = builder.Configuration.GetValue("Dns:QueryTimeoutSeconds",     15.0),
     QueryRetries            = builder.Configuration.GetValue("Dns:QueryRetries",            2),
     MaxRetries              = builder.Configuration.GetValue("Dns:MaxRetries",              3),
-    UnreachableDecayMinutes = builder.Configuration.GetValue("Dns:UnreachableDecayMinutes", 5.0)
+    UnreachableDecayMinutes = builder.Configuration.GetValue("Dns:UnreachableDecayMinutes", 5.0),
+    // 0 = off, which is the default: every DNS entry gets the full cache TTL, as
+    // before. Above zero and answers are bounded by their own record TTLs with this
+    // as the floor. See DnsTuning.CacheMinTtlSeconds.
+    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0)
 };
 DnsResolverService.SetMaxRetries(dnsTuning.MaxRetries);
 var smtpTimeoutSeconds     = builder.Configuration.GetValue("Smtp:TimeoutSeconds",     10.0);
@@ -134,6 +170,11 @@ const string EntraBearerScheme = "EntraBearer"; // IdP-issued JWT access tokens
 // CacheTtlHours controls per-entry in-memory cache expiry.
 var inMemoryTtl = cacheTtlHours > 0 ? TimeSpan.FromHours(cacheTtlHours) : (TimeSpan?)null;
 
+// Whether the caches should keep the key index that lets them republish themselves
+// into the shared tier. Only the watch below ever reads or prunes it, so with the
+// watch off the index would grow for the life of the process and never be used.
+var warmSharedCache = redis.Enabled && sharedCacheWatchSeconds > 0;
+
 DnsResolverService dns;
 if (!string.IsNullOrEmpty(dnsServerStr))
 {
@@ -142,19 +183,19 @@ if (!string.IsNullOrEmpty(dnsServerStr))
         if (IPAddress.TryParse(s.Trim(), out var ip))
             dnsServers.Add(ip);
     dns = dnsServers.Count > 0
-        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis)
-        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
+        ? new DnsResolverService(dnsServers, cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache)
+        : DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 }
 else
 {
-    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis);
+    dns = DnsResolverService.CreateWithSystemResolvers(cacheTtl: inMemoryTtl, tuning: dnsTuning, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 }
-var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis);
+var smtp = new SmtpProbeService(cacheTtl: inMemoryTtl, timeoutSeconds: smtpTimeoutSeconds, portTimeoutSeconds: smtpPortTimeoutSeconds, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 // HTTPS certificate validation is ON by default (required for trustworthy MTA-STS /
 // BIMI / DoH results). Only disable it for a TLS-intercepting egress proxy whose CA
 // isn't trusted by the host — this makes all HTTPS verdicts untrustworthy.
 var validateHttpsCerts = builder.Configuration.GetValue<bool>("ValidateHttpsCertificates", true);
-var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis);
+var http = new HttpProbeService(cacheTtl: inMemoryTtl, validateCertificates: validateHttpsCerts, timeoutSeconds: httpTimeoutSeconds, maxConcurrency: httpMaxConcurrency, redis: redis, persistToDisk: diskCacheEnabled, warmSharedCache: warmSharedCache);
 if (!validateHttpsCerts)
     Console.Error.WriteLine("WARNING: HTTPS certificate validation is DISABLED (ValidateHttpsCertificates=false) — MTA-STS/BIMI/DoH TLS results cannot be trusted.");
 
@@ -177,7 +218,7 @@ string? Disp(string? value) =>
 // On first run, seed from env vars + DkimSelectorsCheck.CommonSelectors so an
 // out-of-the-box install matches built-in behavior. After that the file is the
 // source of truth and admins edit it via the web UI.
-var configService = new ConfigService(dataDir, redis);
+var configService = new ConfigService(dataDir, redis, freshnessWindow);
 var seedConfig = new AppConfig
 {
     EnableSmtpProbes = defaultEnableSmtpProbes,
@@ -190,7 +231,19 @@ var seedConfig = new AppConfig
             .Select(s => s.Trim()).Where(s => s.Length > 0).ToList()
         : DkimSelectorsCheck.CommonSelectors.ToList()
 };
-configService.LoadOrSeed(seedConfig);
+try
+{
+    // A corrupt config self-heals (quarantine the bad file, restore the newest
+    // valid revision) so replicas keep serving. Only a config that cannot be READ
+    // is fatal — those bytes can't be backed up, so overwriting them would be the
+    // data loss we're guarding against.
+    configService.LoadOrSeed(seedConfig, msg => Console.Error.WriteLine($"WARNING: {msg}"));
+}
+catch (ConfigUnreadableException ex)
+{
+    Console.Error.WriteLine($"FATAL: {ex.Message}");
+    throw;
+}
 builder.Services.AddSingleton(configService);
 
 // Default validation options track the live config snapshot. Endpoints that
@@ -236,11 +289,11 @@ var DomainPattern = new Regex(
 bool IsPlausibleDomain(string d) => !string.IsNullOrEmpty(d) && DomainPattern.IsMatch(d);
 
 // ── Cache manager ────────────────────────────────────────────────────────
-var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http, redis);
+var cacheManager = new CacheManager(cacheDir, TimeSpan.FromHours(cacheTtlHours), dns, smtp, http);
 builder.Services.AddSingleton(cacheManager);
 
 // ── Auth ─────────────────────────────────────────────────────────────────
-var authService = new AuthService(authDir, authTokenHash, redis);
+var authService = new AuthService(authDir, authTokenHash, redis, freshnessWindow);
 authService.Load();
 builder.Services.AddSingleton(authService);
 
@@ -456,16 +509,161 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// ── Load cache from disk at startup ──────────────────────────────────────
-var cacheResult = await cacheManager.LoadAsync();
-if (cacheResult != null)
-    app.Logger.LogInformation("Loaded cache ({Total} entries, {Age:F0}m old): {Dns} DNS, {Smtp} SMTP, {Rcpt} RCPT, {Http} HTTP, {Ptr} PTR, {Port} port",
-        cacheResult.Total, cacheResult.Age.TotalMinutes,
-        cacheResult.DnsQueries, cacheResult.SmtpProbes, cacheResult.RcptProbes,
-        cacheResult.HttpRequests, cacheResult.PtrLookups, cacheResult.PortProbes);
+// ── Disk cache posture ───────────────────────────────────────────────────
+if (!diskCacheEnabled)
+{
+    if (redis.Enabled)
+        app.Logger.LogInformation(
+            "Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only — "
+            + "the recommended shape for a multi-pod deployment, since instances republish their own cache into "
+            + "Redis whenever it is emptied.");
+    else
+        app.Logger.LogWarning(
+            "Disk cache disabled (CacheDir=none) and no Redis is configured, so nothing survives a restart: "
+            + "every probe result is refetched from the network on each start. Reasonable for a dev box, "
+            + "almost certainly a misconfiguration in production.");
+}
+else if (cacheTtlHours > 0)
+{
+    app.Logger.LogInformation(
+        "Disk cache at {CacheDir} (TTL {Ttl}h, flush every {Interval}s).",
+        cacheDir, cacheTtlHours, flushIntervalSeconds);
+}
+else
+{
+    // Worth saying out loud rather than leaving an operator to infer it from a file
+    // listing: expiry off still bounds the files, because an append-only directory
+    // with nothing sweeping it grows for ever even while memory stays flat.
+    app.Logger.LogInformation(
+        "Disk cache at {CacheDir} with expiry disabled (CacheTtlHours=0), flush every {Interval}s. "
+        + "Cached values do not expire in memory, but files are still swept after {Floor}h — "
+        + "each flush appends a new file, so without a retention floor the directory would grow without bound.",
+        cacheDir, flushIntervalSeconds, DiskCacheService.UncappedRetention.TotalHours);
+}
+
+// ── Load cache from disk, in the background ──────────────────────────────
+//
+// Awaiting this would make startup latency scale with the number of replicas: on a
+// shared mount every instance reads every other instance's files, and a rolling
+// deploy has all of them doing it at once against one endpoint. The instance serves
+// immediately with a cold cache and warms behind it — validations that arrive first
+// simply refetch, and the importer never overwrites a key they have already cached.
+//
+// /health/ready deliberately does not wait on this. Its own try/catch is not
+// optional: an unobserved exception on a background task must log, not take the
+// process down.
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var cacheResult = await cacheManager.LoadAsync();
+        if (cacheResult != null)
+            app.Logger.LogInformation("Loaded cache ({Total} entries, {Age:F0}m old): {Dns} DNS, {Smtp} SMTP, {Rcpt} RCPT, {Http} HTTP, {Ptr} PTR, {Port} port",
+                cacheResult.Total, cacheResult.Age.TotalMinutes,
+                cacheResult.DnsQueries, cacheResult.SmtpProbes, cacheResult.RcptProbes,
+                cacheResult.HttpRequests, cacheResult.PtrLookups, cacheResult.PortProbes);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Background cache load failed; continuing with a cold cache.");
+    }
+});
 
 // Start periodic background flush
 cacheManager.StartBackgroundFlusher(TimeSpan.FromSeconds(flushIntervalSeconds));
+
+// ── Watch for the shared cache being emptied ─────────────────────────────
+//
+// A Redis restart without persistence, a FLUSHALL, or a failover to an empty
+// replica leaves the L2 cold, and it does not refill on its own: every instance is
+// still serving happily from its own L1 and has no reason to refetch anything. Left
+// alone the shared cache stays degraded until entries age out naturally, which
+// silently breaks the recovery a multi-pod deployment leans on — a rescheduled pod
+// is meant to come back warm from the L2.
+//
+// Republishing from memory needs no disk tier, so this runs wherever Redis does. It
+// is what lets a large Redis-backed deployment set CacheDir=none and still be
+// self-healing: its L1 is then the only copy of those results in existence.
+Timer? sharedCacheWatch = null;
+if (redis.Enabled && sharedCacheWatchSeconds <= 0)
+{
+    app.Logger.LogWarning(
+        "Shared-cache watch disabled (SharedCacheWatchSeconds=0). An emptied Redis will not be "
+        + "repopulated, so the shared cache stays cold until entries age out of memory naturally. "
+        + "The key index the re-warm needs is not kept either, so re-enabling it requires a restart.");
+}
+else if (redis.Enabled)
+{
+    var epoch = new SharedCacheEpoch(redis);
+    var watchInterval = TimeSpan.FromSeconds(sharedCacheWatchSeconds);
+
+    // The first tick comes soon rather than after a full interval, because it is the
+    // one that *establishes* the epoch — and the first check deliberately never asks
+    // for a re-warm, since startup has just warmed the L2 itself. Leaving it until the
+    // first full interval would mean a flush inside that window was absorbed by the
+    // first check and never noticed.
+    var firstTick = TimeSpan.FromSeconds(Math.Min(5, sharedCacheWatchSeconds));
+
+    app.Logger.LogInformation(
+        "Watching the shared cache every {Interval}s; an emptied Redis is repopulated from memory.",
+        sharedCacheWatchSeconds);
+
+    sharedCacheWatch = new Timer(_ => _ = Task.Run(async () =>
+    {
+        try
+        {
+            // Every tick, not just on a re-warm: MemoryCache expires lazily and never
+            // says so, so the index would otherwise accumulate every key ever cached.
+            cacheManager.PruneSharedCacheIndex();
+
+            if (!await epoch.ShouldRewarmAsync()) return;
+
+            app.Logger.LogInformation(
+                "Shared cache appears to have been emptied — republishing the cache held by this instance.");
+            var warmed = cacheManager.WarmSharedCache();
+            app.Logger.LogInformation("Shared cache re-warm complete ({Warmed} entries republished).", warmed);
+        }
+        catch (Exception ex)
+        {
+            // Unobserved: it must log rather than take the process down.
+            app.Logger.LogWarning(ex, "Shared cache re-warm failed; it will be retried on the next tick.");
+        }
+    }), null, firstTick, watchInterval);
+}
+
+// ── Graceful shutdown ────────────────────────────────────────────────────
+// These singletons are registered as pre-created instances, and the DI
+// container only disposes what it constructs itself — so nothing here is
+// disposed on shutdown unless we do it. Without this the final cache flush
+// never runs and everything gathered since the last periodic flush is lost on
+// every deploy.
+//
+// Best-effort and time-gated: a slow or wedged mount must not hold the process
+// past its termination grace period. If the flush overruns we abandon the wait
+// and let the process exit; the cache is disposable by design.
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    var budget = TimeSpan.FromSeconds(shutdownFlushSeconds);
+    try
+    {
+        var flush = Task.Run(async () => await cacheManager.DisposeAsync());
+        if (flush.Wait(budget))
+            app.Logger.LogInformation("Cache flushed on shutdown.");
+        else
+            app.Logger.LogWarning(
+                "Shutdown cache flush did not finish within {Budget}s; abandoning it so termination is not delayed.",
+                budget.TotalSeconds);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Shutdown cache flush failed.");
+    }
+
+    // Before the connection it uses, and before the cache manager it would reload.
+    try { sharedCacheWatch?.Dispose(); } catch { /* best effort */ }
+    try { validationTracker.Dispose(); } catch { /* best effort */ }
+    try { redis.Dispose(); } catch { /* best effort */ }
+});
 
 // Fail closed: an instance with NO auth method enabled (no token hash, no
 // OIDC SSO, no JWT bearer) may only run when it is bound to loopback
@@ -944,8 +1142,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         logger.LogInformation(
             "Validation completed: endpoint=sync durationSec={Duration:F2} pass={Pass} warning={Warning} error={Error} critical={Critical}",
             report.Duration.TotalSeconds, report.PassCount, report.WarningCount, report.ErrorCount, report.CriticalCount);
-        _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
-        cache.RequestFlush();
+        cache.SaveDomainResult(domain, ValidationTracker.BuildSummary(report));
         return Results.Ok(report);
     }
     catch (OperationCanceledException)
@@ -969,30 +1166,6 @@ app.MapGet("/api/cache/stats", (DnsResolverService dnsSvc) =>
 .WithName("GetCacheStats")
 .WithTags("Cache");
 
-// POST /api/cache/flush
-app.MapPost("/api/cache/flush", async (HttpContext ctx, CacheManager cache) =>
-{
-    await cache.FlushAsync();
-    auditLogger.LogInformation("Cache flushed by={User}",
-        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
-    return Results.Ok(new { flushed = true });
-})
-.WithName("FlushCache")
-.WithTags("Cache");
-
-// POST /api/cache/clear — admin-only. Wipes ALL caches (in-memory DNS/SMTP/HTTP
-// probe caches + recheck summaries + on-disk cache files). Every probe is
-// re-fetched afterwards, so this degrades performance until caches re-warm.
-app.MapPost("/api/cache/clear", async (HttpContext ctx, AuthService auth, CacheManager cache) =>
-{
-    if (!RequireAdmin(ctx, auth, out var err)) return err!;
-    await cache.ClearAllAsync();
-    auditLogger.LogWarning("Cache CLEARED (memory + disk) by={User}",
-        Disp((ctx.Items["AuthUser"] as AuthService.User)?.Username));
-    return Results.Ok(new { cleared = true });
-})
-.WithName("ClearCache")
-.WithTags("Cache");
 
 // GET /api/checks
 app.MapGet("/api/checks", () => Results.Ok(CheckDescriptions.Categories))
@@ -1122,6 +1295,33 @@ app.MapGet("/api/config/history/{id:int}", (int id, HttpContext ctx, AuthService
     return cfg == null ? Results.NotFound(new { error = "revision not found" }) : Results.Ok(cfg);
 })
 .WithName("GetConfigRevision")
+.WithTags("Config");
+
+// GET /api/config/history/{id}/raw — the stored text of a revision.
+app.MapGet("/api/config/history/{id:int}/raw", (int id, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    var raw = cfgSvc.GetRevisionRaw(id);
+    return raw == null
+        ? Results.NotFound(new { error = "revision not found" })
+        : Results.Text(raw, "text/plain");
+})
+.WithName("GetConfigRevisionRaw")
+.WithTags("Config");
+
+// GET /api/config/history/corrupt/{key}/raw — a quarantined config.json that
+// failed to parse, addressed by the content hash that names it. Served as text
+// because it is by definition not valid config JSON. The key is validated in
+// ConfigService before it reaches the filesystem.
+app.MapGet("/api/config/history/corrupt/{key}/raw", (string key, HttpContext ctx, AuthService auth, ConfigService cfgSvc) =>
+{
+    if (!RequireAdmin(ctx, auth, out var err)) return err!;
+    var raw = cfgSvc.GetQuarantinedRaw(key);
+    return raw == null
+        ? Results.NotFound(new { error = "quarantined config not found" })
+        : Results.Text(raw, "text/plain");
+})
+.WithName("GetQuarantinedConfigRaw")
 .WithTags("Config");
 
 // ── Debug / diagnostics (admin-only) ─────────────────────────────────────
@@ -1732,8 +1932,7 @@ class ValidationTracker : IDisposable
                     job.PassCount, job.InfoCount, job.WarningCount, job.ErrorCount, job.CriticalCount,
                     dnsHits, dnsMisses);
 
-                _ = cache.SaveDomainResultAsync(domain, ValidationTracker.BuildSummary(report));
-                cache.RequestFlush();
+                cache.SaveDomainResult(domain, ValidationTracker.BuildSummary(report));
             }
             catch (Exception ex)
             {

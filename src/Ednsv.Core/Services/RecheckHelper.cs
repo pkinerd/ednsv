@@ -27,7 +27,13 @@ public static class RecheckHelper
         Port = 16,
         Rcpt = 32,
         Http = 64,
-        All = Dns | ServerDns | Ptr | Smtp | Port | Rcpt | Http
+        /// <summary>Zone-transfer verdicts and the transfers themselves. Its own flag
+        /// rather than riding on <see cref="Dns"/>, which nearly every category
+        /// declares: an AXFR attempt is a TCP query per nameserver with a ten-second
+        /// budget, so every recheck of any kind would otherwise re-run zone transfers
+        /// wherever the feature is enabled.</summary>
+        Axfr = 128,
+        All = Dns | ServerDns | Ptr | Smtp | Port | Rcpt | Http | Axfr
     }
 
     /// <summary>
@@ -63,7 +69,7 @@ public static class RecheckHelper
         CheckCategory.Abuse => CacheDep.Rcpt,
         CheckCategory.Wildcard => CacheDep.Dns,
         CheckCategory.TTL => CacheDep.Dns,
-        CheckCategory.ZoneTransfer => CacheDep.Dns,
+        CheckCategory.ZoneTransfer => CacheDep.Dns | CacheDep.Axfr,
         CheckCategory.SecurityTxt => CacheDep.Http,
         CheckCategory.TXT => CacheDep.Dns,
         _ => CacheDep.Dns

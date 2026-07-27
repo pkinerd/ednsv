@@ -1,8 +1,43 @@
 using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Caching.Memory;
 using StackExchange.Redis;
 
 namespace Ednsv.Core.Services;
+
+/// <summary>Policy that belongs to the shared L2 itself rather than to any one
+/// value type it caches.</summary>
+public static class ProbeCacheL2
+{
+    /// <summary>
+    /// The lifetime given to shared-cache keys when no TTL is configured
+    /// (<c>CacheTtlHours=0</c>).
+    ///
+    /// <para><b>Why the L2 cannot honour "never expire".</b> Two reasons, both specific
+    /// to Redis. It is a fixed allocation shared by every pod, so unbounded writes grow
+    /// until something evicts them — and a key with no TTL is invisible to a
+    /// <c>volatile-*</c> policy, which is what the deployment guidance recommends
+    /// precisely so the coordination keys stay exempt. Writing without an expiry
+    /// therefore does not merely grow the cache; it removes the server's ability to shed
+    /// it, and a full server rejects writes instead.</para>
+    ///
+    /// <para><b>Why a day.</b> The L2 exists to share work a sibling pod has just done
+    /// and to warm a pod that has just come back. Both are about recent results: a
+    /// running pod reads its own L1 first and never consults this, and a fresh pod
+    /// warming from a week-old entry has taken a cache miss it would rather have taken
+    /// honestly. A day covers the useful window at a seventh of the memory a week costs.</para>
+    ///
+    /// <para><b>Deliberately not shared with
+    /// <see cref="DiskCacheService"/>'s floor</b>, which happens to be the same number
+    /// for unrelated reasons — an append-only directory that nothing dedupes, and a load
+    /// path that applies no other staleness cutoff when expiry is off. The two tiers are
+    /// configured independently and, in the recommended layouts, are not even used
+    /// together: a single instance runs the disk tier without Redis, and a multi-pod
+    /// deployment runs Redis with <c>CacheDir=none</c>. Sharing one constant meant a
+    /// change made for one tier silently resized the other.</para>
+    /// </summary>
+    public static readonly TimeSpan UncappedLifetime = TimeSpan.FromHours(24);
+}
 
 /// <summary>
 /// Optional shared L2 for a <see cref="ProbeCache{T}"/>: a Redis-backed,
@@ -35,6 +70,15 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     /// <summary>True when the backing Redis connection is configured.</summary>
     public bool Enabled => _redis.Enabled;
 
+    /// <summary>
+    /// The lifetime a value written now would get: the configured TTL, or
+    /// <see cref="ProbeCacheL2.UncappedLifetime"/> when expiry is switched off.
+    /// <c>CacheTtlHours=0</c> means "do not expire" for the memory tier, which is keyed
+    /// and therefore self-bounding; see that field for why the L2 cannot follow suit.
+    /// </summary>
+    private TimeSpan LifetimeFor(TimeSpan? ttl)
+        => ttl is { } t && t > TimeSpan.Zero ? t : ProbeCacheL2.UncappedLifetime;
+
     /// <summary>Read a value from the L2, or null on miss / any error.</summary>
     public async Task<TValue?> TryGetAsync(string key)
     {
@@ -49,8 +93,11 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         catch { return null; }
     }
 
-    /// <summary>Write-through to the L2 (fire-and-forget). Best-effort.</summary>
-    public void Set(string key, TValue value)
+    /// <summary>Write-through to the L2 (fire-and-forget). Best-effort.
+    /// <paramref name="entryTtl"/> overrides the cache-wide TTL for values that carry
+    /// their own — a DNS answer bounded by its record TTL, say — so the shared copy
+    /// does not outlive the local one.</summary>
+    public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
         var db = _redis.GetDatabase();
         if (db == null) return;
@@ -58,8 +105,49 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
         try { payload = _serialize(value); }
         catch { return; }
         if (payload == null) return;
-        try { db.StringSet(_redis.Key(_prefix + key), payload, _ttl, flags: CommandFlags.FireAndForget); }
+        try
+        {
+            db.StringSet(_redis.Key(_prefix + key), payload, LifetimeFor(entryTtl ?? _ttl),
+                flags: CommandFlags.FireAndForget);
+        }
         catch { /* best effort — an L2 write failure just means the next pod refills */ }
+    }
+
+    /// <summary>
+    /// Publish a value read from disk into the shared L2, but only if no value is
+    /// there already. Used to warm Redis from the disk tier at startup.
+    ///
+    /// <para>Both halves matter. <paramref name="ttl"/> is the entry's <i>remaining</i>
+    /// life, not a fresh full TTL, or loading a nearly-dead entry would resurrect it
+    /// for another whole period. <c>When.NotExists</c> keeps a cluster-wide restart
+    /// idempotent and stops one instance overwriting a fresher value another has
+    /// already published — every instance holds an overlapping view of the same
+    /// files, so without it they would all race to publish their own copies.</para>
+    /// </summary>
+    public void SetIfAbsent(string key, TValue value, TimeSpan ttl)
+    {
+        if (ttl <= TimeSpan.Zero) return;
+
+        // Capped at what a fresh write would get, so the same entry does not end up with
+        // a different lifetime depending on which path published it. Without this an
+        // entry carrying no expiry — a record written by a process running with
+        // CacheTtlHours=0, or an L1 entry whose expiry is DateTime.MaxValue — arrived
+        // here as a remaining life of nearly eight thousand years, and Redis stored it.
+        var max = LifetimeFor(_ttl);
+        if (ttl > max) ttl = max;
+
+        var db = _redis.GetDatabase();
+        if (db == null) return;
+        string? payload;
+        try { payload = _serialize(value); }
+        catch { return; }
+        if (payload == null) return;
+        try
+        {
+            db.StringSet(_redis.Key(_prefix + key), payload, ttl,
+                when: When.NotExists, flags: CommandFlags.FireAndForget);
+        }
+        catch { /* best effort */ }
     }
 }
 
@@ -86,12 +174,12 @@ public class ProbeCache<TValue> where TValue : class
     private readonly TimeSpan? _ttl;
     // Optional shared L2 (Redis). Null in single-instance mode.
     private readonly ProbeCacheL2<TValue>? _l2;
-    // Write-through log for disk export — never read during cache lookups.
-    // Each entry carries the time its value was obtained (a fresh network fetch
-    // stamps DateTime.UtcNow via Set; an entry loaded from disk keeps its original
-    // disk timestamp via the Import overload) so disk persistence can age entries
-    // from when they were actually fetched, not from first-ever cache or save time.
-    private readonly ConcurrentDictionary<string, (TValue Value, DateTime CachedAtUtc)> _exportLog = new();
+    // Results this process fetched fresh and has not yet written to disk. Never
+    // read during cache lookups. Entries imported from disk and values read from
+    // the shared Redis L2 deliberately do NOT land here — they are already
+    // persisted, and re-persisting them is what made every flush rewrite the whole
+    // cache. A flush drains this and removes exactly what it wrote.
+    private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
     // In-flight query deduplication — concurrent callers for the same key share one Task.
     // Uses Lazy<Task> so that even if ConcurrentDictionary.GetOrAdd invokes the value
     // factory on multiple threads, only one Lazy is stored and only its .Value (which
@@ -109,21 +197,51 @@ public class ProbeCache<TValue> where TValue : class
         set => TraceContext.Sink = value;
     }
 
-    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null)
+    // False when there is no disk tier configured. The gate belongs here rather than
+    // only on the flusher: with nothing draining it, a bag nobody writes out grows for
+    // the life of the process.
+    private readonly bool _persist;
+
+    /// <summary>
+    /// Key → absolute expiry for everything in L1, so the shared cache can be
+    /// republished from memory after it has been emptied. <see cref="MemoryCache"/>
+    /// cannot be enumerated on .NET 8, hence the parallel index.
+    ///
+    /// <para>Null unless there is a shared tier to warm <i>and</i> something that will
+    /// warm it, so a single-instance deployment pays nothing for it at all. The second
+    /// half of that condition matters as much as the first: nothing else prunes this
+    /// index, so with the shared-cache watch turned off it would accumulate every
+    /// distinct key the process ever cached — expired entries included — for the life
+    /// of the process.</para>
+    ///
+    /// <para>It is a <i>hint</i>, not a second source of truth: every use checks the
+    /// key against MemoryCache and drops it if it has gone. That makes a stale entry
+    /// harmless, which matters because eviction callbacks fire lazily and cannot be
+    /// relied on to keep an index exact.</para>
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime>? _l2Index;
+
+    /// <param name="warmSharedCache">False when nothing will ever republish this cache
+    /// into the shared tier — no Redis, or the shared-cache watch disabled. Skips the
+    /// key index entirely; see <see cref="_l2Index"/>.</param>
+    public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true,
+        bool warmSharedCache = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
+        _persist = persist;
+        _l2Index = _l2 != null && warmSharedCache ? new ConcurrentDictionary<string, DateTime>() : null;
+    }
+
+    /// <summary>The expiry an entry cached now would carry.</summary>
+    private DateTime AbsoluteExpiry(TimeSpan? entryTtl)
+    {
+        var ttl = entryTtl ?? _ttl;
+        return ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
-    public void Clear()
-    {
-        _cache.Clear();
-        _exportLog.Clear();
-        _inflight.Clear();
-    }
-
     /// <summary>Try to read a cached value. Returns false on miss or recheck bypass.</summary>
     public bool TryGet(string key, out TValue value, RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
@@ -156,7 +274,8 @@ public class ProbeCache<TValue> where TValue : class
     public async Task<TValue> GetOrCreateAsync(string key, Func<Task<TValue>> factory,
         RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None,
         Func<TValue, bool>? shouldPersist = null,
-        Action? onHit = null)
+        Action? onHit = null,
+        Func<TValue, TimeSpan?>? entryTtl = null)
     {
         // 1. Check cache (respects recheck bypass)
         if (TryGet(key, out var cached, recheckFlag))
@@ -178,7 +297,7 @@ public class ProbeCache<TValue> where TValue : class
         var lazy = _inflight.GetOrAdd(key, _ =>
         {
             isNewEntry = true;
-            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist, bypass));
+            return new Lazy<Task<TValue>>(() => RunFactory(key, factory, shouldPersist, bypass, entryTtl));
         });
 
         if (!isNewEntry)
@@ -196,7 +315,8 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory, Func<TValue, bool>? shouldPersist, bool skipL2Read)
+    private async Task<TValue> RunFactory(string key, Func<Task<TValue>> factory,
+        Func<TValue, bool>? shouldPersist, bool skipL2Read, Func<TValue, TimeSpan?>? entryTtl)
     {
         try
         {
@@ -208,19 +328,26 @@ public class ProbeCache<TValue> where TValue : class
                 if (l2v != null)
                 {
                     Trace?.Invoke($"[CACHE] L2 HIT {key}");
-                    Set(key, l2v);
+                    // Memory only: another instance fetched and persisted this, so
+                    // writing it out again would duplicate their work on our disk.
+                    SetMemoryOnly(key, l2v);
                     return l2v;
                 }
             }
 
             var result = await factory();
             // Always cache in MemoryCache (avoids repeated network calls within a run).
-            // Only add to _exportLog / L2 when shouldPersist approves (transient
-            // errors stay L1-only and never poison disk or the shared L2).
+            // Only queue for persistence / push to L2 when shouldPersist approves
+            // (transient errors stay L1-only and never poison disk or the shared L2).
             if (shouldPersist == null || shouldPersist(result))
             {
-                Set(key, result);
-                _l2?.Set(key, result);
+                // Computed once and used for L1, the disk record and the L2 alike, so
+                // a value bounded by its own TTL is bounded everywhere.
+                TimeSpan? ttl;
+                try { ttl = entryTtl?.Invoke(result); }
+                catch { ttl = null; } // a TTL we cannot derive falls back to the cache's
+                Set(key, result, ttl);
+                _l2?.Set(key, result, ttl);
             }
             else
                 SetMemoryOnly(key, result);
@@ -232,90 +359,228 @@ public class ProbeCache<TValue> where TValue : class
         }
     }
 
-    /// <summary>Store a value in MemoryCache and the disk export log, stamping it
-    /// with the current time (a fresh fetch).</summary>
-    public void Set(string key, TValue value)
+    /// <summary>
+    /// Store a freshly fetched value in MemoryCache and queue it for persistence.
+    ///
+    /// <para><paramref name="entryTtl"/> lets a value shorten its own life below the
+    /// cache-wide TTL — a DNS answer whose records say thirty seconds should not be
+    /// served for two hours. It applies to the MemoryCache expiry and to the expiry
+    /// stamped on the disk record together, so the two never disagree.</para>
+    /// </summary>
+    public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
-        if (_ttl.HasValue)
-            _cache.Set(key, value, _ttl.Value);
+        var ttl = entryTtl ?? _ttl;
+        var expires = ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
+
+        if (ttl.HasValue)
+            _cache.Set(key, value, ttl.Value);
         else
             _cache.Set(key, value);
 
-        _exportLog[key] = (value, DateTime.UtcNow);
+        if (_l2Index != null) _l2Index[key] = expires;
+
+        if (!_persist) return; // no disk tier — nothing would ever drain the bag
+
+        _bag[key] = new BagEntry<TValue>(value, DateTime.UtcNow, expires);
     }
 
     /// <summary>
-    /// Store a value in MemoryCache only — NOT added to the disk export log.
-    /// Used for error/timeout results that should be available within the current
-    /// process (avoiding repeated network calls) but not persisted across restarts.
+    /// Store a value in MemoryCache only, without queueing it for persistence.
+    /// Used for three cases that must not be written back: transient errors that
+    /// should not outlive the process, values read from the shared Redis L2 (another
+    /// instance already persisted them), and entries imported from disk (they are
+    /// on disk by definition).
     /// </summary>
-    private void SetMemoryOnly(string key, TValue value)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
     {
-        if (_ttl.HasValue)
-            _cache.Set(key, value, _ttl.Value);
-        else
-            _cache.Set(key, value);
-    }
-
-    /// <summary>Import an entry from disk, stamping it with the current time.
-    /// Prefer the overload that preserves the original fetch timestamp.</summary>
-    public void Import(string key, TValue value)
-    {
-        Set(key, value);
-    }
-
-    /// <summary>Import an entry from disk, preserving its original fetch timestamp
-    /// so per-entry TTL continues to age from when the value was fetched.</summary>
-    public void Import(string key, TValue value, DateTime cachedAtUtc)
-    {
-        if (_ttl.HasValue)
+        if (absoluteExpiryUtc.HasValue)
+            _cache.Set(key, value, new DateTimeOffset(
+                DateTime.SpecifyKind(absoluteExpiryUtc.Value, DateTimeKind.Utc)));
+        else if (_ttl.HasValue)
             _cache.Set(key, value, _ttl.Value);
         else
             _cache.Set(key, value);
 
-        _exportLog[key] = (value, cachedAtUtc);
+        if (_l2Index != null) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
     }
 
-    /// <summary>Export all entries that are still alive in MemoryCache.</summary>
+    /// <summary>
+    /// Take an entry read from disk. Never queued for persistence — it came from
+    /// disk, so writing it back is the redundancy this design exists to remove.
+    ///
+    /// <para><b>Present keys are left alone.</b> The load runs in the background
+    /// while the instance is already serving, so a validation can fetch and cache a
+    /// key before the loader reaches it. That value came from the network just now
+    /// and the disk copy did not; overwriting it would age the cache backwards. A
+    /// fetch still in flight counts as present, since it will cache its result on
+    /// completion. The check is not atomic against a fetch that both starts and
+    /// finishes inside it — the cost of closing that window is a lock on every read,
+    /// and the consequence of losing it is one key holding a slightly older value
+    /// until its expiry.</para>
+    ///
+    /// <para><paramref name="expiresUtc"/> is the entry's own expiry from its record.
+    /// Honouring it means an entry with ten minutes left is cached for ten minutes
+    /// rather than being handed a fresh full TTL and resurrected; one already past
+    /// its expiry is refused outright. Records written before per-entry expiry
+    /// existed pass null and fall back to the cache's TTL.</para>
+    ///
+    /// <para>Returns whether the value was taken.</para>
+    /// </summary>
+    public bool Import(string key, TValue value, DateTime? expiresUtc = null)
+    {
+        if (expiresUtc.HasValue && expiresUtc.Value <= DateTime.UtcNow) return false;
+
+        // Warm the shared tier *before* consulting L1, not after. Whether we already
+        // hold a key locally says nothing about whether the shared cache holds it —
+        // and it matters most in the case the ordering would break: re-running the
+        // load to repopulate an emptied Redis finds L1 already holding nearly
+        // everything, so a warm placed below these checks would publish nothing at
+        // all. `SetIfAbsent` makes it safe to attempt unconditionally.
+        if (expiresUtc.HasValue && _l2 != null)
+            _l2.SetIfAbsent(key, value, expiresUtc.Value - DateTime.UtcNow);
+
+        if (_inflight.ContainsKey(key)) return false;
+        if (_cache.TryGetValue(key, out TValue? live) && live != null) return false;
+
+        SetMemoryOnly(key, value, expiresUtc);
+        return true;
+    }
+
+    /// <summary>
+    /// Snapshot the values awaiting persistence as writable records, plus the means
+    /// to drop them once written. Entries whose MemoryCache copy has already expired
+    /// are discarded rather than written; anything the serialiser rejects is left in
+    /// the bag for a later attempt rather than silently lost.
+    /// </summary>
+    public PendingWrites CollectPending(string type, Func<TValue, JsonNode?> serialize)
+    {
+        var snapshot = _bag.ToArray();
+        if (snapshot.Length == 0) return PendingWrites.None;
+
+        var records = new List<CacheRecord>(snapshot.Length);
+        var claimed = new List<KeyValuePair<string, BagEntry<TValue>>>(snapshot.Length);
+        var dropped = new List<KeyValuePair<string, BagEntry<TValue>>>();
+
+        foreach (var kv in snapshot)
+        {
+            if (!_cache.TryGetValue(kv.Key, out TValue? live) || live == null)
+            {
+                dropped.Add(kv); // expired out of memory before we got to it
+                continue;
+            }
+
+            JsonNode? json;
+            try { json = serialize(kv.Value.Value); }
+            catch { continue; } // leave it queued; a later flush may fare better
+            if (json == null) continue;
+
+            records.Add(new CacheRecord
+            {
+                Type = type,
+                Key = kv.Key,
+                WrittenUtc = kv.Value.WrittenUtc,
+                ExpiresUtc = kv.Value.ExpiresUtc,
+                Value = json
+            });
+            claimed.Add(kv);
+        }
+
+        foreach (var kv in dropped) _bag.TryRemove(kv);
+
+        return new PendingWrites(records, () =>
+        {
+            // Reference-matched removal: a newer entry for the same key that landed
+            // during the write is not equal to this one and therefore survives.
+            foreach (var kv in claimed) _bag.TryRemove(kv);
+        });
+    }
+
+    /// <summary>Values awaiting persistence that are still live in MemoryCache.</summary>
     public Dictionary<string, TValue> Export()
     {
         var result = new Dictionary<string, TValue>();
-        foreach (var kvp in _exportLog)
+        foreach (var kvp in _bag)
         {
-            // Only export entries still alive in MemoryCache (not expired)
             if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
                 result[kvp.Key] = val;
         }
         return result;
     }
 
-    /// <summary>Export live entries together with the time each value was fetched,
-    /// so disk persistence can age entries from their real fetch time.</summary>
-    public Dictionary<string, (TValue Value, DateTime CachedAtUtc)> ExportTimed()
+    /// <summary>
+    /// Republish everything this instance holds in L1 into the shared cache, for use
+    /// after Redis has been emptied. Returns how many keys were published.
+    ///
+    /// <para>Memory rather than disk is the right source, and not only because it is
+    /// fresher and needs no file I/O: <b>L1 is a superset of what this instance would
+    /// have found on disk.</b> The startup load imports every instance's live records
+    /// into L1, so after startup L1 holds those <i>plus</i> everything fetched since —
+    /// including the last flush interval's worth, which is not on disk yet. It also
+    /// works where a disk re-read cannot: a deployment running <c>CacheDir=none</c>
+    /// against a managed Redis has no disk tier at all, and its L1 is then the only
+    /// copy of those results in existence.</para>
+    ///
+    /// <para><c>SetIfAbsent</c> with each entry's remaining life, so instances warming
+    /// concurrently cannot clobber each other or resurrect a nearly-dead value.</para>
+    /// </summary>
+    public int WarmSharedCache()
     {
-        var result = new Dictionary<string, (TValue, DateTime)>();
-        foreach (var kvp in _exportLog)
+        if (_l2 == null || _l2Index == null) return 0;
+
+        var now = DateTime.UtcNow;
+        var warmed = 0;
+
+        foreach (var kv in _l2Index)
         {
-            if (_cache.TryGetValue(kvp.Key, out TValue? val) && val != null)
-                result[kvp.Key] = (val, kvp.Value.CachedAtUtc);
+            if (kv.Value <= now || !_cache.TryGetValue(kv.Key, out TValue? live) || live == null)
+            {
+                _l2Index.TryRemove(kv.Key, out _); // gone from L1 — the index was only a hint
+                continue;
+            }
+
+            _l2.SetIfAbsent(kv.Key, live, kv.Value - now);
+            warmed++;
         }
-        return result;
+
+        return warmed;
     }
+
+    /// <summary>
+    /// Drop index entries whose keys have expired. Called periodically because
+    /// MemoryCache expires lazily and never tells us: without this the index would
+    /// accumulate every key the process had ever cached, rather than the live set.
+    /// </summary>
+    public void PruneSharedCacheIndex()
+    {
+        if (_l2Index == null) return;
+
+        var now = DateTime.UtcNow;
+        foreach (var kv in _l2Index)
+            if (kv.Value <= now)
+                _l2Index.TryRemove(kv.Key, out _);
+    }
+
+    /// <summary>Keys currently tracked for a shared-cache warm. Diagnostics and tests.</summary>
+    public int SharedCacheIndexCount => _l2Index?.Count ?? 0;
 
     /// <summary>Remove entries matching a predicate.</summary>
     public void Remove(Func<string, bool> predicate)
     {
-        foreach (var key in _exportLog.Keys)
+        foreach (var key in _bag.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
-                _exportLog.TryRemove(key, out _);
+                _bag.TryRemove(key, out _);
+                _l2Index?.TryRemove(key, out _);
             }
         }
     }
 
-    public int Count => _exportLog.Count;
+    /// <summary>Live entries held in memory. Reported as the cache size, so it
+    /// tracks what is actually cached rather than what is queued for writing —
+    /// the bag is usually near-empty just after a flush.</summary>
+    public int Count => _cache.Count;
 }
 
 /// <summary>
@@ -326,7 +591,8 @@ public class ProbeCacheValue<TValue> where TValue : struct
 {
     private readonly MemoryCache _cache;
     private readonly TimeSpan? _ttl;
-    private readonly ConcurrentDictionary<string, TValue> _exportLog = new();
+    // See ProbeCache<T>._bag — values this process fetched and has yet to persist.
+    private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<TValue>>> _inflight = new();
 
     /// <summary>
@@ -341,20 +607,17 @@ public class ProbeCacheValue<TValue> where TValue : struct
 
     private sealed class Box { public TValue Value; }
 
-    public ProbeCacheValue(TimeSpan? ttl = null)
+    /// <summary>See <see cref="ProbeCache{T}"/> — false when there is no disk tier.</summary>
+    private readonly bool _persist;
+
+    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _persist = persist;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
-    public void Clear()
-    {
-        _cache.Clear();
-        _exportLog.Clear();
-        _inflight.Clear();
-    }
-
     public bool TryGet(string key, out TValue value, RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
     {
         if (recheckFlag != RecheckHelper.CacheDep.None &&
@@ -430,27 +693,82 @@ public class ProbeCacheValue<TValue> where TValue : struct
         else
             _cache.Set(key, box);
 
-        _exportLog[key] = value;
+        if (!_persist) return; // see ProbeCache<T>.Set
+
+        var now = DateTime.UtcNow;
+        _bag[key] = new BagEntry<TValue>(value, now, _ttl.HasValue ? now + _ttl.Value : DateTime.MaxValue);
     }
 
-    private void SetMemoryOnly(string key, TValue value)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
     {
         var box = new Box { Value = value };
-        if (_ttl.HasValue)
+        if (absoluteExpiryUtc.HasValue)
+            _cache.Set(key, box, new DateTimeOffset(
+                DateTime.SpecifyKind(absoluteExpiryUtc.Value, DateTimeKind.Utc)));
+        else if (_ttl.HasValue)
             _cache.Set(key, box, _ttl.Value);
         else
             _cache.Set(key, box);
     }
 
-    public void Import(string key, TValue value)
+    /// <summary>See <see cref="ProbeCache{T}.Import"/> — same rules, no L2 behind
+    /// this variant.</summary>
+    public bool Import(string key, TValue value, DateTime? expiresUtc = null)
     {
-        Set(key, value);
+        if (expiresUtc.HasValue && expiresUtc.Value <= DateTime.UtcNow) return false;
+        if (_inflight.ContainsKey(key)) return false;
+        if (_cache.TryGetValue(key, out Box? live) && live != null) return false;
+
+        SetMemoryOnly(key, value, expiresUtc);
+        return true;
+    }
+
+    /// <summary>See <see cref="ProbeCache{T}.CollectPending"/>.</summary>
+    public PendingWrites CollectPending(string type, Func<TValue, JsonNode?> serialize)
+    {
+        var snapshot = _bag.ToArray();
+        if (snapshot.Length == 0) return PendingWrites.None;
+
+        var records = new List<CacheRecord>(snapshot.Length);
+        var claimed = new List<KeyValuePair<string, BagEntry<TValue>>>(snapshot.Length);
+        var dropped = new List<KeyValuePair<string, BagEntry<TValue>>>();
+
+        foreach (var kv in snapshot)
+        {
+            if (!_cache.TryGetValue(kv.Key, out Box? box) || box == null)
+            {
+                dropped.Add(kv);
+                continue;
+            }
+
+            JsonNode? json;
+            try { json = serialize(kv.Value.Value); }
+            catch { continue; }
+            if (json == null) continue;
+
+            records.Add(new CacheRecord
+            {
+                Type = type,
+                Key = kv.Key,
+                WrittenUtc = kv.Value.WrittenUtc,
+                ExpiresUtc = kv.Value.ExpiresUtc,
+                Value = json
+            });
+            claimed.Add(kv);
+        }
+
+        foreach (var kv in dropped) _bag.TryRemove(kv);
+
+        return new PendingWrites(records, () =>
+        {
+            foreach (var kv in claimed) _bag.TryRemove(kv);
+        });
     }
 
     public Dictionary<string, TValue> Export()
     {
         var result = new Dictionary<string, TValue>();
-        foreach (var kvp in _exportLog)
+        foreach (var kvp in _bag)
         {
             if (_cache.TryGetValue(kvp.Key, out Box? box) && box != null)
                 result[kvp.Key] = box.Value;
@@ -460,15 +778,16 @@ public class ProbeCacheValue<TValue> where TValue : struct
 
     public void Remove(Func<string, bool> predicate)
     {
-        foreach (var key in _exportLog.Keys)
+        foreach (var key in _bag.Keys)
         {
             if (predicate(key))
             {
                 _cache.Remove(key);
-                _exportLog.TryRemove(key, out _);
+                _bag.TryRemove(key, out _);
             }
         }
     }
 
-    public int Count => _exportLog.Count;
+    /// <summary>Live entries held in memory — see ProbeCache&lt;T&gt;.Count.</summary>
+    public int Count => _cache.Count;
 }

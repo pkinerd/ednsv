@@ -53,6 +53,64 @@ public sealed class ConfigHistoryAndRevokeTests
     }
 
     [Fact]
+    public async Task GetRevisionRawReturnsStoredText()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        await client.PutAsJsonAsync("/api/config",
+            new { enableSmtpProbes = false, enableHttpProbes = true, enableDnsbl = true, enableDirectDns = true, enableDoh = false, knownDomains = new[] { "raw.test" } });
+
+        var revs = (await client.GetFromJsonAsync<JsonElement>("/api/config/history")).EnumerateArray().ToList();
+        var id = revs[0].GetProperty("id").GetInt32();
+
+        var res = await client.GetAsync($"/api/config/history/{id}/raw");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal("text/plain", res.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("raw.test", await res.Content.ReadAsStringAsync());
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/api/config/history/999999/raw")).StatusCode);
+    }
+
+    [Fact]
+    public async Task QuarantinedConfigRawRejectsUnknownAndMalformedKeys()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        // No config has been quarantined in this instance.
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await client.GetAsync("/api/config/history/corrupt/deadbeef/raw")).StatusCode);
+
+        // Keys are interpolated into a file name, so anything that isn't a
+        // content hash must be refused rather than reaching the filesystem.
+        foreach (var bad in new[] { "..%2F..%2Fconfig", "%2Fetc%2Fpasswd", "ABCDEF", "zz" })
+        {
+            var res = await client.GetAsync($"/api/config/history/corrupt/{bad}/raw");
+            Assert.True(res.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.BadRequest,
+                $"key '{bad}' returned {(int)res.StatusCode}");
+        }
+    }
+
+    [Fact]
+    public async Task GetRevisionRawIsAdminOnly()
+    {
+        using var factory = EdnsvAppFactory.WithTokenAuth();
+        var admin = factory.CreateClient();
+        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
+
+        var issued = await (await admin.PostAsJsonAsync("/api/auth/users",
+            new { username = "rawreader", isAdmin = false })).Content.ReadFromJsonAsync<JsonElement>();
+
+        var user = factory.CreateClient();
+        user.DefaultRequestHeaders.Authorization =
+            new AuthenticationHeaderValue("Bearer", issued.GetProperty("token").GetString()!);
+        Assert.Equal(HttpStatusCode.Forbidden, (await user.GetAsync("/api/config/history/1/raw")).StatusCode);
+    }
+
+    [Fact]
     public async Task ConfigHistoryIsAdminOnly()
     {
         using var factory = EdnsvAppFactory.WithTokenAuth();
@@ -87,29 +145,6 @@ public sealed class ConfigHistoryAndRevokeTests
         list.Headers.Add("Cookie", $"ednsv-session={cookie}");
         var revs = (await (await client.SendAsync(list)).Content.ReadFromJsonAsync<JsonElement>()).EnumerateArray().ToList();
         Assert.Equal("admin@contoso.com", revs[0].GetProperty("savedBy").GetString());
-    }
-
-    // ── Cache clear (admin-only) ──────────────────────────────────────────
-
-    [Fact]
-    public async Task CacheClearIsAdminOnlyAndAudited()
-    {
-        using var factory = EdnsvAppFactory.WithTokenAuth();
-        var admin = factory.CreateClient();
-        admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", EdnsvAppFactory.RootToken);
-
-        var res = await admin.PostAsync("/api/cache/clear", null);
-        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
-        Assert.True((await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("cleared").GetBoolean());
-        Assert.Contains(factory.LogSnapshot(),
-            l => l.Category == "Ednsv.Audit" && l.Message.Contains("Cache CLEARED"));
-
-        // A standard (non-admin) token is forbidden.
-        var issued = await (await admin.PostAsJsonAsync("/api/auth/users",
-            new { username = "std-clear", isAdmin = false })).Content.ReadFromJsonAsync<JsonElement>();
-        var user = factory.CreateClient();
-        user.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", issued.GetProperty("token").GetString());
-        Assert.Equal(HttpStatusCode.Forbidden, (await user.PostAsync("/api/cache/clear", null)).StatusCode);
     }
 
     // ── Elevated revoke ───────────────────────────────────────────────────

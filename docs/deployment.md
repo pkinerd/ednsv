@@ -49,7 +49,7 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 | `--mask-trace` / `--no-mask-trace` | Privacy masking for trace output (default: on) |
 | `--mask-salt <salt>` | Deterministic hash salt for consistent masks |
 | `--cache [dir]` / `-c` | Persist probe cache between runs (default dir: `.ednsv-cache/`) |
-| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24) |
+| `--cache-ttl <hours>` | Cache time-to-live in hours (default: 24). `0` disables expiry, but cache files are still swept after 24h |
 | `--recheck warning\|error\|critical` | Re-validate previously failing checks (bypasses stale cache only) |
 | `--retry` | Double retry counts for unreliable networks |
 | `--retry-errors` | With `--cache`, re-probe previously failed checks, keep successful cached results |
@@ -103,9 +103,13 @@ Environment variables or command-line configuration. See [configuration.md](conf
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` |
-| `CacheTtlHours` | 24 | TTL for cached DNS/SMTP/HTTP results |
-| `FlushIntervalSeconds` | 120 | Background flush interval |
+| `DataDir` | `.ednsv-data` | Root for persistent state; cache lives in `<DataDir>/cache/` by default |
+| `CacheDir` | `{DataDir}/cache` | Where probe results are persisted. `none` disables the disk tier, which is the recommendation for multi-pod deployments with Redis — see below. |
+| `CacheTtlHours` | 2 | TTL for cached DNS/SMTP/HTTP results. `0` disables expiry in memory only — files are still swept after 24h and Redis keys still get a 24h lifetime, so `0` survives a restart *less* well than a large explicit value. See [caching-architecture.md](caching-architecture.md) → *Turning expiry off*. |
+| `FlushIntervalSeconds` | 600 | Flush interval, and the cache-file granularity |
+| `CacheShutdownFlushSeconds` | 5 | Bound on the final flush at shutdown |
+| `SharedCacheWatchSeconds` | 30 | How often to check whether Redis has been emptied and republish memory into it. `0` disables it (and the index it prunes — restart to re-enable) |
+| `DnsCacheMinTtlSeconds` | 0 | `0` = off; above zero, bound DNS entries by their record TTLs |
 | `DnsServer` | system | Custom DNS server(s), comma-separated |
 | `DkimSelectors` | (built-in seed) | Default DKIM selectors, comma-separated |
 | `EnableSmtpProbes` / `EnableHttpProbes` / `EnableDnsbl` | `true` | Server-side defaults for the validator UI; per-request body overrides |
@@ -230,10 +234,6 @@ Returns DNS cache statistics:
 }
 ```
 
-#### POST /api/cache/flush
-
-Triggers an immediate disk cache flush.
-
 #### GET /api/checks
 
 Returns the list of check category descriptions (from `CheckDescriptions.Categories`).
@@ -245,7 +245,6 @@ Beyond the core validation flow above, the service exposes configuration, cache-
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
 | `GET /api/defaults` | none | Effective server-side default `ValidationOptions` used to pre-populate the UI |
-| `POST /api/cache/clear` | admin | Clear the on-disk + in-memory cache |
 | `GET /api/config` | admin | Read the live runtime config (toggles, DKIM selectors, probe data lists) |
 | `PUT /api/config` | admin | Update the live runtime config (writes a new revision) |
 | `GET /api/config/history` | admin | List config revision history |
@@ -269,7 +268,7 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 - Job IDs are 12-character hex strings from `Guid.NewGuid().ToString("N")[..12]`
 - Each job snapshots service counter baselines at start — status endpoint computes per-job deltas while still exposing the cumulative totals
 - Live severity counters updated via `Interlocked.Increment` as checks complete
-- On completion, domain results are saved for recheck decisions and a non-blocking `cache.RequestFlush()` runs in the background
+- On completion, the domain result is recorded in memory for recheck decisions and queued for the next flush. The flush timer is the only writer, so a busy instance never rewrites its whole cache after a validation
 - Implements `IDisposable`. A 5-minute `Timer` evicts completed/failed jobs older than 1 hour from the dictionary so long-running web servers don't accumulate every job they ever ran in memory
 - The whole `Task.Run` body runs inside a structured logger scope (`JobId`, `Username`, `Endpoint`, `Domain`) so trace lines emitted from the singleton DNS/SMTP/HTTP services — captured via `TraceContext` AsyncLocal — automatically carry the right job identifier even though the services are shared
 
@@ -307,7 +306,7 @@ docker run --rm -p 8080:8080 ghcr.io/<owner>/ednsv:latest
 
 ### Scaling across multiple replicas
 
-A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, and a Kubernetes-style example.
+A single container is stateful-in-memory (async jobs, probe cache) and expects a single `DataDir`. To run **more than one replica** behind a load balancer, EDNSV offloads shared state to Redis and a shared RWX file mount, and exposes `/health/live` and `/health/ready` probes. This is opt-in via `Redis:ConnectionString`. See [horizontal-scaling.md](horizontal-scaling.md) for what moves where, the failure model, a Kubernetes-style example, and why the probe cache is better skipped entirely once Redis is present.
 
 ## Network egress (outbound ports)
 

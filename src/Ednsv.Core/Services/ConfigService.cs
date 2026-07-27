@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using StackExchange.Redis;
@@ -115,8 +117,18 @@ public sealed class AppConfig
     public string CrtShBaseUrl { get; set; } = Checks.ProbeDefaults.CrtShBaseUrl;
 }
 
-/// <summary>Metadata for a revision, without the (potentially large) config body.</summary>
-public sealed record ConfigRevisionInfo(int Id, DateTime SavedAt, string SavedBy);
+/// <summary>Metadata for a revision, without the (potentially large) config body.
+///
+/// <paramref name="IsCorrupt"/> marks a quarantined copy of a config.json that
+/// failed to parse: it is listed so an admin can inspect it, but it is not a
+/// valid config and can only be read as raw text, never loaded into the editor.
+/// Those entries are addressed by <paramref name="Key"/> — the content hash that
+/// names the quarantine file — rather than by <paramref name="Id"/>, which is 0
+/// for them. The key identifies the same artifact no matter what else has been
+/// quarantined since, so a client that lists and then fetches cannot be handed a
+/// different file by an intervening corruption.</summary>
+public sealed record ConfigRevisionInfo(
+    int Id, DateTime SavedAt, string SavedBy, bool IsCorrupt = false, string? Key = null);
 
 /// <summary>Thrown when a distributed write loses the beacon compare-and-set:
 /// another pod persisted a newer revision since the editor loaded. Maps to 409.</summary>
@@ -130,6 +142,14 @@ public sealed class RevisionConflictException : Exception
 public sealed class StoreUnavailableException : Exception
 {
     public StoreUnavailableException(string message) : base(message) { }
+}
+
+/// <summary>Thrown at startup when config.json exists but cannot be read or parsed.
+/// Deliberately fatal: seeding defaults over a config that is merely unreadable
+/// right now would overwrite the operator's saved settings.</summary>
+public sealed class ConfigUnreadableException : Exception
+{
+    public ConfigUnreadableException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
 public sealed class ConfigService
@@ -175,8 +195,25 @@ public sealed class ConfigService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "config:head";
 
-    public ConfigService(string dataDir, RedisConnection? redis = null)
+    // Last (mtime, length) observed for config.json, so a disk change that the
+    // beacon failed to announce is still noticed. See CheckDiskDriftLocked.
+    private (long Ticks, long Length) _diskStamp;
+
+    // Serialises the config read-modify-write across instances. The TTL bounds
+    // how long a writer that dies mid-save can block others; the wait bounds how
+    // long a save blocks before reporting 503 rather than hanging the request.
+    // How long a beacon read is reused by config reads. Bounds how stale another
+    // instance's config change can be here; zero means check on every read.
+    private readonly TimeSpan _freshnessWindow;
+    private long _lastFreshCheckTicks;
+
+    private const string WriteLockName = "config:write";
+    private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
+
+    public ConfigService(string dataDir, RedisConnection? redis = null, TimeSpan? freshnessWindow = null)
     {
+        _freshnessWindow = freshnessWindow ?? TimeSpan.FromSeconds(1);
         _dataDir = dataDir;
         _filePath = Path.Combine(dataDir, "config.json");
         _historyIndexPath = Path.Combine(dataDir, "config-history.json");
@@ -194,36 +231,107 @@ public sealed class ConfigService
     /// Loads config.json if it exists, otherwise initializes from <paramref name="seed"/>
     /// (typically env-var defaults) and writes the seeded file. Returns the active config.
     /// </summary>
-    public AppConfig LoadOrSeed(AppConfig seed)
+    /// <remarks>
+    /// Recovery ladder when config.json is present but not usable:
+    /// <list type="number">
+    /// <item>Unreadable (I/O error, permissions, flaky mount) — retried briefly,
+    /// then <see cref="ConfigUnreadableException"/>. This is the one fatal case,
+    /// and deliberately so: the bytes could not be read, so they cannot be backed
+    /// up either, and seeding would write env-var defaults over a file that is
+    /// very likely intact. That is an infrastructure fault, not corruption.</item>
+    /// <item>Readable but unparseable — the raw content is quarantined under
+    /// config-history/ (inspectable via the revision history), then the newest
+    /// revision body that still parses is restored, so the instance comes back
+    /// with the operator's real settings rather than defaults.</item>
+    /// <item>No usable revision either — falls back to <paramref name="seed"/>.</item>
+    /// </list>
+    /// Corruption therefore self-heals and never takes the instance down, while
+    /// the bad file is preserved rather than silently overwritten.
+    /// </remarks>
+    /// <param name="warn">Receives a message when config was quarantined and
+    /// recovered, so the host can surface it in logs.</param>
+    /// <exception cref="ConfigUnreadableException">config.json exists but could not
+    /// be read at all. See the remarks for why this case is fatal.</exception>
+    public AppConfig LoadOrSeed(AppConfig seed, Action<string>? warn = null)
     {
         LoadHistory();
+        AtomicFile.SweepStaleTemps(_filePath);
+        AtomicFile.SweepStaleTemps(_historyIndexPath);
 
         if (File.Exists(_filePath))
         {
-            try
+            var json = ReadConfigFileWithRetry();
+
+            // An empty file carries nothing to lose, so it still seeds. Anything
+            // non-empty that fails to parse is real content we must preserve.
+            if (!string.IsNullOrWhiteSpace(json))
             {
-                var json = File.ReadAllText(_filePath);
-                if (!string.IsNullOrWhiteSpace(json))
+                AppConfig? parsed = null;
+                string? parseError = null;
+                try
                 {
-                    var parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
-                    if (parsed != null)
+                    parsed = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+                    if (parsed == null) parseError = "the file parsed to no configuration";
+                }
+                catch (Exception ex)
+                {
+                    parseError = ex.Message;
+                }
+
+                if (parsed != null)
+                {
+                    // Normalize keys: lowercase, trim trailing dot
+                    parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                    parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
+                    lock (_lock)
                     {
-                        // Normalize keys: lowercase, trim trailing dot
-                        parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
-                        parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
-                        lock (_lock)
-                        {
-                            _current = parsed;
-                            SeedBaselineRevisionLocked();
-                            InitBeaconLocked();
-                        }
-                        return Snapshot();
+                        _current = parsed;
+                        NoteDiskStampLocked();
+                        SeedBaselineRevisionLocked();
+                        InitBeaconLocked();
+                    }
+                    return Snapshot();
+                }
+
+                // Corrupt. Preserve it, then recover rather than refusing to start.
+                //
+                // Every step here is deliberately convergent rather than locked,
+                // because replicas restart together and there is no distributed
+                // lock on the startup path: the quarantine name is derived from
+                // the content, and the recovered config is whatever the newest
+                // parseable revision holds, so N pods independently compute the
+                // same answer and their writes are byte-identical.
+                //
+                // For the same reason recovery does NOT append a revision. That
+                // would be a read-modify-write of config-history.json with no
+                // coordination — Replace's beacon compare-and-set does not cover
+                // this path — and concurrent appends drop each other's entries,
+                // orphaning revision bodies. There is nothing to record anyway:
+                // the restored config is identical to a revision that already
+                // exists, and the quarantined file is itself the audit trail.
+                var quarantine = QuarantineCorrupt(json);
+                lock (_lock)
+                {
+                    var recovered = TryRecoverFromHistoryLocked();
+                    if (recovered != null)
+                    {
+                        _current = recovered;
+                        SaveLocked(); // republish the good config so peers converge
+                        InitBeaconLocked();
+                        warn?.Invoke(
+                            $"{_filePath} was corrupt ({parseError}). The unreadable content was " +
+                            $"preserved as {Path.GetFileName(quarantine)} and is listed in the config " +
+                            "revision history for inspection; the most recent valid revision has been " +
+                            "restored and republished.");
+                        return CloneConfig(_current);
                     }
                 }
-            }
-            catch
-            {
-                // Fall through to seeding if file is unreadable / malformed.
+
+                warn?.Invoke(
+                    $"{_filePath} was corrupt ({parseError}) and no previous revision could be " +
+                    $"restored. The unreadable content was preserved as {Path.GetFileName(quarantine)} " +
+                    "and is listed in the config revision history for inspection; startup defaults " +
+                    "have been applied.");
             }
         }
 
@@ -276,8 +384,24 @@ public sealed class ConfigService
 
         if (_redis != null)
         {
-            // Adopt the cluster's current head (and history / next-id) before writing.
-            EnsureFresh();
+            // Hold a lease across the whole read-modify-write. The compare-and-set
+            // below decides the outcome and still does, but on its own it releases
+            // the instant it commits — leaving the file writes, the revision-id
+            // allocation and the history-index rewrite unprotected, so two saves
+            // that are both legitimately based on the current head could interleave
+            // and claim the same revision id. The lease closes that window; the CAS
+            // remains the backstop for a lease that a stall or failover has broken.
+            using var lease = _redis.TryAcquireLock(WriteLockName, WriteLockTtl, WriteLockWait);
+            if (lease == null)
+                throw new StoreUnavailableException(
+                    "Could not coordinate the config write with other instances (Redis unreachable or another save in progress). Retry shortly.");
+
+            // Adopt the cluster's current head (and history / next-id) before
+            // writing. Inside the lease this is now meaningful: the previous
+            // writer finished its files before releasing, so the beacon and the
+            // durable state agree. Forced past the freshness window — a writer
+            // must rebase on the true head, not one up to a window old.
+            EnsureFresh(force: true);
             var db = _redis.GetDatabase();
             if (db == null)
                 throw new StoreUnavailableException("Redis is unreachable; refusing to persist config to avoid divergence across pods.");
@@ -314,31 +438,201 @@ public sealed class ConfigService
         }
     }
 
+    // ── Corrupt-config quarantine & recovery ─────────────────────────────
+
+    /// <summary>Prefix for quarantined copies of an unparseable config.json,
+    /// stored alongside revision bodies in the history directory.</summary>
+    private const string CorruptPrefix = "config-corrupt-";
+    private const string CorruptSavedBy = "(corrupt config — inspect only)";
+
+    /// <summary>Reads config.json, retrying briefly so a momentary I/O blip on a
+    /// shared mount doesn't escalate. Throws only when it stays unreadable.</summary>
+    private string ReadConfigFileWithRetry()
+    {
+        const int attempts = 3;
+        for (var i = 1; ; i++)
+        {
+            try
+            {
+                return File.ReadAllText(_filePath);
+            }
+            catch (Exception ex) when (i < attempts)
+            {
+                _ = ex;
+                Thread.Sleep(TimeSpan.FromMilliseconds(100 * i));
+            }
+            catch (Exception ex)
+            {
+                throw new ConfigUnreadableException(
+                    $"Could not read {_filePath} after {attempts} attempts: {ex.Message}. Refusing to " +
+                    "start rather than overwrite a configuration that could not be read (and so could " +
+                    "not be backed up). This is an infrastructure fault — check the volume and its " +
+                    "permissions.", ex);
+            }
+        }
+    }
+
+    /// <summary>Preserves unparseable config.json content under the history
+    /// directory so it can be inspected later. The name is derived from a hash of
+    /// the content, so replicas that all trip over the same corrupt file converge
+    /// on one artifact instead of each writing its own.</summary>
+    private string QuarantineCorrupt(string raw)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)))[..8].ToLowerInvariant();
+        var path = Path.Combine(_historyDir, $"{CorruptPrefix}{hash}.json");
+        try
+        {
+            Directory.CreateDirectory(_historyDir);
+            if (!File.Exists(path)) AtomicFile.WriteAllText(path, raw);
+        }
+        catch { /* best effort — recovery matters more than the keepsake */ }
+        return path;
+    }
+
+    /// <summary>Newest revision body that still parses, or null. Must hold _lock.</summary>
+    private AppConfig? TryRecoverFromHistoryLocked()
+    {
+        for (var i = _history.Count - 1; i >= 0; i--) // _history is oldest-first
+        {
+            var cfg = TryReadRevisionBody(_history[i].Id);
+            if (cfg == null) continue;
+            cfg.DkimSelectors = NormalizeKeys(cfg.DkimSelectors ?? new Dictionary<string, List<string>>());
+            cfg.KnownDomains = NormalizeDomainList(cfg.KnownDomains ?? new List<string>());
+            return cfg;
+        }
+        return null;
+    }
+
+    private AppConfig? TryReadRevisionBody(int id)
+    {
+        var path = RevisionPath(id);
+        if (!File.Exists(path)) return null;
+        try
+        {
+            var json = File.ReadAllText(path);
+            return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Quarantined corrupt configs, newest first. Discovered by listing
+    /// the directory rather than tracked in the history index, so replicas never
+    /// race to append index entries for the same event.</summary>
+    private List<(string Key, string Path, DateTime SavedAt)> EnumerateQuarantined()
+    {
+        var result = new List<(string, string, DateTime)>();
+        if (!Directory.Exists(_historyDir)) return result;
+        try
+        {
+            foreach (var p in Directory.GetFiles(_historyDir, CorruptPrefix + "*.json"))
+            {
+                var key = Path.GetFileNameWithoutExtension(p)[CorruptPrefix.Length..];
+                if (IsValidQuarantineKey(key)) result.Add((key, p, File.GetLastWriteTimeUtc(p)));
+            }
+        }
+        catch
+        {
+            return result;
+        }
+        result.Sort((a, b) =>
+        {
+            var byTime = b.Item3.CompareTo(a.Item3);
+            return byTime != 0 ? byTime : string.CompareOrdinal(b.Item1, a.Item1);
+        });
+        return result;
+    }
+
+    /// <summary>Keys come in from the API and are interpolated into a file name,
+    /// so only the shape this class generates is accepted — no separators, no
+    /// traversal, nothing but the lowercase hex of a content hash.</summary>
+    private static bool IsValidQuarantineKey(string? key)
+        => !string.IsNullOrEmpty(key)
+           && key.Length is > 0 and <= 32
+           && key.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    /// <summary>Raw text of a quarantined corrupt config, or null when the key is
+    /// unknown or malformed.</summary>
+    public string? GetQuarantinedRaw(string key)
+    {
+        if (!IsValidQuarantineKey(key)) return null;
+        var path = Path.Combine(_historyDir, $"{CorruptPrefix}{key}.json");
+        try
+        {
+            // Belt and braces after the key validation above: never read outside
+            // the history directory even if that check is ever loosened.
+            if (Path.GetDirectoryName(Path.GetFullPath(path)) != Path.GetFullPath(_historyDir))
+                return null;
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // ── Distributed coordination (beacon) ────────────────────────────────
+
+    /// <summary>True at most once per freshness window. Snapshot() runs on the hot
+    /// path of every config-consuming request, so the beacon is read at most once
+    /// per window rather than once per read; the cost is that another instance's
+    /// change becomes visible within the window instead of on the next read.
+    /// Racing callers may both pass, which only costs a duplicate read.</summary>
+    private bool DueForFreshnessCheck()
+    {
+        if (_freshnessWindow <= TimeSpan.Zero) return true;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastFreshCheckTicks) < (long)_freshnessWindow.TotalMilliseconds)
+            return false;
+        Interlocked.Exchange(ref _lastFreshCheckTicks, now);
+        return true;
+    }
+
+    private void MarkFresh() => Interlocked.Exchange(ref _lastFreshCheckTicks, Environment.TickCount64);
 
     /// <summary>On-demand staleness check: if another pod advanced the beacon,
     /// reload the shared config file and history so this pod serves current data.
     /// No-op in single-instance mode or when Redis is unreachable (serves local).</summary>
-    public void EnsureFresh()
+    /// <param name="force">Bypass the freshness window. Writers pass true — they
+    /// must see the true head before rebasing — while reads accept a value up to
+    /// one window old.</param>
+    public void EnsureFresh(bool force = false)
     {
         if (_redis == null) return;
+        if (!force && !DueForFreshnessCheck()) return;
+
         var db = _redis.GetDatabase();
         if (db == null) return; // Redis down — keep serving the last-known local copy.
         var beacon = _redis.Key(BeaconSuffix);
         RedisValue v;
         try { v = db.StringGet(beacon); }
         catch { return; }
+        MarkFresh();
         if (v.IsNullOrEmpty)
         {
-            // Beacon absent (never set or flushed): publish our head so peers converge.
-            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            // Beacon absent (never set, evicted, or flushed). Whoever republishes it
+            // defines the cluster head, so it must name what is on the shared mount:
+            // a head is an opaque GUID, so once published it satisfies every "has it
+            // moved?" check forever. Publishing an unverified in-memory head would
+            // therefore pin this pod — and every peer that adopts it — to a config the
+            // disk has already moved past, permanently. Read the file first.
+            lock (_lock)
+            {
+                if (!ReloadFromDiskLocked()) return; // can't read the truth, don't speak for it
+                try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            }
             return;
         }
         string remote = v!;
         lock (_lock)
         {
-            if (remote == _headGuid) return;
-            ReloadFromDiskLocked();
+            if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+            // Adopt the remote head only once we actually hold what it names. A failed
+            // read here used to be swallowed and the head adopted anyway, which left
+            // this pod matching the beacon while serving the config it had before.
+            if (!ReloadFromDiskLocked()) return;
             _headGuid = remote;
         }
     }
@@ -360,8 +654,16 @@ public sealed class ConfigService
         catch { /* best effort — fall back to local head */ }
     }
 
-    private void ReloadFromDiskLocked()
+    /// <summary>
+    /// Re-read the shared config file. Returns whether this pod now definitely holds
+    /// what is on disk — false when the file could not be read or parsed, in which
+    /// case the in-memory copy is kept and the caller must <b>not</b> treat the
+    /// remote head as adopted: a head recorded against content we never loaded is
+    /// indistinguishable from being current, forever.
+    /// </summary>
+    private bool ReloadFromDiskLocked()
     {
+        var ok = false;
         if (File.Exists(_filePath))
         {
             try
@@ -375,15 +677,56 @@ public sealed class ConfigService
                         parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors ?? new Dictionary<string, List<string>>());
                         parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains ?? new List<string>());
                         _current = parsed;
+                        ok = true;
                     }
                 }
             }
             catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
         }
+        // Stamped only on success. The stamp means "this is the version I hold"; taking
+        // it from a file we failed to read would record that claim against content we
+        // never loaded, and the drift check would then see nothing to do.
+        if (ok) NoteDiskStampLocked();
         LoadHistory(); // re-sync revision metadata and next-id from the shared index.
+        return ok;
     }
 
-    /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.</summary>
+    /// <summary>Record the file identity this pod's in-memory copy came from.</summary>
+    private void NoteDiskStampLocked() => _diskStamp = ReadDiskStamp();
+
+    private (long Ticks, long Length) ReadDiskStamp()
+    {
+        try
+        {
+            var fi = new FileInfo(_filePath);
+            return fi.Exists ? (fi.LastWriteTimeUtc.Ticks, fi.Length) : default;
+        }
+        catch { return _diskStamp; } // unreadable: report no change rather than churn
+    }
+
+    /// <summary>
+    /// Backstop for the beacon. The beacon is the fast path — it says "something
+    /// changed" without anyone having to stat a shared mount — but it is a single
+    /// key in a store that can be flushed, evicted or restarted, and a head that is
+    /// merely a GUID cannot be checked against anything. This notices the case the
+    /// beacon structurally cannot: config.json changed while the head did not, either
+    /// through an out-of-band edit or a beacon lost in the window between a writer's
+    /// compare-and-set and its file write.
+    ///
+    /// <para>Only meaningful in distributed mode, where the mount is shared. Attribute
+    /// caching (NFS <c>acregmax</c>, typically 60s) can delay it, which is why it is
+    /// the backstop and not the mechanism.</para>
+    /// </summary>
+    private void CheckDiskDriftLocked()
+    {
+        if (ReadDiskStamp() == _diskStamp) return;
+        ReloadFromDiskLocked();
+    }
+
+    /// <summary>Revision metadata, newest first, capped at <see cref="MaxRevisions"/>.
+    /// Any quarantined corrupt configs are listed first, carrying
+    /// <see cref="ConfigRevisionInfo.IsCorrupt"/> and a stable
+    /// <see cref="ConfigRevisionInfo.Key"/> instead of a revision id.</summary>
     public IReadOnlyList<ConfigRevisionInfo> ListRevisions()
     {
         EnsureFresh();
@@ -394,10 +737,38 @@ public sealed class ConfigService
             // config-history.json; that inline body was dropped the first time the
             // index was rewritten body-less, leaving metadata with no loadable body.
             // Filtering them keeps the picker to revisions that load instead of 404.
-            return _history
+            var revisions = _history
                 .Where(r => File.Exists(RevisionPath(r.Id)))
-                .Reverse()
-                .ToList();
+                .Reverse();
+
+            var corrupt = EnumerateQuarantined()
+                .Select(q => new ConfigRevisionInfo(0, q.SavedAt, CorruptSavedBy, IsCorrupt: true, Key: q.Key));
+
+            return corrupt.Concat(revisions).ToList();
+        }
+    }
+
+    /// <summary>
+    /// The stored text of a revision body. Quarantined corrupt configs are not
+    /// addressed here — they have no revision id and are read via
+    /// <see cref="GetQuarantinedRaw"/> instead.
+    /// </summary>
+    public string? GetRevisionRaw(int id)
+    {
+        EnsureFresh();
+        lock (_lock)
+        {
+            if (!_history.Any(r => r.Id == id)) return null;
+            var path = RevisionPath(id);
+
+            try
+            {
+                return File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
@@ -444,9 +815,8 @@ public sealed class ConfigService
     {
         Directory.CreateDirectory(_dataDir);
         var json = JsonSerializer.Serialize(_current, JsonOpts);
-        var tmp = _filePath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _filePath, overwrite: true);
+        AtomicFile.WriteAllText(_filePath, json);
+        NoteDiskStampLocked(); // our own write is not drift
     }
 
     // ── Revision history ──────────────────────────────────────────────────
@@ -503,10 +873,7 @@ public sealed class ConfigService
     {
         Directory.CreateDirectory(_historyDir);
         var json = JsonSerializer.Serialize(config, JsonOpts);
-        var path = RevisionPath(id);
-        var tmp = path + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, path, overwrite: true);
+        AtomicFile.WriteAllText(RevisionPath(id), json);
     }
 
     private void TryDeleteRevisionBody(int id)
@@ -519,9 +886,7 @@ public sealed class ConfigService
         Directory.CreateDirectory(_dataDir);
         var index = new HistoryIndex { NextId = _nextRevisionId, Revisions = _history };
         var json = JsonSerializer.Serialize(index, JsonOpts);
-        var tmp = _historyIndexPath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _historyIndexPath, overwrite: true);
+        AtomicFile.WriteAllText(_historyIndexPath, json);
     }
 
     private static AppConfig CloneConfig(AppConfig c) => new()

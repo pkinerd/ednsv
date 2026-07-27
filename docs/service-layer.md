@@ -122,10 +122,18 @@ fixed — their whole point is a short skip-if-slow ceiling.
 | `_queryCache` | `ProbeCache<IDnsQueryResponse>` | `q:domain:queryType` |
 | `_ptrCache` | `ProbeCache<List<string>>` | `ptr:ip` |
 | `_serverQueryCache` | `ProbeCache<IDnsQueryResponse>` | `sq:server:domain:queryType` |
-| `_axfrResponseCache` | `ConcurrentDictionary` | `(ip, domain)` tuple |
-| `_unreachableServerCounts` | `ConcurrentDictionary` | server-IP, value `(count, lastFailure)` |
+| `_axfrCache` + `_axfrBag` | `ExpiringMap` + `WriteBag<bool>` | `(ip, domain)` tuple; `ip\|domain` on disk |
+| `_axfrResponseCache` | `ExpiringMap` | `(ip, domain)` tuple — not persisted |
+| `_unreachableServerCounts` + `_unreachableBag` | `ExpiringMap` + `WriteBag<int>` | server-IP, value `(count, lastFailure)` |
+| `_serverClients` | `ExpiringMap` | server IP → `LookupClient`; a pool, not results |
 
-`shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk export log while still caching them in MemoryCache for the rest of the current process.
+`shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk write bag while still caching them in MemoryCache for the rest of the current process.
+
+The three `ProbeCache` instances also carry a shared Redis L2 when one is configured. The
+`ExpiringMap` caches do not: they are L1 and disk only. They expire on `CacheTtlHours`
+and honour the recheck bypass (`CacheDep.Axfr` for the two AXFR caches,
+`CacheDep.ServerDns` for the unreachable-server breaker in front of `_serverQueryCache`)
+— see [caching-architecture.md](caching-architecture.md) → *Recheck reaches these too*.
 
 ### Unreachable-server decay
 
@@ -243,10 +251,21 @@ The result of a probe captures comprehensive connection details:
 |-------|------|-----|
 | `_probeCache` | `ProbeCache<SmtpProbeResult>` | `smtp:host:port` |
 | `_portCache` | `ProbeCacheValue<bool>` | `port:host:port` |
-| `_rcptCache` | `ConcurrentDictionary<string, (accepted, response)>` | `host\|email` |
-| `_relayCache` | `ConcurrentDictionary<string, (isRelay, description)>` | `relay:host\|domain` |
+| `_rcptCache` + `_rcptBag` | `ExpiringMap<string, (accepted, response)>` + `WriteBag` | `host\|email` |
+| `_relayCache` + `_relayBag` | `ExpiringMap<string, (isRelay, description)>` + `WriteBag` | `relay:host\|domain` |
 
-`_rcptCache` and `_relayCache` are raw `ConcurrentDictionary` (not ProbeCache) because their entries are written only after a definitive server-level response — the dedup path uses simple `TryGetValue` / `TryAdd`. Transient errors and connection timeouts are deliberately not cached so the next call retries.
+`_rcptCache` and `_relayCache` are an `ExpiringMap` rather than a `ProbeCache` because their entries are written only after a definitive server-level response — the dedup path is a plain `TryGetValue` / `TryAdd`, with no in-flight dedup or Redis L2 behind it. Transient errors and connection timeouts are deliberately not cached so the next call retries.
+
+Each carries a `WriteBag` alongside it so a flush writes only what has been fetched since
+the last one. Without that the pair would be serialised whole on every tick, and a flush
+would always find something to write — which defeats the "bag is the dirty flag" behaviour
+that keeps an idle instance from creating a file per interval.
+
+They honour `CacheTtlHours` like every other cache — an `ExpiringMap` is a `MemoryCache`
+behind this project's cache rules, see [caching-architecture.md](caching-architecture.md) → *ExpiringMap* — and the recheck
+bypass: `CacheDep.Rcpt` for `_rcptCache`, `CacheDep.Smtp` for `_relayCache`, matching the
+categories that declare them. Both write unconditionally rather than add-if-absent, so a
+refetched verdict actually replaces the one the bypass skipped.
 
 ### Diagnostic Counters
 

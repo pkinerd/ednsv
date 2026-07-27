@@ -57,13 +57,52 @@ public sealed class AuthService
     private string _headGuid = Guid.NewGuid().ToString("N");
     private const string BeaconSuffix = "users:head";
 
+    // Last (mtime, length) observed for users.json, so a change the beacon failed
+    // to announce is still noticed. See CheckDiskDriftLocked.
+    private (long Ticks, long Length) _diskStamp;
+
+    // Serialises the users.json read-modify-write across instances. users.json is
+    // rewritten whole, and the beacon CAS releases before that write lands, so two
+    // saves could interleave and one could silently drop the other's change — for
+    // a revoke, that means a token staying live.
+    // How long a beacon read is reused by the authentication path. Bounds how
+    // stale a peer's revocation can be here; zero means check every request.
+    private readonly TimeSpan _freshnessWindow;
+    private long _lastFreshCheckTicks;
+
+    private const string WriteLockName = "users:write";
+    private static readonly TimeSpan WriteLockTtl = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WriteLockWait = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Takes the cross-instance write lease, or null in single-instance mode where
+    /// the in-process lock already serialises everything.
+    ///
+    /// Acquired by callers <b>before</b> they take <c>_lock</c>: blocking on a
+    /// network round-trip while holding it would stall every authentication check
+    /// on this instance, since the read paths take the same lock. Held across the
+    /// whole retry loop, so under the lease the CAS should never lose — a loss
+    /// means the lease was broken, and the retry handles it.
+    /// </summary>
+    private IDisposable? AcquireWriteLease()
+    {
+        if (_redis == null) return null;
+        var lease = _redis.TryAcquireLock(WriteLockName, WriteLockTtl, WriteLockWait);
+        if (lease == null)
+            throw new StoreUnavailableException(
+                "Could not coordinate the user write with other instances (Redis unreachable or another write in progress). Retry shortly.");
+        return lease;
+    }
+
     public bool Disabled => _rootHash == null;
 
-    public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null)
+    public AuthService(string authDir, string? rootTokenHash, RedisConnection? redis = null,
+        TimeSpan? freshnessWindow = null)
     {
         _authDir = authDir;
         _filePath = Path.Combine(authDir, "users.json");
         _redis = redis != null && redis.Enabled ? redis : null;
+        _freshnessWindow = freshnessWindow ?? TimeSpan.FromSeconds(1);
 
         if (string.IsNullOrWhiteSpace(rootTokenHash) ||
             rootTokenHash.Equals(DisabledMarker, StringComparison.OrdinalIgnoreCase))
@@ -79,11 +118,14 @@ public sealed class AuthService
     public void Load()
     {
         if (Disabled) return;
+        AtomicFile.SweepStaleTemps(_filePath);
         InitBeacon(); // publish/adopt the cluster head before reading the file
-        if (!File.Exists(_filePath)) return;
+        // Stamped after the read below, and here for the paths that read nothing, so
+        // the drift check has a baseline from the moment this pod's copy was formed.
+        if (!File.Exists(_filePath)) { lock (_lock) NoteDiskStampLocked(); return; }
 
         var json = File.ReadAllText(_filePath);
-        if (string.IsNullOrWhiteSpace(json)) return;
+        if (string.IsNullOrWhiteSpace(json)) { lock (_lock) NoteDiskStampLocked(); return; }
 
         var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
         if (file?.Users != null)
@@ -112,8 +154,9 @@ public sealed class AuthService
             }
             catch { /* best-effort migration */ }
 
-            lock (_lock) _users = file.Users;
+            lock (_lock) { _users = file.Users; NoteDiskStampLocked(); }
         }
+        else lock (_lock) NoteDiskStampLocked();
     }
 
     private void SaveLocked()
@@ -121,16 +164,93 @@ public sealed class AuthService
         Directory.CreateDirectory(_authDir);
         var file = new UsersFile { Users = _users };
         var json = JsonSerializer.Serialize(file, JsonOpts);
-        var tmp = _filePath + ".tmp";
-        File.WriteAllText(tmp, json);
-        File.Move(tmp, _filePath, overwrite: true);
+        AtomicFile.WriteAllText(_filePath, json);
+        NoteDiskStampLocked(); // our own write is not drift
     }
 
     // ── Distributed coordination (beacon) ────────────────────────────────
 
     private const int MaxWriteAttempts = 5;
 
-    /// <summary>Reload users.json if another pod advanced the beacon. Must hold _lock.</summary>
+    /// <summary>
+    /// Freshness check for READ paths (authentication, listing). Must be called
+    /// WITHOUT <c>_lock</c> held.
+    ///
+    /// Two things keep authentication off the network. First, the beacon is read
+    /// at most once per <see cref="_freshnessWindow"/> — every authenticated
+    /// request runs this, and a round-trip each time is not affordable. Second,
+    /// the read happens outside <c>_lock</c>, which is taken only for the
+    /// in-memory comparison and any reload: holding it across a blocking Redis
+    /// call serialises every concurrent authentication behind that call, and
+    /// under load the resulting convoy is orders of magnitude worse than the
+    /// round-trip itself.
+    ///
+    /// The cost is propagation delay: a revocation on another instance becomes
+    /// visible here within the window rather than on the very next request. Set
+    /// the window to zero to check every time.
+    /// </summary>
+    private void EnsureFresh()
+    {
+        if (_redis == null) return;
+        if (!DueForFreshnessCheck()) return;
+
+        var db = _redis.GetDatabase();
+        if (db == null) return; // Redis down — keep serving the last-known local copy.
+        var beacon = _redis.Key(BeaconSuffix);
+
+        RedisValue v;
+        try { v = db.StringGet(beacon); }
+        catch { return; }
+
+        if (v.IsNullOrEmpty)
+        {
+            lock (_lock) PublishHeadForLostBeaconLocked(db, beacon);
+            return;
+        }
+
+        string remote = v!;
+        lock (_lock)
+        {
+            if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+            if (!ReloadUsersFromDiskLocked()) return;
+            _headGuid = remote;
+        }
+    }
+
+    /// <summary>
+    /// Republish this pod's head after the beacon has gone (never set, evicted,
+    /// flushed, or lost to a restart). Whoever republishes defines the cluster head,
+    /// and a head is an opaque GUID — once published it satisfies every "has it
+    /// moved?" check forever. Publishing an unverified in-memory head would therefore
+    /// pin this pod, and every peer that adopts it, to a users file the disk has
+    /// already moved past: a revoked token would keep authenticating indefinitely.
+    /// Read the file first, and stay quiet if it cannot be read. Must hold _lock.
+    /// </summary>
+    private void PublishHeadForLostBeaconLocked(IDatabase db, string beacon)
+    {
+        if (!ReloadUsersFromDiskLocked()) return;
+        try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+    }
+
+    /// <summary>True at most once per freshness window. Racing callers may both
+    /// pass, which only costs a duplicate read of the same key.</summary>
+    private bool DueForFreshnessCheck()
+    {
+        if (_freshnessWindow <= TimeSpan.Zero) return true;
+        var now = Environment.TickCount64;
+        if (now - Interlocked.Read(ref _lastFreshCheckTicks) < (long)_freshnessWindow.TotalMilliseconds)
+            return false;
+        Interlocked.Exchange(ref _lastFreshCheckTicks, now);
+        return true;
+    }
+
+    /// <summary>Records that local state is known-current, so read paths don't
+    /// immediately re-read a beacon this instance just set.</summary>
+    private void MarkFresh() => Interlocked.Exchange(ref _lastFreshCheckTicks, Environment.TickCount64);
+
+    /// <summary>Unconditional freshness check for WRITE paths, which must see the
+    /// true state before mutating and are rare enough to afford the round-trip
+    /// under the lock. Must hold _lock.</summary>
     private void EnsureFreshLocked()
     {
         if (_redis == null) return;
@@ -140,14 +260,15 @@ public sealed class AuthService
         RedisValue v;
         try { v = db.StringGet(beacon); }
         catch { return; }
+        MarkFresh();
         if (v.IsNullOrEmpty)
         {
-            try { db.StringSet(beacon, _headGuid, when: When.NotExists); } catch { /* best effort */ }
+            PublishHeadForLostBeaconLocked(db, beacon);
             return;
         }
         string remote = v!;
-        if (remote == _headGuid) return;
-        ReloadUsersFromDiskLocked();
+        if (remote == _headGuid) { CheckDiskDriftLocked(); return; }
+        if (!ReloadUsersFromDiskLocked()) return;
         _headGuid = remote;
     }
 
@@ -196,17 +317,61 @@ public sealed class AuthService
         catch { /* best effort — fall back to local head */ }
     }
 
-    private void ReloadUsersFromDiskLocked()
+    /// <summary>
+    /// Re-read the shared users file. Returns whether this pod now definitely holds
+    /// what is on disk — false when the file could not be read or parsed, in which
+    /// case the in-memory copy is kept and the caller must <b>not</b> adopt the remote
+    /// head. An absent or empty file is a definite answer, not a failure: users.json
+    /// is only missing before the first user is written.
+    /// </summary>
+    private bool ReloadUsersFromDiskLocked()
     {
-        if (!File.Exists(_filePath)) { _users = new List<User>(); return; }
+        var ok = false;
+        if (!File.Exists(_filePath)) { _users = new List<User>(); ok = true; }
+        else
+        {
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                if (string.IsNullOrWhiteSpace(json)) { _users = new List<User>(); ok = true; }
+                else
+                {
+                    var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
+                    if (file?.Users != null) { _users = file.Users; ok = true; }
+                }
+            }
+            catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+        }
+        // Stamped only on success. The stamp means "this is the version I hold"; taking
+        // it from a file we failed to read would record that claim against content we
+        // never loaded, and the drift check would then see nothing to do.
+        if (ok) NoteDiskStampLocked();
+        return ok;
+    }
+
+    /// <summary>Record the file identity this pod's in-memory users came from.</summary>
+    private void NoteDiskStampLocked() => _diskStamp = ReadDiskStamp();
+
+    private (long Ticks, long Length) ReadDiskStamp()
+    {
         try
         {
-            var json = File.ReadAllText(_filePath);
-            if (string.IsNullOrWhiteSpace(json)) { _users = new List<User>(); return; }
-            var file = JsonSerializer.Deserialize<UsersFile>(json, JsonOpts);
-            if (file?.Users != null) _users = file.Users;
+            var fi = new FileInfo(_filePath);
+            return fi.Exists ? (fi.LastWriteTimeUtc.Ticks, fi.Length) : default;
         }
-        catch { /* keep current in-memory copy if the file is momentarily unreadable */ }
+        catch { return _diskStamp; } // unreadable: report no change rather than churn
+    }
+
+    /// <summary>
+    /// Backstop for the beacon, which is a single key in a store that can be flushed,
+    /// evicted or restarted, and whose value is a GUID that cannot be checked against
+    /// anything. This notices what the beacon structurally cannot: users.json changed
+    /// while the head did not. Must hold _lock.
+    /// </summary>
+    private void CheckDiskDriftLocked()
+    {
+        if (ReadDiskStamp() == _diskStamp) return;
+        ReloadUsersFromDiskLocked();
     }
 
     public static string Hash(string token)
@@ -237,9 +402,9 @@ public sealed class AuthService
             return ConstantTimeEquals(presented, _rootHash!) ? RootUser() : null;
         }
 
+        EnsureFresh(); // outside the lock: never block other auth checks on Redis
         lock (_lock)
         {
-            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (!u.Username.Equals(username, StringComparison.OrdinalIgnoreCase)) continue;
@@ -260,9 +425,9 @@ public sealed class AuthService
         // Compare against root first
         if (ConstantTimeEquals(presented, _rootHash!)) return RootUser();
 
+        EnsureFresh(); // outside the lock: never block other auth checks on Redis
         lock (_lock)
         {
-            EnsureFreshLocked();
             foreach (var u in _users)
             {
                 if (u.Revoked) continue;
@@ -286,6 +451,7 @@ public sealed class AuthService
         if (newUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new IssueResult(IssueStatus.UsernameTaken);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)
@@ -337,6 +503,7 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new DeleteResult(DeleteStatus.NotAllowed);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)
@@ -377,6 +544,7 @@ public sealed class AuthService
         if (targetUsername.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
             return new RevokeResult(RevokeStatus.NotAllowed);
 
+        using var lease = AcquireWriteLease();
         for (int attempt = 0; ; attempt++)
         {
             lock (_lock)
@@ -419,9 +587,9 @@ public sealed class AuthService
     public IReadOnlyList<User> ListVisibleTo(string requestedBy)
     {
         if (Disabled) return Array.Empty<User>();
+        EnsureFresh();
         lock (_lock)
         {
-            EnsureFreshLocked();
             if (requestedBy.Equals(RootUsername, StringComparison.OrdinalIgnoreCase))
                 return _users.Select(Clone).ToList();
             return GetDescendantsLocked(requestedBy).Select(Clone).ToList();

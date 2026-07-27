@@ -120,6 +120,10 @@
       <label for="revSelect">Load a previous revision</label>
       <select id="revSelect"></select>
     </div>
+    <div id="corruptPanel" style="display:none;margin-top:1rem">
+      <p class="subtitle">This is a quarantined copy of a <strong>config.json that could not be parsed</strong>. It was preserved when the instance recovered, and is shown read-only — it cannot be loaded into the form. Copy anything you need from it, then pick a valid revision above.</p>
+      <pre id="corruptBody" style="max-height:20rem;overflow:auto;white-space:pre-wrap;word-break:break-word"></pre>
+    </div>
   </div>
 
   <div class="tabs">
@@ -293,16 +297,6 @@
     </div>
   </div>
 
-  <div class="panel">
-    <h2>Maintenance</h2>
-    <p class="subtitle">DNS, SMTP and HTTP probe results are cached in memory and on disk — and, when Redis is configured, in a shared Redis cache — to speed up validations.</p>
-    <div class="msg warn" style="margin-bottom:0.75rem">
-      ⚠ Clearing wipes every cached probe: this instance's in-memory cache, the on-disk cache, and the shared Redis cache when configured. Other replicas' in-memory copies expire on their own TTL. Validations then re-fetch everything and run noticeably slower until the caches warm up again. Use only to force fresh data or reclaim space.
-    </div>
-    <div class="actions">
-      <button class="danger" id="clearCacheBtn">Clear all caches</button>
-    </div>
-  </div>
 </div>
 
 <div class="scrollnav" aria-hidden="true">
@@ -354,14 +348,37 @@ async function loadHistory() {
   } catch { return; }
   const sel = $('#revSelect');
   sel.innerHTML = '<option value="">— current (unsaved) —</option>' +
-    revs.map(r => `<option value="${r.id}">${esc(fmtDate(r.savedAt))} — ${esc(r.savedBy)}</option>`).join('');
+    revs.map(r => r.isCorrupt
+      ? `<option value="corrupt:${esc(r.key)}">⚠ ${esc(fmtDate(r.savedAt))} — quarantined corrupt config (inspect only)</option>`
+      : `<option value="${r.id}">${esc(fmtDate(r.savedAt))} — ${esc(r.savedBy)}</option>`).join('');
   $('#historyPanel').style.display = revs.length ? '' : 'none';
+}
+
+function hideCorruptPanel() {
+  $('#corruptPanel').style.display = 'none';
+  $('#corruptBody').textContent = '';
 }
 
 $('#revSelect')?.addEventListener('change', async e => {
   const id = e.target.value;
+  hideCorruptPanel();
   if (!id) return;
   const opt = e.target.options[e.target.selectedIndex];
+
+  // A quarantined config is not valid configuration, so it is never loaded into
+  // the form — it is fetched as raw text and shown for inspection only. It is
+  // keyed by content hash, so the entry listed is the entry fetched even if
+  // another config was quarantined in between.
+  if (id.startsWith('corrupt:')) {
+    const key = id.slice('corrupt:'.length);
+    const res = await fetch(`/api/config/history/corrupt/${encodeURIComponent(key)}/raw`);
+    if (!res.ok) { showMessage(`Could not load quarantined config: ${res.status}`); return; }
+    $('#corruptBody').textContent = await res.text();
+    $('#corruptPanel').style.display = '';
+    showMessage('Showing the quarantined config that failed to parse. It cannot be applied.', 'warn');
+    return;
+  }
+
   const res = await fetch(`/api/config/history/${encodeURIComponent(id)}`);
   if (!res.ok) { showMessage(`Could not load revision: ${res.status}`); return; }
   const cfg = await res.json();
@@ -535,19 +552,6 @@ document.querySelectorAll('.tabs button').forEach(btn => {
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
     if (btn.dataset.tab === 'json') $('#rawJson').value = JSON.stringify(collectFormConfig(), null, 2);
   });
-});
-
-$('#clearCacheBtn').addEventListener('click', async () => {
-  if (!confirm('Clear ALL caches (memory, disk, and shared Redis when configured)?\n\nEvery DNS, SMTP and HTTP probe will be re-fetched on the next validations, which will noticeably degrade performance until the caches warm up again.\n\nThis cannot be undone.')) return;
-  const btn = $('#clearCacheBtn');
-  btn.disabled = true;
-  try {
-    const res = await fetch('/api/cache/clear', { method: 'POST', credentials: 'same-origin' });
-    if (res.ok) showMessage('All caches cleared. Validations will be slower until caches warm up again.', 'warn');
-    else if (res.status === 403) showMessage('Forbidden — admin only.');
-    else showMessage(`Clear failed: ${res.status}`);
-  } catch (e) { showMessage(e.message); }
-  finally { btn.disabled = false; }
 });
 
 $('#scrollTopBtn')?.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));

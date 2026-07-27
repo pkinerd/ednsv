@@ -25,6 +25,30 @@ public class DiskCacheTests : IDisposable
             Directory.Delete(_cacheDir, true);
     }
 
+    /// <summary>Every record file written under the cache directory, across all
+    /// instance folders.</summary>
+    private string[] RecordFiles() => Directory.Exists(_cacheDir)
+        ? Directory.GetFiles(_cacheDir, "*.jsonl", SearchOption.AllDirectories)
+        : Array.Empty<string>();
+
+    /// <summary>The type tags present on disk, e.g. "dns" or "http-get". One file
+    /// holds every cache type, so a test that used to look for a per-type filename
+    /// looks for a per-type record instead.</summary>
+    private HashSet<string> PersistedTypes()
+    {
+        var types = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in RecordFiles())
+        {
+            foreach (var line in File.ReadAllLines(path))
+            {
+                if (line.Length == 0) continue;
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                types.Add(doc.RootElement.GetProperty("t").GetString() ?? "");
+            }
+        }
+        return types;
+    }
+
     // ── Round-trip tests ─────────────────────────────────────────────────
 
     [Fact]
@@ -41,7 +65,7 @@ public class DiskCacheTests : IDisposable
         // Save to disk
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
         Assert.True(Directory.Exists(_cacheDir));
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
+        Assert.Contains(CacheTypes.Dns, PersistedTypes());
 
         // Load into fresh services
         var dns2 = new DnsResolverService();
@@ -113,7 +137,7 @@ public class DiskCacheTests : IDisposable
     // ── Per-entry TTL expiry ────────────────────────────────────────────
 
     [Fact]
-    public async Task LoadAsync_ExpiredEntries_FilteredOut()
+    public async Task LoadAsync_EntriesOlderThanTheTtl_FilteredOut()
     {
         var dns1 = new DnsResolverService();
         var smtp1 = new SmtpProbeService();
@@ -122,13 +146,29 @@ public class DiskCacheTests : IDisposable
         await dns1.QueryAsync("example.com", QueryType.A);
         await DiskCacheService.SaveAsync(_cacheDir, smtp1, http1, dns1);
 
-        var dns2 = new DnsResolverService();
-        var smtp2 = new SmtpProbeService();
-        var http2 = new HttpProbeService();
+        // A one-tick TTL: everything on disk was written before the cutoff.
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.FromTicks(1),
+            new SmtpProbeService(), new HttpProbeService(), new DnsResolverService());
 
-        // Load with zero TTL — all entries should be expired
-        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.Zero, smtp2, http2, dns2);
         Assert.Null(loadResult);
+    }
+
+    [Fact]
+    public async Task LoadAsync_ZeroTtl_MeansNoCapNotEverythingExpired()
+    {
+        // CacheTtlHours=0 is documented as "no expiry" and is honoured that way in
+        // memory. Taking it literally on disk would put the cutoff at now and discard
+        // the whole cache on every load.
+        var dns1 = new DnsResolverService();
+        await dns1.QueryAsync("example.com", QueryType.A);
+        await DiskCacheService.SaveAsync(_cacheDir, new SmtpProbeService(), new HttpProbeService(), dns1);
+
+        var loadResult = await DiskCacheService.LoadAsync(_cacheDir, TimeSpan.Zero,
+            new SmtpProbeService(), new HttpProbeService(), new DnsResolverService());
+
+        Assert.NotNull(loadResult);
+        Assert.True(loadResult!.DnsQueries > 0);
+        Assert.NotEmpty(RecordFiles()); // and the sweep did not delete them either
     }
 
     [Fact]
@@ -148,8 +188,11 @@ public class DiskCacheTests : IDisposable
     [Fact]
     public async Task LoadAsync_CorruptFile_ReturnsNull()
     {
-        Directory.CreateDirectory(_cacheDir);
-        await File.WriteAllTextAsync(Path.Combine(_cacheDir, "dns-queries.json"), "this is not valid json {{{");
+        var dir = DiskCacheService.InstanceFolder(_cacheDir);
+        Directory.CreateDirectory(dir);
+        // Stamped now, so the sweep leaves it and the parse is what rejects it.
+        var name = $"cache.{DateTime.UtcNow:yyyyMMdd'T'HHmmssfff}Z.deadbeef.jsonl";
+        await File.WriteAllTextAsync(Path.Combine(dir, name), "this is not valid json {{{");
 
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();
@@ -159,10 +202,10 @@ public class DiskCacheTests : IDisposable
         Assert.Null(result);
     }
 
-    // ── Separate files per cache type ────────────────────────────────────
+    // ── One file, every cache type ───────────────────────────────────────
 
     [Fact]
-    public async Task SaveAsync_CreatesPerTypeFiles()
+    public async Task SaveAsync_WritesEveryCacheTypeIntoOneFile()
     {
         var dns = new DnsResolverService();
         var smtp = new SmtpProbeService();
@@ -174,8 +217,10 @@ public class DiskCacheTests : IDisposable
 
         await DiskCacheService.SaveAsync(_cacheDir, smtp, http, dns);
 
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "dns-queries.json")));
-        Assert.True(File.Exists(Path.Combine(_cacheDir, "http-get.json")));
+        Assert.Single(RecordFiles());
+        var types = PersistedTypes();
+        Assert.Contains(CacheTypes.Dns, types);
+        Assert.Contains(CacheTypes.HttpGet, types);
     }
 
     // ── Merge behavior ──────────────────────────────────────────────────

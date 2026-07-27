@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -6,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.Extensions.Caching.Memory;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Ednsv.Core.Services;
 
@@ -44,10 +44,23 @@ public class SmtpProbeService
 
     /// <param name="timeoutSeconds">SMTP command/connect timeout. Default 10s.</param>
     /// <param name="portTimeoutSeconds">TCP port-open probe timeout. Default 5s.</param>
-    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5, RedisConnection? redis = null)
+    /// <param name="persistToDisk">False when no cache directory is configured, so
+    /// results are never queued for a write that will not happen.</param>
+    /// <param name="warmSharedCache">False when nothing will republish this cache into
+    /// the shared tier — see <see cref="ProbeCache{T}"/>.</param>
+    /// <param name="smtpPort">Where the RCPT and relay probes open their mail
+    /// transaction. Always 25 in production — it is the port an MX listens on, and
+    /// nothing configures it. It exists so a test can point those probes at a stub on
+    /// an ephemeral port: binding 25 needs privilege, and a listener on a well-known
+    /// port is a process-wide resource that other tests probing localhost would then
+    /// reach by accident.</param>
+    public SmtpProbeService(TimeSpan? cacheTtl = null, double timeoutSeconds = 10, double portTimeoutSeconds = 5,
+        RedisConnection? redis = null, bool persistToDisk = true, bool warmSharedCache = true,
+        int smtpPort = 25)
     {
         _timeout = TimeSpan.FromSeconds(timeoutSeconds);
         _portTimeout = TimeSpan.FromSeconds(portTimeoutSeconds);
+        _smtpPort = smtpPort;
         ProbeCacheL2<SmtpProbeResult>? probeL2 =
             redis != null && redis.Enabled
                 ? new ProbeCacheL2<SmtpProbeResult>(redis, "smtp", cacheTtl,
@@ -58,11 +71,25 @@ public class SmtpProbeService
                         return e == null ? null : FromCacheEntry(e);
                     })
                 : null;
-        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2);
-        _portCache = new ProbeCacheValue<bool>(cacheTtl);
+        _cacheTtl = cacheTtl;
+        _probeCache = new ProbeCache<SmtpProbeResult>(cacheTtl, probeL2, persistToDisk, warmSharedCache);
+        _portCache = new ProbeCacheValue<bool>(cacheTtl, persistToDisk);
+        _rcptBag = new WriteBag<(bool accepted, string response)>(cacheTtl, persistToDisk);
+        _relayBag = new WriteBag<(bool isRelay, string description)>(cacheTtl, persistToDisk);
+        _rcptCache = new ExpiringMap<string, (bool accepted, string response)>(cacheTtl);
+        _relayCache = new ExpiringMap<string, (bool isRelay, string description)>(cacheTtl);
     }
-    private readonly ConcurrentDictionary<string, (bool accepted, string response)> _rcptCache = new();
-    private readonly ConcurrentDictionary<string, (bool isRelay, string description)> _relayCache = new();
+    private readonly TimeSpan? _cacheTtl;
+    private readonly int _smtpPort;
+    // Not a ProbeCache: no L2, no in-flight dedup, and their own write queues. They
+    // do expire, though — see ExpiringMap.
+    private readonly ExpiringMap<string, (bool accepted, string response)> _rcptCache;
+    private readonly ExpiringMap<string, (bool isRelay, string description)> _relayCache;
+
+    // Plain dictionaries rather than ProbeCaches, so they carry their own write
+    // queues — see WriteBag.
+    private readonly WriteBag<(bool accepted, string response)> _rcptBag;
+    private readonly WriteBag<(bool isRelay, string description)> _relayBag;
 
     // Counters for diagnostics
     private int _probesStarted;
@@ -325,7 +352,9 @@ public class SmtpProbeService
     public async Task<(bool accepted, string response)> ProbeRcptDetailedAsync(string host, string address)
     {
         var cacheKey = $"{host.ToLowerInvariant()}|{address.ToLowerInvariant()}";
-        if (_rcptCache.TryGetValue(cacheKey, out var cached))
+        // CacheDep.Rcpt is what the Postmaster and Abuse categories declare, and this
+        // is the only cache it names.
+        if (_rcptCache.TryGetValue(cacheKey, out var cached, RecheckHelper.CacheDep.Rcpt))
             return cached;
 
         (bool accepted, string response) lastResult = (false, "");
@@ -337,9 +366,15 @@ public class SmtpProbeService
                 break;
         }
 
-        // Only cache definitive server responses, not transient failures
+        // Only cache definitive server responses, not transient failures. Written
+        // rather than added-if-absent: on a recheck the read above was bypassed on
+        // purpose, and an add-if-absent would leave the entry that bypass exists to
+        // replace — refetching every time and discarding the answer.
         if (!lastResult.response.StartsWith("Error:") && !lastResult.response.StartsWith("Connection timed out"))
-            _rcptCache.TryAdd(cacheKey, lastResult);
+        {
+            _rcptCache.Set(cacheKey, lastResult);
+            _rcptBag.Add(cacheKey, lastResult);
+        }
         return lastResult;
     }
 
@@ -349,7 +384,7 @@ public class SmtpProbeService
         try
         {
             client = new TcpClient();
-            var connectTask = client.ConnectAsync(host, 25);
+            var connectTask = client.ConnectAsync(host, _smtpPort);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");
             await connectTask;
@@ -460,13 +495,20 @@ public class SmtpProbeService
     public async Task<(bool isRelay, string description)> TestRelayAsync(string mxHost, string domain)
     {
         var cacheKey = $"relay:{mxHost.ToLowerInvariant()}|{domain.ToLowerInvariant()}";
-        if (_relayCache.TryGetValue(cacheKey, out var cached))
+        // CacheDep.Smtp: the open-relay check reports under CheckCategory.SMTP, which
+        // declares Smtp, and a relay verdict is an SMTP conversation with the MX. The
+        // handshake cache was already refreshed by that flag; this one was not.
+        if (_relayCache.TryGetValue(cacheKey, out var cached, RecheckHelper.CacheDep.Smtp))
             return cached;
 
         var result = await PerformRelayTestAsync(mxHost, domain);
-        // Only cache definitive results, not transient failures
+        // Only cache definitive results, not transient failures. Written rather than
+        // added-if-absent — see ProbeRcptDetailedAsync.
         if (!result.description.StartsWith("Error:") && !result.description.StartsWith("Connection timed out"))
-            _relayCache.TryAdd(cacheKey, result);
+        {
+            _relayCache.Set(cacheKey, result);
+            _relayBag.Add(cacheKey, result);
+        }
         return result;
     }
 
@@ -476,7 +518,7 @@ public class SmtpProbeService
         try
         {
             client = new TcpClient();
-            var connectTask = client.ConnectAsync(mxHost, 25);
+            var connectTask = client.ConnectAsync(mxHost, _smtpPort);
             if (await Task.WhenAny(connectTask, Task.Delay(_timeout)) != connectTask)
                 return (false, "Connection timed out");
             await connectTask;
@@ -520,14 +562,6 @@ public class SmtpProbeService
     }
 
     /// <summary>Evicts all cached SMTP probe/port/RCPT/relay results.</summary>
-    public void ClearCache()
-    {
-        _probeCache.Clear();
-        _portCache.Clear();
-        _rcptCache.Clear();
-        _relayCache.Clear();
-    }
-
     // ── Cache export/import for disk persistence ─────────────────────────
 
     /// <summary>Convert a probe result to its serialisable DTO (certs → base64).
@@ -583,86 +617,75 @@ public class SmtpProbeService
         };
     }
 
-    public Dictionary<string, SmtpProbeCacheEntry> ExportProbeCache()
+    /// <summary>Import one record from a cache file — see
+    /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
+    public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
-        var result = new Dictionary<string, SmtpProbeCacheEntry>();
-        foreach (var kvp in _probeCache.Export())
+        if (value == null) return false;
+        try
         {
-            var diskKey = kvp.Key.StartsWith("smtp:") ? kvp.Key[5..] : kvp.Key;
-            result[diskKey] = ToCacheEntry(kvp.Value);
-        }
-        return result;
-    }
-
-    public void ImportProbeCache(Dictionary<string, SmtpProbeCacheEntry> entries)
-    {
-        foreach (var kvp in entries)
-            _probeCache.Import($"smtp:{kvp.Key}", FromCacheEntry(kvp.Value));
-    }
-
-    public Dictionary<string, bool> ExportPortCache()
-        => _portCache.Export();
-
-    public void ImportPortCache(Dictionary<string, bool> entries)
-    {
-        foreach (var kvp in entries)
-            _portCache.Import(kvp.Key, kvp.Value);
-    }
-
-    public Dictionary<string, RcptCacheEntry> ExportRcptCache()
-    {
-        var result = new Dictionary<string, RcptCacheEntry>();
-        foreach (var kvp in _rcptCache)
-            result[kvp.Key] = new RcptCacheEntry { Accepted = kvp.Value.accepted, Response = kvp.Value.response };
-        return result;
-    }
-
-    public void ImportRcptCache(Dictionary<string, RcptCacheEntry> entries)
-    {
-        foreach (var kvp in entries)
-            _rcptCache.TryAdd(kvp.Key, (kvp.Value.Accepted, kvp.Value.Response));
-    }
-
-    // ── Cache entry removal ───────────────────────────────────────────────
-
-    public void RemoveProbeEntries(Func<string, bool> predicate)
-        => _probeCache.Remove(key => key.StartsWith("smtp:") && predicate(key[5..]));
-
-    public void RemovePortEntries(Func<string, bool> predicate)
-        => _portCache.Remove(predicate);
-
-    public void RemoveRcptEntries(Func<string, bool> predicate)
-    {
-        var toRemove = _rcptCache.Keys.Where(predicate).ToList();
-        foreach (var key in toRemove)
-            _rcptCache.TryRemove(key, out _);
-    }
-
-    public void RemoveRelayEntries(Func<string, bool> predicate)
-    {
-        var toRemove = _relayCache.Keys.Where(predicate).ToList();
-        foreach (var key in toRemove)
-            _relayCache.TryRemove(key, out _);
-    }
-
-    public Dictionary<string, RelayCacheEntry> ExportRelayCache()
-    {
-        var result = new Dictionary<string, RelayCacheEntry>();
-        foreach (var kvp in _relayCache)
-        {
-            result[kvp.Key] = new RelayCacheEntry
+            switch (type)
             {
-                IsRelay = kvp.Value.isRelay,
-                Description = kvp.Value.description
-            };
+                case CacheTypes.Smtp:
+                {
+                    var entry = value.Deserialize<SmtpProbeCacheEntry>();
+                    if (entry != null) _probeCache.Import(key, FromCacheEntry(entry), expiresUtc);
+                    return true;
+                }
+                case CacheTypes.Port:
+                    _portCache.Import(key, value.Deserialize<bool>(), expiresUtc);
+                    return true;
+                case CacheTypes.Rcpt:
+                {
+                    var entry = value.Deserialize<RcptCacheEntry>();
+                    if (entry != null) _rcptCache.TryAdd(key, (entry.Accepted, entry.Response), expiresUtc);
+                    return true;
+                }
+                case CacheTypes.Relay:
+                {
+                    var entry = value.Deserialize<RelayCacheEntry>();
+                    if (entry != null) _relayCache.TryAdd(key, (entry.IsRelay, entry.Description), expiresUtc);
+                    return true;
+                }
+                default:
+                    return false;
+            }
         }
-        return result;
+        catch
+        {
+            return true;
+        }
     }
 
-    public void ImportRelayCache(Dictionary<string, RelayCacheEntry> entries)
+    // ── Shared-cache recovery ────────────────────────────────────────────
+
+    /// <summary>Republish cached SMTP probes into the shared L2. The port cache has no
+    /// L2, so there is nothing to republish for it.</summary>
+    public int WarmSharedCache() => _probeCache.WarmSharedCache();
+
+    /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
+    public void PruneSharedCacheIndex() => _probeCache.PruneSharedCacheIndex();
+
+    /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>.</summary>
+    public int SharedCacheIndexCount => _probeCache.SharedCacheIndexCount;
+
+    // The two maps that are not ProbeCaches — see DnsResolverService for why these are
+    // counted at all, and ExpiringMap.Count for why an expired entry can still show up.
+    public int RcptCacheCount => _rcptCache.Count;
+
+    // ── Flush sources ────────────────────────────────────────────────────
+
+    /// <summary>Everything this prober has fetched and not yet written out.</summary>
+    public IEnumerable<PendingWrites> CollectPendingWrites()
     {
-        foreach (var kvp in entries)
-            _relayCache.TryAdd(kvp.Key, (kvp.Value.IsRelay, kvp.Value.Description));
+        yield return _probeCache.CollectPending(CacheTypes.Smtp,
+            r => JsonSerializer.SerializeToNode(ToCacheEntry(r)));
+        yield return _portCache.CollectPending(CacheTypes.Port,
+            open => JsonSerializer.SerializeToNode(open));
+        yield return _rcptBag.Collect(CacheTypes.Rcpt,
+            v => JsonSerializer.SerializeToNode(new RcptCacheEntry { Accepted = v.accepted, Response = v.response }));
+        yield return _relayBag.Collect(CacheTypes.Relay,
+            v => JsonSerializer.SerializeToNode(new RelayCacheEntry { IsRelay = v.isRelay, Description = v.description }));
     }
 
 }

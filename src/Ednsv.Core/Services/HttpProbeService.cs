@@ -1,6 +1,6 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Ednsv.Core.Services;
 
@@ -47,7 +47,13 @@ public class HttpProbeService
     /// </param>
     /// <param name="timeoutSeconds">Per-request HTTP timeout. Default 10s.</param>
     /// <param name="maxConcurrency">Cap on simultaneous outbound requests. Default 20.</param>
-    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10, int maxConcurrency = 20, RedisConnection? redis = null)
+    /// <param name="persistToDisk">False when no cache directory is configured — see
+    /// <see cref="SmtpProbeService"/>.</param>
+    /// <param name="warmSharedCache">False when nothing will republish this cache into
+    /// the shared tier — see <see cref="ProbeCache{T}"/>.</param>
+    public HttpProbeService(TimeSpan? cacheTtl = null, bool validateCertificates = true, double timeoutSeconds = 10,
+        int maxConcurrency = 20, RedisConnection? redis = null, bool persistToDisk = true,
+        bool warmSharedCache = true)
     {
         _concurrencyLimiter = new SemaphoreSlim(maxConcurrency, maxConcurrency);
         ProbeCacheL2<GetResult>? getL2 =
@@ -70,8 +76,9 @@ public class HttpProbeService
                         return e == null ? null : new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType };
                     })
                 : null;
-        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2);
-        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(cacheTtl, getHeadersL2);
+        _getCache = new ProbeCache<GetResult>(cacheTtl, getL2, persistToDisk, warmSharedCache);
+        _getWithHeadersCache = new ProbeCache<GetWithHeadersResult>(
+            cacheTtl, getHeadersL2, persistToDisk, warmSharedCache);
         var handler = new HttpClientHandler
         {
             AllowAutoRedirect = true
@@ -206,47 +213,68 @@ public class HttpProbeService
     }
 
     /// <summary>Evicts all cached HTTP GET results.</summary>
-    public void ClearCache()
-    {
-        _getCache.Clear();
-        _getWithHeadersCache.Clear();
-    }
-
     // ── Cache export/import for disk persistence ─────────────────────────
 
-    public Dictionary<string, HttpGetCacheEntry> ExportGetCache()
+    /// <summary>Import one record from a cache file — see
+    /// <see cref="DnsResolverService.TryImportRecord"/>.</summary>
+    public bool TryImportRecord(string type, string key, JsonNode? value, DateTime expiresUtc)
     {
-        var result = new Dictionary<string, HttpGetCacheEntry>();
-        foreach (var kvp in _getCache.Export())
-            result[kvp.Key] = new HttpGetCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode };
-        return result;
+        if (value == null) return false;
+        try
+        {
+            switch (type)
+            {
+                case CacheTypes.HttpGet:
+                {
+                    var e = value.Deserialize<HttpGetCacheEntry>();
+                    if (e != null)
+                        _getCache.Import(key, new GetResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode }, expiresUtc);
+                    return true;
+                }
+                case CacheTypes.HttpGetHeaders:
+                {
+                    var e = value.Deserialize<HttpGetWithHeadersCacheEntry>();
+                    if (e != null)
+                        _getWithHeadersCache.Import(key, new GetWithHeadersResult { Success = e.Success, Content = e.Content, StatusCode = e.StatusCode, ContentType = e.ContentType }, expiresUtc);
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+        catch
+        {
+            return true;
+        }
     }
 
-    public void ImportGetCache(Dictionary<string, HttpGetCacheEntry> entries)
+    // ── Shared-cache recovery ────────────────────────────────────────────
+
+    /// <summary>Republish cached HTTP responses into the shared L2.</summary>
+    public int WarmSharedCache() => _getCache.WarmSharedCache() + _getWithHeadersCache.WarmSharedCache();
+
+    /// <summary>See <see cref="ProbeCache{T}.PruneSharedCacheIndex"/>.</summary>
+    public void PruneSharedCacheIndex()
     {
-        foreach (var kvp in entries)
-            _getCache.Import(kvp.Key, new GetResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode });
+        _getCache.PruneSharedCacheIndex();
+        _getWithHeadersCache.PruneSharedCacheIndex();
     }
 
-    public Dictionary<string, HttpGetWithHeadersCacheEntry> ExportGetWithHeadersCache()
+    /// <summary>See <see cref="ProbeCache{T}.SharedCacheIndexCount"/>.</summary>
+    public int SharedCacheIndexCount =>
+        _getCache.SharedCacheIndexCount + _getWithHeadersCache.SharedCacheIndexCount;
+
+    // ── Flush sources ────────────────────────────────────────────────────
+
+    /// <summary>Everything this prober has fetched and not yet written out.</summary>
+    public IEnumerable<PendingWrites> CollectPendingWrites()
     {
-        var result = new Dictionary<string, HttpGetWithHeadersCacheEntry>();
-        foreach (var kvp in _getWithHeadersCache.Export())
-            result[kvp.Key] = new HttpGetWithHeadersCacheEntry { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType };
-        return result;
+        yield return _getCache.CollectPending(CacheTypes.HttpGet,
+            r => JsonSerializer.SerializeToNode(
+                new HttpGetCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode }));
+        yield return _getWithHeadersCache.CollectPending(CacheTypes.HttpGetHeaders,
+            r => JsonSerializer.SerializeToNode(
+                new HttpGetWithHeadersCacheEntry { Success = r.Success, Content = r.Content, StatusCode = r.StatusCode, ContentType = r.ContentType }));
     }
 
-    public void ImportGetWithHeadersCache(Dictionary<string, HttpGetWithHeadersCacheEntry> entries)
-    {
-        foreach (var kvp in entries)
-            _getWithHeadersCache.Import(kvp.Key, new GetWithHeadersResult { Success = kvp.Value.Success, Content = kvp.Value.Content, StatusCode = kvp.Value.StatusCode, ContentType = kvp.Value.ContentType });
-    }
-
-    // ── Cache entry removal ───────────────────────────────────────────────
-
-    public void RemoveGetEntries(Func<string, bool> predicate)
-        => _getCache.Remove(predicate);
-
-    public void RemoveGetWithHeadersEntries(Func<string, bool> predicate)
-        => _getWithHeadersCache.Remove(predicate);
 }

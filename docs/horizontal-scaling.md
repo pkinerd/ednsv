@@ -19,6 +19,11 @@ connection string is configured:
 | **unset** (default) | Single-instance | In-memory job registry, on-disk probe cache, in-process config lock — exactly as before. Safe for `replicas: 1`. |
 | **set** | Distributed | Async jobs and the probe-cache L2 live in Redis; config/user writes coordinate through a Redis beacon. Safe for `replicas: N`. |
 
+No managed Redis available? You do not need one — a single pod with persistence and
+replication *switched off* covers everything below, because none of what lives there is
+durable. See [self-hosted-redis.md](self-hosted-redis.md) for manifests, sizing and
+alternative servers.
+
 Two backing stores are used, each chosen for its durability characteristics:
 
 - **Redis** — *ephemeral, possibly untrusted.* Holds only derivable/disposable
@@ -138,17 +143,108 @@ a Redis flush just means an in-flight client resubmits — acceptable by design.
 The existing two-tier cache gains a shared L2:
 
 1. Check the per-pod **L1** `MemoryCache` (unchanged).
-2. On an L1 miss, check the **Redis L2** (`cache:{type}:{key}`); on a hit,
+2. On an L1 miss, check the **Redis L2** (`{InstanceName}:cache:{type}:{key}`); on a hit,
    populate L1 and return.
 3. On an L2 miss, run the network query, then write-through to **both** L1 and L2
    (subject to the existing `shouldPersist` predicate — transient errors stay L1
    only, never hitting Redis).
 
+If Redis is emptied while pods are running — a restart without persistence, a
+`FLUSHALL`, a failover to an empty replica — the shared cache does not refill on
+its own, because every pod is still serving from its own L1 and disk and has no
+reason to refetch. Pods detect this via a nonce key and republish their own
+in-memory cache into it — not their disk tier, which holds strictly less; see
+[caching-architecture.md](caching-architecture.md) → *Recovering an emptied L2*. Without that, a pod rescheduled afterwards would come
+back fully cold despite the L2 being configured.
+
 Cross-pod in-flight de-duplication is intentionally **not** implemented: at worst
 a few duplicate upstream queries happen the first time a key is requested
 concurrently on different pods. Caching is a load optimisation, not a correctness
 mechanism, so any Redis error transparently falls through to the network. Redis
-entries carry a native per-key TTL derived from `CacheTtlHours`.
+entries carry a native per-key TTL derived from `CacheTtlHours`, or from the
+entry's own record TTL when `DnsCacheMinTtlSeconds` gating is enabled.
+
+### Skip the disk cache once Redis is present
+
+**Recommended whenever Redis is configured across more than one pod: set
+`CacheDir=none`.** The disk tier earns its keep in a single-instance deployment,
+where it is the only thing that survives a restart. Alongside Redis it mostly does
+not, and it costs real I/O.
+
+What the disk tier is *for* is surviving a process restart with a warm cache. In a
+multi-pod deployment Redis already does that, and better — a pod that comes back
+with an empty L1 refills from the L2 without touching a file. That leaves the disk
+tier covering one case: **Redis itself being emptied**, by a restart without
+persistence, a `FLUSHALL`, or a failover to an empty replica. Pods now handle that
+themselves — they notice and republish their own memory into it (see
+[caching-architecture.md](caching-architecture.md) → *Recovering an emptied L2*) —
+so the disk tier is no longer what stands between a Redis flush and a cold fleet.
+
+That works because **Redis being emptied and pods restarting are largely independent
+events.** A managed Redis is patched, scaled and failed over on its own schedule; pod
+churn follows deploys and node operations. As long as one pod survives a flush, the
+fleet's cache is recovered from memory. What `none` gives up is the correlated case:
+Redis emptied *and* every pod restarted at once, which is a fully cold start. That is
+a cache, so it costs a burst of upstream queries and nothing else.
+
+What you gain is everything the disk tier costs: no per-flush file writes, no sweep,
+no startup read, and no shared-mount fan-out. The mount reverts to what it is
+genuinely needed for — `config.json`, `users.json` and the DataProtection keyring,
+all small, rarely written, and already coordinated.
+
+#### If you want a warm-start tier as well
+
+Point `CacheDir` at a pod-local `emptyDir` rather than the shared RWX mount.
+
+On the shared mount, startup file I/O scales with *replicas x files*: every pod
+reads every other pod's folder, and a rolling deploy has all of them doing it
+simultaneously against one NFS/Azure Files endpoint — the worst case being precisely
+the coordinated restart, and it degrades as you scale out. Pointed at an `emptyDir`,
+each pod reads only its own local disk, so startup is **O(1) per pod** and a
+30-replica rollout costs the same per pod as a 3-replica one.
+
+Be precise about what `emptyDir` survives: container restarts within the pod, not
+rescheduling — it is tied to the pod, not the node. A container restart keeps the
+local disk warm; a rescheduled pod loses it and is repopulated from the Redis L2.
+That narrow difference is the whole benefit over `none`, which is why `none` is the
+better default.
+
+The cross-pod merge still runs and simply finds only this pod's files — a harmless
+no-op. The per-pod subfolder stays uniform either way; the application cannot
+distinguish a shared mount from a local volume, so any detection would be guesswork.
+
+| Deployment | `CacheDir` | Why |
+|---|---|---|
+| **Single instance** | *(unset)* → `{DataDir}/cache` | **Recommended.** The disk tier is the only thing that survives a restart, and with one writer there is no fan-out. |
+| **Multi-pod with Redis** | **`none`** | **Recommended.** Redis shares results between pods, and surviving pods republish it from memory whenever it is emptied. No file I/O, no sweep, no fan-out. |
+| Multi-pod without Redis | shared RWX mount | The only way to share a cache between pods. Accepts the fan-out above; this is what the per-pod folders and the merge exist for. |
+| Multi-pod with Redis, wanting warm restarts | pod-local `emptyDir` | Keeps a local warm-start tier for a container restart. See the caveat below — it does not survive rescheduling. |
+
+#### What `none` does and does not give up
+
+**Managed Redis is not a durability guarantee**, and that used to be the argument
+against `none`. Basic/Standard Azure Cache tiers have no persistence, so a node
+reboot, patch or scale operation empties them; even with persistence, replication is
+async and a failover can drop recent writes; and `maxmemory` eviction discards keys
+under pressure on any tier.
+
+The durability now comes from the fleet rather than from Redis. Every pod holds the
+results it has fetched, notices when the shared cache has been emptied, and
+republishes into it — so **any one surviving pod restores the cache**. Redis being
+emptied is no longer the event the disk tier had to insure against.
+
+Two things `none` genuinely gives up:
+
+- **A correlated loss** — Redis emptied *and* every pod restarted, with no memory
+  anywhere left to republish from. That is a fully cold fleet and a burst of upstream
+  queries; it is a cache, so nothing is lost but time.
+- **A long retention window.** Redis memory costs far more than file storage, so if
+  you want to hold days of results rather than hours, disk is the cheaper place and
+  `CacheTtlHours` on a shared mount is the way to do it.
+
+It also **does not remove the mount**: `config.json`, `users.json` and the
+DataProtection keyring still require the shared RWX volume. `none` only stops the
+probe cache adding traffic to it.
 
 ## Config & user writes (beacon CAS)
 
@@ -173,6 +269,30 @@ revision GUID** promoted via a Redis beacon:
 
 The head GUID is the identity used for concurrency; the sequential revision ids
 shown in the history UI are unchanged and remain the human-facing reference.
+
+### Losing the beacon
+
+The beacon is one key in a store that can be flushed, evicted, restarted or
+failed over to an empty replica, so its disappearance is a normal event rather
+than an exceptional one. Because the head is an opaque GUID it cannot be checked
+against anything — once published it satisfies every later "has it changed?"
+test — so two rules keep a lost beacon from turning into permanent staleness:
+
+- A pod that finds the beacon gone re-reads the shared file **before**
+  republishing a head, so whoever republishes speaks for what is actually on the
+  mount rather than for whatever it happened to be holding.
+- A pod adopts a peer's head only once it has **successfully read** the file that
+  head names. A read that fails leaves the pod on its last known-good copy and on
+  its own head, so it retries rather than recording a claim it cannot back — and
+  a write attempted in that state fails the CAS and returns an error rather than
+  overwriting the peer's change.
+
+As a backstop for anything a single key cannot express — including an operator
+editing `config.json` or `users.json` on the mount by hand — a freshness check
+that finds the head unchanged also compares the file against the version the pod
+loaded, and re-reads on a mismatch. That check uses file timestamps, so an NFS
+attribute cache (`acregmax`, typically 60s) can delay it; the beacon stays the
+fast path.
 
 ## Egress identity
 
@@ -208,7 +328,7 @@ settings have no effect unless `Redis:ConnectionString` is set.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode. Set → distributed mode. May contain a `{AccessKey}` placeholder (see `Redis:AccessKey`). |
+| `Redis:ConnectionString` | *(unset)* | StackExchange.Redis connection string. Unset → single-instance mode. Set → distributed mode. May contain a `{AccessKey}` placeholder (see `Redis:AccessKey`). Any RESP-compatible server works — see [self-hosted-redis.md](self-hosted-redis.md). |
 | `Redis:AccessKey` | *(unset)* | Secret injected into `Redis:ConnectionString` at startup by replacing the literal `{AccessKey}` placeholder. Keeps the key out of `appsettings.json` (supply via env var / mounted secret). |
 | `Redis:InstanceName` | `ednsv` | Key prefix for all EDNSV keys in Redis (namespacing on a shared Redis). |
 | `JobRetentionMinutes` | `5` | Minutes a completed/failed async job is retained in Redis before expiry. |
@@ -221,6 +341,7 @@ settings have no effect unless `Redis:ConnectionString` is set.
 ```jsonc
 {
   "DataDir": "/data",                       // shared RWX mount
+  "CacheDir": "none",                       // no disk tier — Redis + memory only
   "Redis": {
     "ConnectionString": "redis-svc:6379,ssl=True,password={AccessKey}",
     "AccessKey": "<inject via env var Redis__AccessKey / k8s Secret>",
@@ -234,6 +355,33 @@ settings have no effect unless `Redis:ConnectionString` is set.
   // ...auth, DNS, probe tuning as per configuration.md
 }
 ```
+
+With `CacheDir=none` there is one volume, and it is only for the things that must be
+shared and durable:
+
+```yaml
+      volumes:
+        - name: data                        # config.json, users.json, keyring
+          persistentVolumeClaim:
+            claimName: ednsv-data           # RWX — small, rarely written, already coordinated
+      containers:
+        - name: ednsv
+          env:
+            - name: DataDir
+              value: /data
+            - name: CacheDir
+              value: "none"                 # probe results live in memory + Redis
+          volumeMounts:
+            - { name: data, mountPath: /data }
+```
+
+To keep a warm-start tier as well, add a pod-local volume and point `CacheDir` at it
+instead — `- name: cache` / `emptyDir: {}` mounted at `/cache`. Note that the two
+volumes do different jobs: the PVC is shared and durable, the `emptyDir` is neither.
+
+Without Redis, drop `CacheDir` entirely and let it default to `/data/cache` — the
+shared mount is then the only way pods can see each other's results, and the per-pod
+subfolders and merge exist for exactly that case.
 
 Autoscale on CPU (HPA). Scaling up inherently increases aggregate upstream probe
 load, which is expected.
