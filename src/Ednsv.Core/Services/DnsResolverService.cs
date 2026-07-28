@@ -444,8 +444,12 @@ public class DnsResolverService
     public async Task<IDnsQueryResponse> QuerySpeculativeAsync(string domain, QueryType type)
     {
         var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
-        // Check cache — if a standard query already populated it, use that
-        if (_queryCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Dns))
+        // L1, then the shared tier — if a standard query or a peer already populated
+        // it, use that. A plain TryGet here left this path blind to the L2, which for
+        // the DKIM selector sweep is most of what it asks for: every pod re-probed the
+        // same 39 absent names because no pod could see another's answer.
+        var cached = await _queryCache.TryGetSharedAsync(cacheKey, RecheckHelper.CacheDep.Dns);
+        if (cached != null)
         {
             Interlocked.Increment(ref _cacheHits);
             Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
@@ -461,7 +465,8 @@ public class DnsResolverService
             // to the cache rather than through GetOrCreateAsync, so the TTL has to be
             // passed explicitly — omitting it gave the 39 DKIM selector probes and the
             // SRV lookups the full CacheTtlHours while every gated path around them was
-            // honouring what the zone published.
+            // honouring what the zone published. Set writes through to the L2 too, so a
+            // selector this pod found absent is a selector its peers need not re-probe.
             _queryCache.Set(cacheKey, result, DnsEntryTtl(result));
             return result;
         }

@@ -141,7 +141,9 @@ Predicates that aren't supplied (`AXFR`, and the RCPT/relay caches, which are an
 
 ### Write Bag
 
-A separate `ConcurrentDictionary<string, BagEntry<TValue>>` holds values **queued for the next flush**. `Set()` writes to both MemoryCache and the bag; `SetMemoryOnly()` writes only to MemoryCache.
+A separate `ConcurrentDictionary<string, BagEntry<TValue>>` holds values **queued for the next flush**. `Set()` writes to MemoryCache, the bag and the shared L2 — all three tiers a freshly fetched value belongs in, with one lifetime; `SetMemoryOnly()` writes only to MemoryCache.
+
+The L2 write-through belongs in `Set()` rather than at the call sites. While it lived beside the one call inside `GetOrCreateAsync`, every other caller wrote to L1 and disk but never to Redis — the speculative DNS path among them, so a pod's DKIM-selector and SRV probes stayed invisible to its peers and each pod re-probed the same absent names.
 
 What the bag *excludes* is the point of its design. Three kinds of value are cached but never queued:
 
@@ -386,6 +388,20 @@ lowercased domain, plus its own `WriteBag`.
 Only `_probeCache`, `_queryCache`, `_serverQueryCache`, `_ptrCache`, `_getCache` and
 `_getWithHeadersCache` have a Redis L2; `_portCache` and the `ExpiringMap` caches are L1
 and disk only, so they are never shared between instances.
+
+#### The speculative query path
+
+`QuerySpeculativeAsync` (DKIM selectors, SRV, speculative TXT) shares `_queryCache` and
+its `q:domain:type` keys, but cannot go through `GetOrCreateAsync`: it **must not cache
+its own timeouts**, and `GetOrCreateAsync` caches every factory result in L1 one way or
+another, which would leave a 3-second miss shadowing the longer `QueryAsync` that comes
+after it. It therefore reads with `TryGetSharedAsync` and writes with `Set` — both of
+which carry the shared tier, so the path is a full participant in the L2 despite not
+using the usual entry point. It reached the cache through L1-only calls until recently,
+which made every pod re-probe the same 39 absent selectors.
+
+Its one asymmetry with `GetOrCreateAsync` remains deliberate: there is no in-flight
+dedup, because the probes fan out across distinct keys rather than contending on one.
 
 ### ExpiringMap
 

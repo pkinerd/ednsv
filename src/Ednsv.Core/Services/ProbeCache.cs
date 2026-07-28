@@ -407,8 +407,7 @@ public class ProbeCache<TValue> where TValue : class
                 TimeSpan? ttl;
                 try { ttl = entryTtl?.Invoke(result); }
                 catch { ttl = null; } // a TTL we cannot derive falls back to the cache's
-                Set(key, result, ttl);
-                _l2?.Set(key, result, ttl);
+                Set(key, result, ttl); // write-through to the L2 included
             }
             else
                 // Not shareable: kept out of the key index as well as the bag and the
@@ -427,8 +426,17 @@ public class ProbeCache<TValue> where TValue : class
     ///
     /// <para><paramref name="entryTtl"/> lets a value shorten its own life below the
     /// cache-wide TTL — a DNS answer whose records say thirty seconds should not be
-    /// served for two hours. It applies to the MemoryCache expiry and to the expiry
-    /// stamped on the disk record together, so the two never disagree.</para>
+    /// served for two hours. It applies to the MemoryCache expiry, to the expiry
+    /// stamped on the disk record and to the shared copy together, so the three never
+    /// disagree.</para>
+    ///
+    /// <para><b>All three tiers, not just the local two.</b> The write-through used to
+    /// live at the one call site that went through <see cref="GetOrCreateAsync"/>,
+    /// which left every other caller writing to L1 and disk but never to Redis — the
+    /// speculative DNS path among them, so a pod's DKIM-selector and SRV probes were
+    /// invisible to its peers and each one re-probed the same absent names. Caching a
+    /// value this process fetched means the same thing wherever it is called from, so
+    /// it belongs here rather than in each caller's hands.</para>
     /// </summary>
     public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
@@ -442,9 +450,43 @@ public class ProbeCache<TValue> where TValue : class
 
         if (_l2Index != null) _l2Index[key] = expires;
 
+        _l2?.Set(key, value, entryTtl);
+
         if (!_persist) return; // no disk tier — nothing would ever drain the bag
 
         _bag[key] = new BagEntry<TValue>(value, DateTime.UtcNow, expires);
+    }
+
+    /// <summary>
+    /// Read from L1, falling back to the shared L2 and populating L1 from a hit — the
+    /// read half of <see cref="GetOrCreateAsync"/>, for callers that cannot use it.
+    ///
+    /// <para>The speculative DNS path is the one such caller: it must not cache its own
+    /// timeouts, and <see cref="GetOrCreateAsync"/> caches every factory result in L1
+    /// one way or another, which would leave a short-timeout miss shadowing the longer
+    /// query that comes after it. Reading with a plain <see cref="TryGet"/> instead
+    /// meant it never consulted the shared tier at all, so publishing its results there
+    /// would have been write-only.</para>
+    ///
+    /// <para>A recheck misses the L2 as well as L1, exactly as
+    /// <see cref="GetOrCreateAsync"/> arranges: a peer's cached copy must not satisfy
+    /// the read the recheck exists to refresh.</para>
+    /// </summary>
+    public async Task<TValue?> TryGetSharedAsync(string key,
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
+    {
+        if (TryGet(key, out var cached, recheckFlag)) return cached;
+
+        if (_l2 == null) return null;
+        if (recheckFlag != RecheckHelper.CacheDep.None &&
+            RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)) return null;
+
+        var hit = await _l2.TryGetAsync(key);
+        if (hit is not { } h) return null;
+
+        Trace?.Invoke($"[CACHE] L2 HIT {key}");
+        SetMemoryOnly(key, h.Value, L1ExpiryForL2Hit(h.Remaining));
+        return h.Value;
     }
 
     /// <summary>
