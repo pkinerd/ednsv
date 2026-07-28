@@ -60,14 +60,16 @@ public sealed class DnsCacheTtlTests
     [Theory]
     [InlineData(60)]
     [InlineData(300)]
-    public void AnEmptyAnswerSectionFallsBackToTheFloor(int floor)
+    public void AResponseThatPublishedNoTtlInheritsTheCacheTtl(int floor)
     {
-        // NXDOMAIN and NODATA are real responses, they are cached, and their answer
-        // sections are always empty — so this is a routine path, not an edge case.
-        // "No TTL, cache forever" and "zero, never cache" are both wrong here.
-        var ttl = DnsCacheTtl.For(null, TimeSpan.FromSeconds(floor), Cap);
-
-        Assert.Equal(TimeSpan.FromSeconds(floor), ttl);
+        // The floor raises TTLs we were given; it is not a default for responses that
+        // carried none. Null here means "no per-entry TTL", leaving CacheTtlHours
+        // governing — the same answer gating-off gives.
+        //
+        // This used to return the floor, and it was the dominant path rather than a
+        // corner: a validation of a clean domain issues hundreds of negative lookups,
+        // so a 60-second floor became a 60-second lifetime for most of the cache.
+        Assert.Null(DnsCacheTtl.For(null, TimeSpan.FromSeconds(floor), Cap));
     }
 
     [Fact]
@@ -114,6 +116,63 @@ public sealed class DnsCacheTtlTests
     public void AZeroTtlRecordIsReadAsZeroNotAsAbsent()
     {
         Assert.Equal(TimeSpan.Zero, DnsCacheTtl.MinRecordTtl(new[] { Record("a.example.", 0) }));
+    }
+
+    // ── Reading the authority section (negative answers) ─────────────────
+
+    private static SoaRecord Soa(int ttl, uint minimum) =>
+        new(new ResourceRecordInfo("example.", ResourceRecordType.SOA, QueryClass.IN, ttl, 0),
+            DnsString.Parse("ns.example."), DnsString.Parse("hostmaster.example."),
+            serial: 1, refresh: 7200, retry: 3600, expire: 1209600, minimum: minimum);
+
+    [Theory]
+    // soaTtl, minimum, expected — RFC 2308 §5 takes the lesser of the two
+    [InlineData(3600, 900u, 900)]
+    [InlineData(900, 3600u, 900)]
+    [InlineData(1800, 1800u, 1800)]
+    [InlineData(0, 900u, 0)]
+    public void ANegativeAnswerTakesTheLesserOfTheSoaTtlAndItsMinimum(int soaTtl, uint minimum, int expected)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(expected), DnsCacheTtl.NegativeTtl(new[] { Soa(soaTtl, minimum) }));
+    }
+
+    [Fact]
+    public void AnAuthoritySectionWithNoSoaHasNoNegativeTtl()
+    {
+        // Referrals carry NS records rather than an SOA — nothing to read.
+        Assert.Null(DnsCacheTtl.NegativeTtl(new[] { Record("a.example.", 3600) }));
+        Assert.Null(DnsCacheTtl.NegativeTtl(Array.Empty<DnsResourceRecord>()));
+    }
+
+    [Fact]
+    public void TheShortestSoaWins()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(300),
+            DnsCacheTtl.NegativeTtl(new DnsResourceRecord[] { Soa(3600, 900), Soa(3600, 300) }));
+    }
+
+    [Fact]
+    public void ANegativeTtlIsClampedLikeAnyOtherPublishedTtl()
+    {
+        // The whole point of routing it through For(): an SOA minimum of 5 seconds is
+        // still raised to the floor, and one of a week is still held to the cap.
+        var floor = TimeSpan.FromSeconds(60);
+
+        Assert.Equal(floor, DnsCacheTtl.For(DnsCacheTtl.NegativeTtl(new[] { Soa(3600, 5) }), floor, Cap));
+        Assert.Equal(Cap, DnsCacheTtl.For(DnsCacheTtl.NegativeTtl(new[] { Soa(604800, 604800) }), floor, Cap));
+    }
+
+    [Fact]
+    public void TheAnswerSectionIsPreferredOverTheAuthoritySection()
+    {
+        // A positive answer that happens to carry an SOA alongside it — the records
+        // that answered the question are what governs.
+        var answers = new[] { Record("a.example.", 120) };
+        var authorities = new DnsResourceRecord[] { Soa(3600, 3600) };
+
+        var ttl = DnsCacheTtl.MinRecordTtl(answers) ?? DnsCacheTtl.NegativeTtl(authorities);
+
+        Assert.Equal(TimeSpan.FromSeconds(120), ttl);
     }
 
     [Fact]

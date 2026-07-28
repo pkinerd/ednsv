@@ -206,9 +206,13 @@ One self-describing record per line, so all cache types share a file:
 
 By default every cached DNS answer gets the full `CacheTtlHours`, regardless of what the zone published — so a domain rotating records every thirty seconds is served from cache for hours.
 
-Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR caches instead bound each entry by `clamp(minimum record TTL, DnsCacheMinTtlSeconds, CacheTtlHours)`. The floor stops short-TTL domains forcing a refetch on nearly every validation; the cap must remain the ceiling, because the sweep deletes a record file at `fileTime + CacheTtlHours` and a longer-lived entry could be swept while still considered live.
+Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR caches instead bound each entry by `clamp(published TTL, DnsCacheMinTtlSeconds, CacheTtlHours)`. The floor stops short-TTL domains forcing a refetch on nearly every validation; the cap must remain the ceiling, because the sweep deletes a record file at `fileTime + CacheTtlHours` and a longer-lived entry could be swept while still considered live.
 
-An **empty answer section** falls back to the floor. That is not an edge case to shrug at: NXDOMAIN and NODATA are real responses, they are cached, and their answer sections are always empty. The minimum comes from `InitialTimeToLive`, not `TimeToLive` — the latter counts down while DnsClient holds the record, which would shorten every entry by however long the response sat around.
+**Two sections can publish that TTL, and both are read.** A positive answer carries its own record TTLs — the minimum across them, taken from `InitialTimeToLive` rather than `TimeToLive`, since the latter counts down while DnsClient holds the record and would shorten every entry by however long the response sat around. A **negative** answer — NXDOMAIN or NODATA — carries an SOA in the authority section instead, and RFC 2308 §5 puts the lifetime of "this does not exist" at `min(SOA.MINIMUM, TTL of the SOA record)`.
+
+Reading only the answer section made every negative response look TTL-less, and negative responses are the *bulk* of what a validation issues: 21 blocklist zones per MX IP that answer "not listed", 39 DKIM selectors that do not exist, plus the SPF, DMARC, ARC and mail-survey subdomain probes. Validating a clean domain is the worst case, because nothing is listed and nothing exists.
+
+**A response that published no TTL at all inherits `CacheTtlHours`** — the floor bounds TTLs we received, and is not a stand-in for one. This matters more than it sounds: while the floor *was* the fallback, a `DnsCacheMinTtlSeconds=60` against a domain like cnn.com stamped 60 seconds on most of the cache and dropped hundreds of Redis keys within the first couple of minutes, with the floor setting silently deciding the lifetime of entries no zone had spoken about.
 
 **It ships off** (`DnsCacheMinTtlSeconds=0`). This release is "stop rewriting everything, and 2 hours instead of 24"; gating is a second, separately observable change to enable once the effect of the shorter cap has been seen on its own.
 

@@ -37,10 +37,15 @@ public sealed record DnsTuning
     /// the full cache TTL — the behaviour before this existed.
     ///
     /// <para>Set it above zero and a cached answer lives for
-    /// <c>clamp(minimum record TTL, this floor, the cache TTL)</c>. The floor is what
-    /// stops a domain with 30-second records forcing a refetch on essentially every
-    /// validation; the cache TTL remains the ceiling, which also keeps an entry from
-    /// outliving the record file it was written into.</para>
+    /// <c>clamp(published TTL, this floor, the cache TTL)</c> — the minimum record TTL
+    /// for a positive answer, the RFC 2308 negative TTL for an NXDOMAIN or NODATA. The
+    /// floor is what stops a domain with 30-second records forcing a refetch on
+    /// essentially every validation; the cache TTL remains the ceiling, which also keeps
+    /// an entry from outliving the record file it was written into.</para>
+    ///
+    /// <para><b>A floor, not a default.</b> It bounds TTLs that came back from the wire;
+    /// a response that published none inherits the cache TTL instead. See
+    /// <see cref="DnsCacheTtl.For"/> for why that distinction is load-bearing.</para>
     /// </summary>
     public double CacheMinTtlSeconds { get; init; } = 0;
 }
@@ -452,9 +457,12 @@ public class DnsResolverService
         {
             var result = await RateLimitedAsync(() => _speculativeClient.QueryAsync(domain, type), $"SPEC {type} {domain}");
             Interlocked.Increment(ref _responsesReceived);
-            // Cache successful responses — but timeouts return EmptyResponse which
-            // we intentionally cache (short TTL will expire it, or standard query overwrites)
-            _queryCache.Set(cacheKey, result);
+            // Record-TTL gated like every other write to this cache. It writes straight
+            // to the cache rather than through GetOrCreateAsync, so the TTL has to be
+            // passed explicitly — omitting it gave the 39 DKIM selector probes and the
+            // SRV lookups the full CacheTtlHours while every gated path around them was
+            // honouring what the zone published.
+            _queryCache.Set(cacheKey, result, DnsEntryTtl(result));
             return result;
         }
         catch
@@ -548,7 +556,7 @@ public class DnsResolverService
                 var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
                 Interlocked.Increment(ref _responsesReceived);
                 succeeded = true;
-                recordTtl = DnsEntryTtl(result.Answers);
+                recordTtl = DnsEntryTtl(result);
                 return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             }
             catch
@@ -821,12 +829,22 @@ public class DnsResolverService
     // ── Record-TTL gating ────────────────────────────────────────────────
     //
     // See DnsCacheTtl for the policy itself. Off unless CacheMinTtlSeconds is set,
-    // in which case an answer lives for clamp(min record TTL, floor, cache TTL).
+    // in which case an answer lives for clamp(published TTL, floor, cache TTL).
+    //
+    // Two sections can publish that TTL, and both must be read. A positive answer
+    // carries its own record TTLs. A negative one — NXDOMAIN or NODATA — carries an
+    // SOA in the authority section instead, which is where RFC 2308 puts the lifetime
+    // of "this does not exist". Reading only the answers made every negative response
+    // look TTL-less, and negative responses are the bulk of what a validation issues:
+    // blocklist misses, absent DKIM selectors, probed subdomains that do not exist.
+    //
+    // A response publishing neither yields null, which leaves the cache-wide TTL
+    // governing. The floor raises TTLs we were given; it is not a stand-in for one.
 
-    private TimeSpan? DnsEntryTtl(IDnsQueryResponse response) => DnsEntryTtl(response.Answers);
-
-    private TimeSpan? DnsEntryTtl(IEnumerable<DnsResourceRecord> answers)
-        => DnsCacheTtl.For(DnsCacheTtl.MinRecordTtl(answers), _dnsMinTtl, _cacheTtl);
+    private TimeSpan? DnsEntryTtl(IDnsQueryResponse response)
+        => DnsCacheTtl.For(
+            DnsCacheTtl.MinRecordTtl(response.Answers) ?? DnsCacheTtl.NegativeTtl(response.Authorities),
+            _dnsMinTtl, _cacheTtl);
 
     private static JsonNode? DnsToNode(IDnsQueryResponse response)
     {
