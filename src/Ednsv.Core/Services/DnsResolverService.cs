@@ -254,23 +254,12 @@ public class DnsResolverService
         _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"), persistToDisk, warmSharedCache);
     }
 
+    /// <summary>Read a cached standard query by its parts. The only survivor of a set
+    /// of six such helpers; the other five had no callers and each wrote or read a
+    /// cache tier incompletely, which is exactly how a future caller would have
+    /// reintroduced an un-gated write.</summary>
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
         => _queryCache.TryGet($"q:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.Dns);
-
-    private void SetQueryCache((string domain, QueryType type) key, IDnsQueryResponse value)
-        => _queryCache.Set($"q:{key.domain}:{key.type}", value);
-
-    private bool TryGetPtrCache(string ip, out List<string> value)
-        => _ptrCache.TryGet($"ptr:{ip}", out value, RecheckHelper.CacheDep.Ptr);
-
-    private void SetPtrCache(string ip, List<string> value)
-        => _ptrCache.Set($"ptr:{ip}", value);
-
-    private bool TryGetServerQueryCache((string server, string domain, QueryType type) key, out IDnsQueryResponse value)
-        => _serverQueryCache.TryGet($"sq:{key.server}:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.ServerDns);
-
-    private void SetServerQueryCache((string server, string domain, QueryType type) key, IDnsQueryResponse value)
-        => _serverQueryCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value);
 
     private void RefillTokens()
     {

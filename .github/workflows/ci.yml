@@ -22,6 +22,26 @@ jobs:
     name: Build & Unit Tests
     runs-on: ubuntu-latest
 
+    # The Redis-backed tests — shared L2, the emptied-cache re-warm, config and auth
+    # beacons, write leases — self-skip when nothing is listening, so that they stay
+    # runnable on a dev box without one. Without this service they skipped in CI too,
+    # silently: a run reported 315/315 passed while logging "SKIPPED: no Redis" 43
+    # times, which left every shared-cache behaviour unverified on the one machine
+    # that gates merges.
+    #
+    # Port 6380 rather than 6379 is what the tests connect to, deliberately: it keeps
+    # a developer's own local Redis on the default port out of the test keyspace.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6380:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -37,6 +57,11 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Run unit tests
+        # Turns the self-skip into a failure here only. A dev box without Redis still
+        # skips; CI must not, or the service above could be removed or broken and
+        # nothing would say so.
+        env:
+          EDNSV_REQUIRE_REDIS: '1'
         run: dotnet test --no-build --configuration Release --verbosity normal
 
   # ──────────────────────────────────────────────────────────────────────────
