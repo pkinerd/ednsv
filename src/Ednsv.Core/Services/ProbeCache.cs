@@ -79,16 +79,32 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     private TimeSpan LifetimeFor(TimeSpan? ttl)
         => ttl is { } t && t > TimeSpan.Zero ? t : ProbeCacheL2.UncappedLifetime;
 
-    /// <summary>Read a value from the L2, or null on miss / any error.</summary>
-    public async Task<TValue?> TryGetAsync(string key)
+    /// <summary>
+    /// Read a value from the L2 together with its remaining lifetime, or null on miss
+    /// / any error.
+    ///
+    /// <para><b>The remaining lifetime is part of the hit, not an optional extra.</b>
+    /// The caller puts the value into its own L1, and without knowing what is left on
+    /// the shared key it can only guess — which meant a fresh full <c>CacheTtlHours</c>,
+    /// letting the local copy outlive the shared entry it came from. <c>GETEX</c>-style
+    /// retrieval costs nothing over a plain <c>GET</c> here: one round trip either
+    /// way.</para>
+    ///
+    /// <para>A null lifetime means the key carries no expiry. Nothing this class writes
+    /// is ever without one, so it means a key from somewhere else; the caller falls back
+    /// to its own TTL rather than assuming immortality.</para>
+    /// </summary>
+    public async Task<(TValue Value, TimeSpan? Remaining)?> TryGetAsync(string key)
     {
         var db = _redis.GetDatabase();
         if (db == null) return null;
         try
         {
-            var val = await db.StringGetAsync(_redis.Key(_prefix + key));
-            if (val.IsNullOrEmpty) return null;
-            return _deserialize(val!);
+            var hit = await db.StringGetWithExpiryAsync(_redis.Key(_prefix + key));
+            if (hit.Value.IsNullOrEmpty) return null;
+            var value = _deserialize(hit.Value!);
+            if (value == null) return null;
+            return (value, hit.Expiry);
         }
         catch { return null; }
     }
@@ -241,6 +257,36 @@ public class ProbeCache<TValue> where TValue : class
         return ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
     }
 
+    /// <summary>
+    /// When the L1 copy of a value read from the shared cache should expire: the
+    /// sooner of what is left on the shared key and a full cache TTL from now.
+    ///
+    /// <para><b>An L2 hit must not restart the clock.</b> It used to: the value was
+    /// cached locally with a fresh <c>CacheTtlHours</c> regardless of how little was
+    /// left on the Redis key. With record-TTL gating on, a DNS answer bounded to sixty
+    /// seconds by its own record TTL and read from Redis at fifty-nine seconds old was
+    /// then served from L1 for two more hours. The key index recorded that expiry too,
+    /// so an emptied-Redis re-warm republished the entry with more life than it had
+    /// ever been given — the shared and local tiers steadily drifting apart on every
+    /// hit.</para>
+    ///
+    /// <para>Capped at our own TTL in the other direction, so a peer running a longer
+    /// <c>CacheTtlHours</c> cannot extend ours. With no TTL configured the shared key's
+    /// own lifetime governs alone: it is a real bound, and preferring "never expires"
+    /// over it is exactly the drift this prevents.</para>
+    ///
+    /// <para>Null when the shared key carries no expiry at all, which leaves
+    /// <see cref="SetMemoryOnly"/> falling back to the cache-wide TTL.</para>
+    /// </summary>
+    private DateTime? L1ExpiryForL2Hit(TimeSpan? remaining)
+    {
+        if (remaining is not { } left) return null;
+
+        var theirs = DateTime.UtcNow + left;
+        var ours = AbsoluteExpiry(null);
+        return theirs < ours ? theirs : ours;
+    }
+
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
     /// <summary>Try to read a cached value. Returns false on miss or recheck bypass.</summary>
     public bool TryGet(string key, out TValue value, RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
@@ -324,14 +370,16 @@ public class ProbeCache<TValue> where TValue : class
             // populates L1 so subsequent local reads are fast.
             if (!skipL2Read && _l2 != null)
             {
-                var l2v = await _l2.TryGetAsync(key);
-                if (l2v != null)
+                var hit = await _l2.TryGetAsync(key);
+                if (hit is { } h)
                 {
                     Trace?.Invoke($"[CACHE] L2 HIT {key}");
                     // Memory only: another instance fetched and persisted this, so
                     // writing it out again would duplicate their work on our disk.
-                    SetMemoryOnly(key, l2v);
-                    return l2v;
+                    // Bounded by what is left on the shared key, so the local copy
+                    // cannot outlive the entry it was read from.
+                    SetMemoryOnly(key, h.Value, L1ExpiryForL2Hit(h.Remaining));
+                    return h.Value;
                 }
             }
 

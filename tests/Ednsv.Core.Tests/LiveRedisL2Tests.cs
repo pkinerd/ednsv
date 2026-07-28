@@ -80,7 +80,7 @@ public sealed class LiveRedisL2Tests
         cache.Import("k", "from-disk", DateTime.UtcNow.AddMinutes(4));
 
         for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
-        Assert.Equal("from-disk", await l2.TryGetAsync("k"));
+        Assert.Equal("from-disk", (await l2.TryGetAsync("k"))?.Value);
         Assert.Empty(cache.Export()); // still never queued back to our own disk
     }
 
@@ -113,7 +113,7 @@ public sealed class LiveRedisL2Tests
             "L1 already holds it, so the import itself is a no-op");
 
         for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
-        Assert.Equal("from-disk", await l2.TryGetAsync("k"));
+        Assert.Equal("from-disk", (await l2.TryGetAsync("k"))?.Value);
     }
 
     [Fact]
@@ -134,7 +134,7 @@ public sealed class LiveRedisL2Tests
             .Import("k", "older-copy-from-our-disk", DateTime.UtcNow.AddMinutes(4));
         await Task.Delay(200); // the write is fire-and-forget; give it every chance
 
-        Assert.Equal("published-by-a-peer", await l2.TryGetAsync("k"));
+        Assert.Equal("published-by-a-peer", (await l2.TryGetAsync("k"))?.Value);
     }
 
     [Fact]

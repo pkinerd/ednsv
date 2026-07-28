@@ -84,8 +84,8 @@ public sealed class SharedCacheWarmTests
 
         Assert.Equal(3, warmed);
         Assert.Equal(3, await PresentAsync(l2));
-        Assert.Equal("va", await l2.TryGetAsync("a"));
-        Assert.Equal("vc", await l2.TryGetAsync("c"));
+        Assert.Equal("va", (await l2.TryGetAsync("a"))?.Value);
+        Assert.Equal("vc", (await l2.TryGetAsync("c"))?.Value);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class SharedCacheWarmTests
         Assert.Equal(1, cache.WarmSharedCache());
         await Task.Delay(300);
 
-        Assert.Equal("va", await l2.TryGetAsync("a"));
+        Assert.Equal("va", (await l2.TryGetAsync("a"))?.Value);
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public sealed class SharedCacheWarmTests
         cache.WarmSharedCache();
         await Task.Delay(300);
 
-        Assert.Equal("published-by-a-peer", await l2.TryGetAsync("a"));
+        Assert.Equal("published-by-a-peer", (await l2.TryGetAsync("a"))?.Value);
     }
 
     [Fact]

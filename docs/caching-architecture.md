@@ -71,7 +71,7 @@ flowchart TD
     MEMCACHE -->|miss| INFLIGHT{"In-flight<br/>ConcurrentDictionary&lt;Lazy&lt;Task&gt;&gt;<br/>GetOrAdd(key)"}
     INFLIGHT -->|existing Lazy| AWAIT["Await existing Task<br/><i>(dedup join)</i>"]
     INFLIGHT -->|new Lazy| L2{"Shared L2 configured,<br/>and not a recheck?"}
-    L2 -->|hit| L2HIT["SetMemoryOnly: L1 only<br/><i>a peer already persisted it —<br/>never queue it for our disk</i>"]
+    L2 -->|hit| L2HIT["SetMemoryOnly: L1 only,<br/>bounded by the key's remaining life<br/><i>a peer already persisted it —<br/>never queue it for our disk</i>"]
     L2HIT --> CLEANUP
     L2 -->|"miss / no L2 / recheck"| FACTORY["Run factory function<br/><i>(network)</i>"]
     FACTORY --> PERSIST{"shouldPersist(result)?"}
@@ -296,6 +296,21 @@ Live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` — **13 
 ### Optional Redis L2 (distributed mode)
 
 When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `{InstanceName}:cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
+
+#### Lifetimes across the two tiers
+
+**Nothing crossing between L1 and the L2 may extend its own life.** Four paths cross, and each carries the lifetime with it:
+
+| Path | Lifetime applied |
+|---|---|
+| Fresh result → L1 + L2 | the entry's own TTL (record-TTL gated for DNS), one number for both |
+| Disk record → L1 + L2 (`Import`) | the record's **remaining** life, capped at what a fresh write would get |
+| L1 → L2 (`WarmSharedCache`) | each entry's **remaining** life, `SET NX` |
+| L2 → L1 (a hit) | the **sooner** of the shared key's remaining life and a full `CacheTtlHours` |
+
+That last row is read with `StringGetWithExpiry` rather than a plain `GET` — one round trip either way. Without it a hit restarted the clock: a DNS answer bounded to sixty seconds by its record TTL and read from Redis at fifty-nine seconds old was then served from L1 for the full `CacheTtlHours`. The key index recorded that expiry too, so an emptied-Redis re-warm republished the entry with more life than it had ever been given, and the two tiers drifted further apart on every hit.
+
+The cap in the other direction matters as much: a peer configured with a longer `CacheTtlHours` bounds us, it does not license us. And under `CacheTtlHours=0` the shared key's own lifetime governs a hit alone — memory not expiring is a statement about values *this* instance fetched, not a licence to keep a borrowed one forever.
 
 #### Recovering an emptied L2
 
