@@ -310,7 +310,11 @@ When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` 
 
 That last row is read with `StringGetWithExpiry` rather than a plain `GET` — one round trip either way. Without it a hit restarted the clock: a DNS answer bounded to sixty seconds by its record TTL and read from Redis at fifty-nine seconds old was then served from L1 for the full `CacheTtlHours`. The key index recorded that expiry too, so an emptied-Redis re-warm republished the entry with more life than it had ever been given, and the two tiers drifted further apart on every hit.
 
-The cap in the other direction matters as much: a peer configured with a longer `CacheTtlHours` bounds us, it does not license us. And under `CacheTtlHours=0` the shared key's own lifetime governs a hit alone — memory not expiring is a statement about values *this* instance fetched, not a licence to keep a borrowed one forever.
+**The cap in the other direction is for restarts and config changes.** Every value written to the L2 carries a lifetime, so what comes back is always a real bound — but it is the *writer's* bound, and Redis outlives a pod. Keys written under a longer `CacheTtlHours` survive the deploy that lowered it, and a rolling change has peers on both settings at once. The cap is what keeps `CacheTtlHours` meaning the same thing on every path in the process.
+
+It bounds how long a value is **held**, not how stale it may get. When the L1 copy expires we take an L1 miss, re-read the L2, find the same key still alive and cache it again — total age stays governed by the shared key's own lifetime, which is the shared tier's contract to keep.
+
+Under `CacheTtlHours=0` the shared key's lifetime governs a hit alone: memory not expiring is a statement about values *this* instance fetched, not a licence to keep a borrowed one forever.
 
 #### Recovering an emptied L2
 

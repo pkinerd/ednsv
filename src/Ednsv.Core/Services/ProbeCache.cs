@@ -270,10 +270,23 @@ public class ProbeCache<TValue> where TValue : class
     /// ever been given — the shared and local tiers steadily drifting apart on every
     /// hit.</para>
     ///
-    /// <para>Capped at our own TTL in the other direction, so a peer running a longer
-    /// <c>CacheTtlHours</c> cannot extend ours. With no TTL configured the shared key's
-    /// own lifetime governs alone: it is a real bound, and preferring "never expires"
-    /// over it is exactly the drift this prevents.</para>
+    /// <para><b>Capped at our own TTL in the other direction.</b> Every value written
+    /// here carries a lifetime, so what comes back is always a real bound — but it is
+    /// the <i>writer's</i> bound, and the writer need not be running our configuration.
+    /// Redis outlives a pod: keys written under a longer <c>CacheTtlHours</c> survive
+    /// the deploy that lowered it, and a rolling change has peers on both settings at
+    /// once. The cap is what keeps <c>CacheTtlHours</c> meaning the same thing on every
+    /// path in this process, restarts and config changes included.</para>
+    ///
+    /// <para>It bounds how long a value is <i>held</i>, not how stale it may get — a
+    /// distinction worth not misreading. When this expiry passes we take an L1 miss,
+    /// re-read the L2, find the same key still alive and cache it again. Total age
+    /// stays governed by the shared key's own lifetime, which is the shared tier's
+    /// contract to keep and the right place for it.</para>
+    ///
+    /// <para>With no TTL configured the shared key's lifetime governs alone: it is a
+    /// real bound, and preferring "never expires" over it is exactly the drift this
+    /// prevents.</para>
     ///
     /// <para>Null when the shared key carries no expiry at all, which leaves
     /// <see cref="SetMemoryOnly"/> falling back to the cache-wide TTL.</para>
