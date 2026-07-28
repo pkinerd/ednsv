@@ -77,7 +77,7 @@ flowchart TD
     FACTORY --> PERSIST{"shouldPersist(result)?"}
     PERSIST -->|true / null| TTL["entryTtl(result)<br/><i>null → the cache-wide TTL</i>"]
     TTL --> SET["Set: L1 + write bag,<br/>write-through to L2<br/><i>one TTL for all three</i>"]
-    PERSIST -->|false| MEMONLY["SetMemoryOnly: L1 only<br/><i>transient errors are never persisted</i>"]
+    PERSIST -->|false| MEMONLY["SetMemoryOnly: L1 only, 30s<br/><i>transient errors are never persisted,<br/>and never outlive the validation</i>"]
     SET --> CLEANUP["Remove from in-flight dict"]
     MEMONLY --> CLEANUP
     CLEANUP --> RETURN
@@ -122,18 +122,32 @@ reached them anyway the first time Redis was emptied — the long way round, but
 destination. L2 hits and disk imports stay in the index: they are already published by
 definition, and a re-warm is the only thing that will put them back.
 
-This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls for the rest of the current process. Service-level predicates:
+This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls **within the validation that hit them**. A rejected value expires on `ProbeCachePolicy.TransientLifetime` (30s), not the cache-wide TTL.
+
+That distinction was missing and the consequence was severe. "For the rest of the current process" is one run for the CLI and *days* for the web service, so a rejected value was held for the whole `CacheTtlHours` — a single timed-out reverse lookup was returned as an empty list, rendered as "No PTR record — many receivers reject mail from IPs without reverse DNS", and pinned against a well-configured IP for two hours. Record-TTL gating made it far likelier to be hit rather than causing it: an answer bounded to 60s refetches 120× as often, and each refetch is another chance to acquire a two-hour falsehood. The in-flight map already collapses concurrent duplicates, so the window only ever needed to span one validation.
+
+Service-level predicates:
 
 | Service / cache | Persist when |
 |-----------------|--------------|
-| `DnsResolverService._queryCache` | `response != EmptyResponse.Instance` (skip timeouts/SocketExceptions/DNS errors) |
-| `DnsResolverService._serverQueryCache` | same — skip `EmptyResponse` |
-| `DnsResolverService._ptrCache` | reverse-lookup actually succeeded |
+| `DnsResolverService._queryCache` | `IsAnswer(response)` — `NoError` or `NXDomain` only |
+| `DnsResolverService._serverQueryCache` | same — `IsAnswer` |
+| `DnsResolverService._ptrCache` | the lookup returned an answer (see *Failure is not absence*) |
 | `SmtpProbeService._probeCache` | `result.Connected` OR error is not `"Connection timed out"` (cache definitive failures, skip transient timeouts) |
 | `SmtpProbeService._portCache` | port was open OR at least one attempt got a definitive refusal |
 | `HttpProbeService._getCache` / `_getWithHeadersCache` | `result.Success || result.StatusCode > 0` (any HTTP status counts as definitive; only network-level failures with status 0 are skipped) |
 
 Predicates that aren't supplied (`AXFR`, and the RCPT/relay caches, which are an `ExpiringMap`) follow the same intent in their own code: only definitive results are stored.
+
+#### Failure is not absence
+
+**Only `NoError` and `NXDomain` are answers.** Both are things the zone told us: NODATA and NXDOMAIN say a name or type does not exist, they carry an SOA giving the negative lifetime, and caching them is the point. `SERVFAIL`, `REFUSED`, `FormErr` and `NotImp` say the resolver could not answer — a property of the attempt, not of the zone.
+
+The predicates used to reject only `EmptyResponse.Instance`, the sentinel substituted when a query *threw*. Every client here runs with `ThrowDnsErrors = false`, so a SERVFAIL never throws: it arrived as an ordinary response object and was cached and persisted as though the zone had answered. The table above already claimed "skip … DNS errors"; the code only skipped *transport* errors, and this closes that gap rather than changing the intent.
+
+It compounded with record-TTL gating. A SERVFAIL carries no answers *and* no SOA, so it publishes no TTL — and once "no published TTL" came to mean "inherit `CacheTtlHours`", one failed lookup was recorded for hours, on disk and shared with every peer, indistinguishable from "this does not exist".
+
+`ResolvePtrAsync` needs the same distinction on the way *out*, not just in the cache. It returns a list of names, and a failure and a genuinely absent PTR were both the empty list — so a timeout was reported as "No PTR record — many receivers reject mail from IPs without reverse DNS", a confident finding about an IP with perfectly good reverse DNS. It now returns a distinguished instance, recognised by reference via `DnsResolverService.PtrLookupDidFail`, and the checks report those as "reverse lookup failed — not checked" rather than counting them as findings. A sentinel rather than a wrapper type because the value is persisted as a `List<string>` on disk, and a failure is never persisted anyway — it only has to survive a cache *hit*, which a reference does.
 
 ### `onHit` Callback
 
@@ -480,7 +494,9 @@ with it. Same intent as `shouldPersist` everywhere else.
 
 ### Unreachable-server decay
 
-`DnsResolverService` tracks server failures in `_unreachableServerCounts` keyed by IP, storing both a failure count and `lastFailure` timestamp. Once a server fails `MaxRetries` (default 3) times, subsequent queries are short-circuited to `EmptyResponse.Instance` — but only while the most-recent failure is within the **5-minute decay window** (`_unreachableDecay`). After the window expires, the next call retries the server normally and the counter is cleared on the first successful response. This prevents transient outages from permanently blacklisting a recursive resolver across the lifetime of a long-running process. The decay window governs only whether the *skip* applies; the entry itself expires on `CacheTtlHours` like any other cached value, so the map tracks servers seen recently rather than every server ever queried.
+`DnsResolverService` tracks server failures in `_unreachableServerCounts` keyed by IP, storing both a failure count and `lastFailure` timestamp. Once a server fails `MaxRetries` (default 3) times, subsequent queries are short-circuited to `EmptyResponse.Instance` — but only while the most-recent failure is within the **5-minute decay window** (`_unreachableDecay`). After the window expires, the next call retries the server normally and the counter is cleared on the first successful response. This prevents transient outages from permanently blacklisting a nameserver across the lifetime of a long-running process.
+
+**It covers `QueryServerAsync` only** — the per-nameserver direct queries behind the delegation, propagation, SOA-serial and lame-delegation checks. The main recursive path (`QueryAsync`), PTR lookups, DNSBL and speculative probes have no breaker: a failure there is handled by not caching it as an answer and by the 30-second transient window, not by counting occurrences. That is deliberate for the recursive path — if the configured resolver is down, the run should report errors rather than silently skip every query — but it does mean nothing suppresses repeated attempts against a resolver that is merely slow. The decay window governs only whether the *skip* applies; the entry itself expires on `CacheTtlHours` like any other cached value, so the map tracks servers seen recently rather than every server ever queried.
 
 ## CacheManager
 

@@ -1,3 +1,4 @@
+using Ednsv.Core.Services;
 using System.Net;
 using DnsClient;
 using DnsClient.Protocol;
@@ -35,6 +36,12 @@ public class ReverseDnsCheck : ICheck
                         p.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
                     result.Details.Add($"{ip} -> {string.Join(", ", ptrs)} {(matchesDomain ? "(matches)" : "(no match)")}");
                     if (matchesDomain) matched++;
+                }
+                else if (DnsResolverService.PtrLookupDidFail(ptrs))
+                {
+                    // Not a finding: we never got an answer, so we know nothing about
+                    // this IP's reverse DNS either way.
+                    result.Details.Add($"{ip}: reverse lookup failed — not checked");
                 }
                 else
                 {
@@ -82,6 +89,14 @@ public class ForwardConfirmedRdnsCheck : ICheck
                 checked_++;
 
                 var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
+                if (DnsResolverService.PtrLookupDidFail(ptrs))
+                {
+                    // The lookup never completed, so this IP is unproven rather than
+                    // failing. Don't count it against the total either.
+                    checked_--;
+                    result.Details.Add($"{ip}: reverse lookup failed — not checked");
+                    continue;
+                }
                 if (!ptrs.Any())
                 {
                     result.Errors.Add($"{ip}: No PTR record — Gmail requires FCrDNS for all sending IPs");

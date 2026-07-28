@@ -390,7 +390,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -419,7 +419,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -517,7 +517,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.ServerDns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -537,7 +537,6 @@ public class DnsResolverService
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
         var cacheKey = $"ptr:{ip}";
-        bool succeeded = false;
         // The cached value is the name list, not the response, so the TTL has to be
         // carried out of the factory rather than read back off the value.
         TimeSpan? recordTtl = null;
@@ -549,17 +548,17 @@ public class DnsResolverService
                 var parsedIp = IPAddress.Parse(ip);
                 var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
                 Interlocked.Increment(ref _responsesReceived);
-                succeeded = true;
+                if (!IsAnswer(result)) return PtrLookupFailed;
                 recordTtl = DnsEntryTtl(result);
                 return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             }
             catch
             {
                 Interlocked.Increment(ref _responsesReceived);
-                return new List<string>();
+                return PtrLookupFailed;
             }
         }, RecheckHelper.CacheDep.Ptr,
-        shouldPersist: _ => succeeded,
+        shouldPersist: names => !PtrLookupDidFail(names),
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: _ => recordTtl);
     }
@@ -834,6 +833,64 @@ public class DnsResolverService
     //
     // A response publishing neither yields null, which leaves the cache-wide TTL
     // governing. The floor raises TTLs we were given; it is not a stand-in for one.
+
+    /// <summary>
+    /// The list <see cref="ResolvePtrAsync"/> returns when the lookup could not be
+    /// completed, as opposed to completing and finding no PTR record. Same idea as
+    /// <see cref="EmptyResponse"/>: a distinguished instance, recognised by reference.
+    ///
+    /// <para>The two were previously the same empty list, and the conflation reached
+    /// users as fact — a timed-out reverse lookup was reported as "No PTR record —
+    /// many receivers reject mail from IPs without reverse DNS", a confident and
+    /// actionable finding about an IP that has perfectly good reverse DNS.</para>
+    ///
+    /// <para>A sentinel rather than a wrapper type because the value is persisted: the
+    /// <c>ptr</c> cache records a <c>List&lt;string&gt;</c> on disk, and a failure is
+    /// never persisted anyway, so nothing needs the distinction to survive a restart.
+    /// It does survive a cache <i>hit</i>, which is what matters — the reference is what
+    /// L1 holds.</para>
+    /// </summary>
+    private static readonly List<string> PtrLookupFailed = new();
+
+    /// <summary>Whether a list returned by <see cref="ResolvePtrAsync"/> means "the
+    /// lookup failed" rather than "no PTR record exists".</summary>
+    public static bool PtrLookupDidFail(List<string> names) => ReferenceEquals(names, PtrLookupFailed);
+
+    /// <summary>
+    /// Whether a response is an <i>answer</i> — something the zone actually told us —
+    /// rather than a failure to obtain one.
+    ///
+    /// <para>Only <c>NoError</c> and <c>NXDomain</c> qualify. Both are real answers:
+    /// NODATA and NXDOMAIN say a name or type does not exist, they carry an SOA giving
+    /// the negative lifetime, and caching them is the point. Everything else —
+    /// SERVFAIL, REFUSED, FormErr, NotImp — says the resolver could not answer, which
+    /// is a property of this attempt rather than of the zone.</para>
+    ///
+    /// <para><b>Why this was needed.</b> The persistence predicates rejected only
+    /// <see cref="EmptyResponse"/>, the sentinel substituted when a query <i>threw</i>.
+    /// Every client here runs with <c>ThrowDnsErrors = false</c>, so a SERVFAIL never
+    /// throws: it arrives as an ordinary response object, passed the predicate, and was
+    /// cached and persisted as though the zone had answered. It also carries no answers
+    /// and no SOA, so with record-TTL gating on it published no TTL either and took the
+    /// full <c>CacheTtlHours</c> — one failed lookup recorded for hours, on disk and
+    /// shared with every peer, and indistinguishable from "this does not exist".</para>
+    /// </summary>
+    private static bool IsAnswer(IDnsQueryResponse response)
+    {
+        if (ReferenceEquals(response, EmptyResponse.Instance)) return false;
+
+        try
+        {
+            var code = response.Header.ResponseCode;
+            return code is DnsHeaderResponseCode.NoError or DnsHeaderResponseCode.NotExistentDomain;
+        }
+        catch
+        {
+            // No header to read — a deserialised or synthetic response. Fall back to
+            // the flag every implementation here does set.
+            return !response.HasError;
+        }
+    }
 
     private TimeSpan? DnsEntryTtl(IDnsQueryResponse response)
         => DnsCacheTtl.For(

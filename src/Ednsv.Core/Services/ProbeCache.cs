@@ -184,9 +184,36 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
 /// recheck deps, MemoryCache is skipped and a fresh value is obtained.
 /// The fresh value is written back to MemoryCache for other users.
 /// </summary>
+/// <summary>Cache policy shared by both probe-cache variants, and so belonging to
+/// neither closed generic.</summary>
+public static class ProbeCachePolicy
+{
+    /// <summary>
+    /// How long a value rejected by <c>shouldPersist</c> stays in L1.
+    ///
+    /// <para>These are failures to obtain an answer — a timeout, a SERVFAIL, an
+    /// unreachable host — cached only so that concurrent and closely-following work
+    /// within one validation does not re-ask something that has just failed. The
+    /// in-flight map already collapses the concurrent case, so this only needs to span
+    /// a single validation.</para>
+    ///
+    /// <para><b>It used to be the cache-wide TTL, and that was badly wrong.</b> The
+    /// intent was recorded as "for the rest of the current process", which is one run
+    /// for the CLI but <i>days</i> for the web service. A single transient PTR timeout
+    /// was therefore returned as an empty list — indistinguishable from "this IP has no
+    /// reverse DNS" — and held for the whole <c>CacheTtlHours</c>, so one unlucky
+    /// lookup pinned a false "no PTR record, Gmail will reject mail" finding for hours.
+    /// Worse with record-TTL gating on, where a <i>successful</i> answer might live
+    /// sixty seconds: the failure outlived the success by two orders of magnitude, and
+    /// every refetch was a fresh chance to acquire one.</para>
+    /// </summary>
+    public static readonly TimeSpan TransientLifetime = TimeSpan.FromSeconds(30);
+}
+
 public class ProbeCache<TValue> where TValue : class
 {
     private readonly MemoryCache _cache;
+    private readonly TimeSpan _transientLifetime;
     private readonly TimeSpan? _ttl;
     // Optional shared L2 (Redis). Null in single-instance mode.
     private readonly ProbeCacheL2<TValue>? _l2;
@@ -240,11 +267,16 @@ public class ProbeCache<TValue> where TValue : class
     /// <param name="warmSharedCache">False when nothing will ever republish this cache
     /// into the shared tier — no Redis, or the shared-cache watch disabled. Skips the
     /// key index entirely; see <see cref="_l2Index"/>.</param>
+    /// <param name="transientLifetime">Overrides
+    /// <see cref="ProbeCachePolicy.TransientLifetime"/> for values rejected by
+    /// <c>shouldPersist</c>. Exists so the behaviour can be asserted without a test
+    /// sleeping out the real window; production leaves it null.</param>
     public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true,
-        bool warmSharedCache = true)
+        bool warmSharedCache = true, TimeSpan? transientLifetime = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _transientLifetime = transientLifetime ?? ProbeCachePolicy.TransientLifetime;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
         _persist = persist;
         _l2Index = _l2 != null && warmSharedCache ? new ConcurrentDictionary<string, DateTime>() : null;
@@ -291,6 +323,16 @@ public class ProbeCache<TValue> where TValue : class
     /// <para>Null when the shared key carries no expiry at all, which leaves
     /// <see cref="SetMemoryOnly"/> falling back to the cache-wide TTL.</para>
     /// </summary>
+    /// <summary>When a <c>shouldPersist</c>-rejected value should expire: never later
+    /// than a normal entry, so a cache configured shorter than
+    /// <see cref="TransientLifetime"/> is not lengthened by a failure.</summary>
+    private DateTime TransientExpiry()
+    {
+        var brief = DateTime.UtcNow + _transientLifetime;
+        var normal = AbsoluteExpiry(null);
+        return brief < normal ? brief : normal;
+    }
+
     private DateTime? L1ExpiryForL2Hit(TimeSpan? remaining)
     {
         if (remaining is not { } left) return null;
@@ -410,9 +452,11 @@ public class ProbeCache<TValue> where TValue : class
                 Set(key, result, ttl); // write-through to the L2 included
             }
             else
-                // Not shareable: kept out of the key index as well as the bag and the
-                // write-through, or a re-warm would publish it to peers regardless.
-                SetMemoryOnly(key, result, shareable: false);
+                // A failure, not an answer. Held briefly so one validation does not
+                // re-ask what just failed, and kept out of the key index as well as the
+                // bag and the write-through — a re-warm would otherwise publish it to
+                // peers regardless.
+                SetMemoryOnly(key, result, TransientExpiry(), shareable: false);
             return result;
         }
         finally
@@ -706,6 +750,7 @@ public class ProbeCache<TValue> where TValue : class
 public class ProbeCacheValue<TValue> where TValue : struct
 {
     private readonly MemoryCache _cache;
+    private readonly TimeSpan _transientLifetime;
     private readonly TimeSpan? _ttl;
     // See ProbeCache<T>._bag — values this process fetched and has yet to persist.
     private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
@@ -726,10 +771,13 @@ public class ProbeCacheValue<TValue> where TValue : struct
     /// <summary>See <see cref="ProbeCache{T}"/> — false when there is no disk tier.</summary>
     private readonly bool _persist;
 
-    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true)
+    /// <param name="transientLifetime">See <see cref="ProbeCache{T}"/>'s parameter of
+    /// the same name.</param>
+    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true, TimeSpan? transientLifetime = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _transientLifetime = transientLifetime ?? ProbeCachePolicy.TransientLifetime;
         _persist = persist;
     }
 
@@ -792,13 +840,25 @@ public class ProbeCacheValue<TValue> where TValue : struct
             if (shouldPersist == null || shouldPersist(result))
                 Set(key, result);
             else
-                SetMemoryOnly(key, result);
+                // Briefly, like the reference-type cache — see
+                // ProbeCache<T>.TransientLifetime. A port probe that timed out is not
+                // evidence the port is shut, and holding it for the cache-wide TTL
+                // reported exactly that for hours.
+                SetMemoryOnly(key, result, TransientExpiry());
             return result;
         }
         finally
         {
             _inflight.TryRemove(key, out _);
         }
+    }
+
+    /// <summary>See <see cref="ProbeCache{T}.TransientExpiry"/>.</summary>
+    private DateTime TransientExpiry()
+    {
+        var brief = DateTime.UtcNow + _transientLifetime;
+        var normal = _ttl.HasValue ? DateTime.UtcNow + _ttl.Value : DateTime.MaxValue;
+        return brief < normal ? brief : normal;
     }
 
     public void Set(string key, TValue value)
