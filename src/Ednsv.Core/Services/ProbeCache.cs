@@ -411,7 +411,9 @@ public class ProbeCache<TValue> where TValue : class
                 _l2?.Set(key, result, ttl);
             }
             else
-                SetMemoryOnly(key, result);
+                // Not shareable: kept out of the key index as well as the bag and the
+                // write-through, or a re-warm would publish it to peers regardless.
+                SetMemoryOnly(key, result, shareable: false);
             return result;
         }
         finally
@@ -451,8 +453,19 @@ public class ProbeCache<TValue> where TValue : class
     /// should not outlive the process, values read from the shared Redis L2 (another
     /// instance already persisted them), and entries imported from disk (they are
     /// on disk by definition).
+    ///
+    /// <para><paramref name="shareable"/> separates the first of those three from the
+    /// other two. All three skip the disk bag, but only transient errors must also stay
+    /// out of the shared-cache key index: <see cref="WarmSharedCache"/> republishes
+    /// everything the index names, and it cannot tell a timeout from a real answer.
+    /// Indexing them meant a value deliberately kept out of the write-through reached
+    /// Redis anyway the next time the shared cache was emptied — the long way round,
+    /// but the same destination the <c>shouldPersist</c> predicate exists to keep it
+    /// from. L2 hits and disk imports are already published by definition, so they
+    /// belong in the index; a re-warm is the only thing that will put them back.</para>
     /// </summary>
-    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null,
+        bool shareable = true)
     {
         if (absoluteExpiryUtc.HasValue)
             _cache.Set(key, value, new DateTimeOffset(
@@ -462,7 +475,7 @@ public class ProbeCache<TValue> where TValue : class
         else
             _cache.Set(key, value);
 
-        if (_l2Index != null) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
+        if (_l2Index != null && shareable) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
     }
 
     /// <summary>

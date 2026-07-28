@@ -106,13 +106,21 @@ When multiple checks request the same DNS record simultaneously, only **one** ne
 
 `GetOrCreateAsync` accepts an optional `shouldPersist: Func<TValue, bool>` predicate that decides whether the result is added to the **write bag**. The predicate does **not** control in-memory caching — every successful factory result is written to MemoryCache so duplicate calls within the same process are still deduped:
 
-| `shouldPersist` returns | L1 (MemoryCache) | Write bag (disk) | Shared Redis L2 |
-|-------------------------|------------------|------------------|-----------------|
-| `true` (or predicate is null) | written via `Set()` | queued | written through |
-| `false` | written via `SetMemoryOnly()` | **skipped** | **skipped** |
+| `shouldPersist` returns | L1 (MemoryCache) | Write bag (disk) | Shared Redis L2 | Key index (re-warm) |
+|-------------------------|------------------|------------------|-----------------|---------------------|
+| `true` (or predicate is null) | written via `Set()` | queued | written through | tracked |
+| `false` | written via `SetMemoryOnly(shareable: false)` | **skipped** | **skipped** | **skipped** |
 
 The predicate gates the shared L2 as well as the disk bag — a transient error must not
 be published to peers any more than it should reach disk.
+
+**That includes the re-warm**, which is the third way into the shared cache and the
+easiest to overlook. `WarmSharedCache` republishes everything the key index names and
+cannot tell a timeout from a real answer, so the index has to be gated alongside the
+write-through. Tracking rejected values there meant one deliberately withheld from peers
+reached them anyway the first time Redis was emptied — the long way round, but the same
+destination. L2 hits and disk imports stay in the index: they are already published by
+definition, and a re-warm is the only thing that will put them back.
 
 This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls for the rest of the current process. Service-level predicates:
 
