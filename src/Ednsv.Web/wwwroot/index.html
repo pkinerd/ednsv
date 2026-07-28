@@ -94,12 +94,17 @@
   .options-body .field span { font-size: 0.82rem; }
   .options-body .field input[type="text"] { padding: 0.4rem 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
   .options-body .field input[type="text"]:focus { border-color: var(--accent); }
+  /* Build stamp: which build is answering. Deliberately quiet — it is for the one
+     moment you need it (is the fix deployed?) and invisible the rest of the time.
+     The full commit is the tooltip; click copies it. */
+  .subtitle .build { margin-left: 0.5rem; font-size: 0.72rem; opacity: 0.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; border-bottom: 1px dotted currentColor; }
+  .subtitle .build:hover { opacity: 0.8; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>ednsv</h1>
-  <p class="subtitle">DNS &amp; Email Infrastructure Validator</p>
+  <p class="subtitle">DNS &amp; Email Infrastructure Validator<span class="build" id="buildStamp" hidden></span></p>
 
   <div class="nav" id="topNav" style="display:none">
     <span class="current">Validator</span>
@@ -249,6 +254,24 @@ function updateDomainHint() {
 loadUserOptions();
 fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (!d) return;
+  // Build stamp. Shown even when the commit is missing, because "unknown" is itself
+  // worth seeing — it means the build did not carry its provenance.
+  if (d.version) {
+    const stamp = document.getElementById('buildStamp');
+    const short = d.shortCommit || '';
+    stamp.textContent = short ? `${d.version} · ${short}` : `${d.version} · no commit`;
+    stamp.title = d.commit
+      ? `Build ${d.version}, commit ${d.commit}\nClick to copy`
+      : `Build ${d.version}. No source revision embedded in this image.`;
+    stamp.hidden = false;
+    if (d.commit) stamp.addEventListener('click', () => {
+      navigator.clipboard?.writeText(d.commit).then(() => {
+        const was = stamp.textContent;
+        stamp.textContent = 'copied';
+        setTimeout(() => { stamp.textContent = was; }, 1200);
+      }).catch(() => {});
+    });
+  }
   // Server config wins for any option the current user hasn't explicitly saved.
   // A category disabled in config.json is rendered as unchecked here even though
   // the HTML default is `checked` — that default only ever applies on a brief

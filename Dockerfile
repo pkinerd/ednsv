@@ -4,6 +4,13 @@ ARG DOTNET_VERSION=8.0
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build
 WORKDIR /src
 
+# The commit this image was built from, stamped into AssemblyInformationalVersion and
+# surfaced by the UI, /api/defaults and the startup log. The SDK would normally derive
+# this from the git checkout, but only the sources are copied in — there is no .git
+# here — so without this argument every image reports a bare version and no revision,
+# and a running pod cannot be told apart from any other build.
+ARG SOURCE_COMMIT=""
+
 COPY src/Ednsv.Core/Ednsv.Core.csproj src/Ednsv.Core/
 COPY src/Ednsv.Web/Ednsv.Web.csproj src/Ednsv.Web/
 RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj
@@ -14,7 +21,8 @@ RUN dotnet publish src/Ednsv.Web/Ednsv.Web.csproj \
         --configuration Release \
         --no-restore \
         --output /app/publish \
-        /p:UseAppHost=false
+        /p:UseAppHost=false \
+        /p:SourceRevisionId="$SOURCE_COMMIT"
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
 WORKDIR /app

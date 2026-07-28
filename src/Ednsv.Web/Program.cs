@@ -677,6 +677,11 @@ if (!anyAuthEnabled && !IsLoopbackOnlyBinding(builder))
         "No authentication method is enabled but the server is network-exposed. Enable auth or bind to localhost only.");
 }
 
+// First thing in the log, so "which build is this pod running?" is answerable from
+// `kubectl logs` without reaching the UI or the API.
+app.Logger.LogInformation("ednsv {Version}, commit {Commit}.",
+    BuildInfo.Version, BuildInfo.Commit.Length > 0 ? BuildInfo.Commit : "unknown (no source revision embedded)");
+
 if (!anyAuthEnabled)
     app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none, no external IdP configured) and the server is bound to localhost only. All endpoints are open to local callers.");
 else
@@ -1188,7 +1193,13 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),
         perDomainDkimSelectors = cfg.DkimSelectors,
-        knownDomains     = cfg.KnownDomains
+        knownDomains     = cfg.KnownDomains,
+        // Which build is answering. See BuildInfo: without it, "is the fix deployed?"
+        // cannot be answered from outside, and a rollout that never happened looks
+        // exactly like a fix that did not work.
+        version          = BuildInfo.Version,
+        commit           = BuildInfo.Commit,
+        shortCommit      = BuildInfo.ShortCommit
     });
 })
 .WithName("GetDefaults")
