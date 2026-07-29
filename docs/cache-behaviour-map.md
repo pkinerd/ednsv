@@ -1,23 +1,19 @@
 # Cache Behaviour Map
 
-One page for the question "this check gave me an odd answer — how long will it stay
-that way, and where else has it gone?"
-
-[caching-architecture.md](caching-architecture.md) describes the machinery. This maps it
-onto what the checks actually ask for: which record types, what the resolver can reply,
-and what each reply costs you if it is wrong.
+What each check asks for, what the network can answer, and how long each kind of answer
+is kept. [caching-architecture.md](caching-architecture.md) covers the machinery — tiers,
+flushing, the recheck bypass; this maps it onto the checks.
 
 ---
 
-## 1. The only classification that matters
+## 1. Three kinds of result
 
-Every DNS reply lands in exactly one of three buckets, and they are cached on completely
-different terms. Almost every caching surprise in this codebase has come from two of
-them being confused.
+A DNS reply is one of three things, and they are cached on different terms. The
+distinction runs through everything below.
 
 ```mermaid
 flowchart TD
-    Q["DNS query"] --> R{"Did we get a reply?"}
+    Q["DNS query"] --> R{"Reply received?"}
 
     R -->|"no — timeout,<br/>socket error, cancelled"| F
     R -->|yes| C{"RCODE"}
@@ -28,13 +24,13 @@ flowchart TD
     A -->|no| P["<b>POSITIVE ANSWER</b><br/>records returned"]
     A -->|yes| N["<b>NEGATIVE ANSWER</b><br/>'it does not exist'"]
 
-    P --> PT["TTL: clamp(min record TTL,<br/>DnsCacheMinTtlSeconds,<br/>CacheTtlHours)"]
-    N --> NT["TTL: clamp(SOA negative TTL,<br/>DnsCacheMinTtlSeconds,<br/><b>min(CacheTtlHours,<br/>DnsNegativeTtlCapSeconds)</b>)"]
-    F --> FT["TTL: 30s<br/><i>ProbeCachePolicy.TransientLifetime</i>"]
+    P --> PT["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds,<br/>CacheTtlHours)"]
+    N --> NT["clamp(SOA negative TTL,<br/>DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours,<br/>DnsNegativeTtlCapSeconds))"]
+    F --> FT["30s<br/><i>ProbeCachePolicy.TransientLifetime</i>"]
 
     PT --> PS["L1 + disk + Redis"]
     NT --> NS["L1 + disk + Redis"]
-    FT --> FS["<b>L1 only.</b><br/>never disk, never Redis,<br/>never re-warmed"]
+    FT --> FS["<b>L1 only</b><br/>never disk, never Redis,<br/>never re-warmed"]
 
     style P fill:#e6f4ea,stroke:#34a853
     style N fill:#fef7e0,stroke:#f9ab00
@@ -47,97 +43,66 @@ flowchart TD
 | **Is it an answer?** | yes | **yes** | no |
 | **RCODE** | `NoError` + records | `NXDomain`, or `NoError` with no records (NODATA) | `SERVFAIL`, `REFUSED`, timeout, socket error |
 | **TTL source** | minimum record TTL in the answer | SOA `MINIMUM` in the authority section (RFC 2308 §5) | none — nothing was published |
-| **Ceiling** | `CacheTtlHours` | **`min(CacheTtlHours, DnsNegativeTtlCapSeconds)`** | 30s, fixed |
-| **Persisted to disk** | yes | yes | **no** |
-| **Shared via Redis** | yes | yes | **no** |
+| **Ceiling** | `CacheTtlHours` | `min(CacheTtlHours, DnsNegativeTtlCapSeconds)` | 30s, fixed |
+| **Reaches disk** | yes | yes | **no** |
+| **Reaches Redis** | yes | yes | **no** |
 | **Republished on re-warm** | yes | yes | **no** |
-| **If it is wrong, you get** | a stale record | **a false finding** | a check that says "not checked" |
+| **If wrong, you get** | a stale record | a false finding | a check that says "not checked" |
+
+**A negative answer is an answer.** The zone published it, with an SOA saying how long to
+believe it, so it is cached and persisted exactly like a record. A *failure* is the
+absence of an answer — nothing was learned, so nothing is worth keeping or sharing.
+
+Cases that are routinely negative rather than broken: an absent DKIM selector, an IP with
+no PTR, a "not listed" blocklist reply, a name that publishes no CAA.
 
 ---
 
-## 2. `DnsNegativeTtlCapSeconds` — a TTL for a *positive non-result*
+## 2. Lifetimes
 
-**This is the setting most likely to be misread, so it is worth being blunt about.**
+| Setting | Default | Applies to | Role |
+|---|---|---|---|
+| `CacheTtlHours` | `2` | everything | The outer ceiling, and the lifetime of anything without a tighter rule |
+| `DnsCacheMinTtlSeconds` | `0` (off) | DNS answers | **Floor** on published TTLs. At `0` no published TTL is read at all and every answer takes `CacheTtlHours` |
+| `DnsNegativeTtlCapSeconds` | `600` | negative answers only | **Ceiling.** Independent of the floor — it applies whether or not gating is on |
+| `ProbeCachePolicy.TransientLifetime` | `30s` | failures | Constant. Long enough to stop one validation re-asking what just failed |
+| `UnreachableDecayMinutes` | `5` | `_serverQueryCache` only | After `MaxRetries` (3) failures, that nameserver is skipped for this long |
 
-`DnsNegativeTtlCapSeconds` does **not** govern timeouts, unreachable servers, or errors.
-It governs **successful lookups that positively established a non-result**.
+Negative answers are capped well below positive ones because the two fail differently: a
+stale positive reports a record that has since changed, while a stale negative reports
+that something *does not exist* — which surfaces as a finding rather than a detail.
+Zones often publish generous SOA minimums (a day is common), so without a ceiling a
+single wrong `NXDOMAIN` would be believed for the full `CacheTtlHours`, persisted, and
+shared with every pod. Resolvers generally cap negative caching for the same reason;
+RFC 2308 §5 treats 1–3 hours as a maximum.
 
-> The resolver answered. The answer was "no such thing". That is a *result* — the zone
-> published it, signed it if DNSSEC is on, and attached an SOA saying how long to
-> believe it. It is cached and persisted exactly like a record, because it *is* an
-> answer.
+### Interactions worth knowing
 
-Every one of these is a positive non-result, and all of them are governed by this cap:
+| Situation | Result |
+|---|---|
+| Gating off (`DnsCacheMinTtlSeconds=0`, the default) | Positives take `CacheTtlHours`; negatives still take the cap. It is a ceiling, not part of the gating |
+| SOA minimum shorter than the cap | The SOA wins — the cap is never a floor |
+| SOA minimum shorter than `DnsCacheMinTtlSeconds` | Raised to the floor, exactly as a positive TTL would be |
+| Negative answer carrying no SOA | Takes the cap, not `CacheTtlHours`. It is still a negative answer, and the cap is the safer reading |
+| `DnsNegativeTtlCapSeconds` > `CacheTtlHours` | `CacheTtlHours` wins. The sweep deletes a record file at `fileTime + CacheTtlHours`, so nothing may outlive it |
+| `DnsNegativeTtlCapSeconds=0` | Cap removed; negatives are bounded by `CacheTtlHours` like anything else |
+| `CacheTtlHours=0` (no expiry) | Negatives still take the cap — `min(∞, 600s)` |
+| A recheck | Bypasses every cached read for the flagged types, including the L2. Lifetimes are irrelevant to it |
+| CLI | Same rules. It usually runs without a cache TTL, so the negative cap is often the only ceiling in play |
 
-- `selector1._domainkey.example.com` **TXT** → NXDOMAIN — *the selector does not exist*
-- `5.4.3.2.in-addr.arpa` **PTR** → NXDOMAIN — *this IP has no reverse DNS*
-- `4.3.2.1.zen.spamhaus.org` **A** → NXDOMAIN — *not listed on this blocklist*
-- `example.com` **CAA** → NODATA — *the name exists, but publishes no CAA*
-- `_dmarc.sub.example.com` **TXT** → NXDOMAIN — *no subdomain DMARC override*
-
-If instead the query **timed out** or came back **SERVFAIL**, none of the above applies:
-that is a *failure*, it gets 30 seconds, and it never leaves the pod.
-
-### Why the ceiling is far below `CacheTtlHours`
-
-The asymmetry is deliberate, and it is about blast radius rather than freshness:
-
-- A stale **positive** answer means you report an IP or a record that has since changed.
-  Annoying, self-correcting, rarely alarming.
-- A stale **negative** answer means you report that something **does not exist**. That is
-  what turns into `No PTR record — many receivers reject mail from IPs without reverse
-  DNS`: a confident, actionable, *wrong* finding.
-
-A resolver under load can return a spurious NXDOMAIN. Zones routinely publish generous
-SOA minimums — `cnn.com`'s reverse zones publish **86400** (the Route 53 default) — so
-honouring it verbatim meant one bad reply was believed for the full `CacheTtlHours`,
-written to disk, and shared with every pod in the fleet. Ten minutes bounds that to
-something that self-corrects before anyone finishes reading the report.
-
-Resolvers generally cap negative caching well below positive for the same reason;
-RFC 2308 §5 recommends 1–3 hours as a *maximum* and notes shorter is safer.
-
-### Edge cases and nuance
-
-| Situation | What happens | Why |
-|---|---|---|
-| **Gating is off** (`DnsCacheMinTtlSeconds=0`, the default) | The cap **still applies**. Negatives get 600s; positives get `CacheTtlHours`. | It is a ceiling, not part of the gating. The damage it bounds does not depend on whether record-TTL gating is enabled — and gating ships off, so this *is* the default path. |
-| **SOA minimum is shorter than the cap** (e.g. 60s) | 60s wins. | A ceiling, never a floor. A zone asking for less gets less. |
-| **SOA minimum is shorter than `DnsCacheMinTtlSeconds`** | Raised to the floor. | The floor applies to negatives exactly as to positives — it exists to stop refetch storms, and a 5-second NXDOMAIN would cause one. |
-| **Negative answer with no SOA at all** | Takes the cap (600s), *not* `CacheTtlHours`. | A narrow exception to "no published TTL → inherit `CacheTtlHours`". The code only reaches this branch once the reply is confirmed an *answer* with an empty answer section, so it is still a negative — and the cap is the safer of the two readings. |
-| **`DnsNegativeTtlCapSeconds` > `CacheTtlHours`** | `CacheTtlHours` wins. | It remains the outer ceiling for everything. The sweep deletes a record file at `fileTime + CacheTtlHours`, so a longer-lived entry could be swept while still considered live. |
-| **`DnsNegativeTtlCapSeconds=0`** | Cap removed. Negatives are bounded by `CacheTtlHours` like anything else. | The pre-existing behaviour, for anyone who wants it back. |
-| **A recheck** | Bypasses it entirely. | The cap shortens an entry's life; a recheck ignores its life altogether — `TryGet` returns a miss for the flagged types and the L2 read is skipped too. "Recheck all" always reaches the network. |
-| **`CacheTtlHours=0`** (no expiry) | The cap still applies to negatives. | `min(∞, 600s)` = 600s. Turning expiry off is a statement about positive results. |
-| **The CLI** | Same rules. The CLI usually runs without a cache TTL, so the cap is often the only ceiling a negative answer has. | |
-
-### What it does *not* fix
-
-The cap limits how long a wrong negative answer survives. **It cannot make a resolver
-answer correctly.** If your resolver returns a spurious NXDOMAIN every time, you will see
-the finding every time — just in a window that closes in ten minutes rather than two
-hours, and without it propagating to disk or to peers.
-
-To tell a bad resolver from a genuine non-result, compare inside and outside:
-
-```
-dig -x 52.101.9.17            # your resolver
-dig -x 52.101.9.17 @1.1.1.1   # a public one
-```
+A cap bounds how long a wrong answer survives; it cannot make a resolver answer
+correctly. Comparing the configured resolver against a public one (`dig -x <ip>` versus
+`dig -x <ip> @1.1.1.1`) is what separates a bad resolver from a genuine non-result.
 
 ---
 
 ## 3. Every check, its record types, and where its results are cached
 
 All 87 checks. **Record types queried** includes types reached indirectly through
-`CheckContext` (a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
-though it issues no query itself). **Recheck flags** are the `CacheDep` bits that a
-recheck of this category bypasses — see *Recheck System* in
+`CheckContext` — a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
+though it issues no query itself. **Recheck flags** are the `CacheDep` bits a recheck of
+that category bypasses; see *Recheck System* in
 [caching-architecture.md](caching-architecture.md).
-
-Read it with §1 in mind: every one of these queries can come back positive, negative or
-failed, and the three are cached on entirely different terms. A negative on a DKIM
-selector or a blocklist is the *expected* result, not an error.
 
 | Category | Check | Record types queried | Caches used | Recheck flags |
 |---|---|---|---|---|
@@ -228,58 +193,54 @@ selector or a blocklist is the *expected* result, not an error.
 |  | Email Provider Verification TXT | `TXT` | `_queryCache` | `Dns` |
 | Wildcard | Wildcard DNS | `A`, `MX`, `TXT` | `_queryCache` | `Dns` |
 | ZoneTransfer | AXFR Exposure | `A`, `AAAA`, `NS` | `_axfrCache`, `_queryCache` | `Dns, Axfr` |
-
-### Reading the cache column
+### The caches
 
 | Cache | Holds | L1 | Disk | Redis | Notes |
 |---|---|---|---|---|---|
-| `_queryCache` | Standard DNS answers, keyed `q:domain:type` | yes | yes | yes | The busiest cache. Shared by `QueryAsync`, `QueryDnsblAsync` and `QuerySpeculativeAsync` |
-| `_ptrCache` | Reverse lookups, keyed `ptr:ip` | yes | yes | yes | The only cache with an explicit **failure sentinel** — see below |
-| `_serverQueryCache` | Per-nameserver answers, keyed `sq:server:domain:type` | yes | yes | yes | The only path with the **unreachable-server breaker** (3 failures / 5 min) |
+| `_queryCache` | DNS answers, keyed `q:domain:type` | yes | yes | yes | The busiest cache. Shared by `QueryAsync`, `QueryDnsblAsync` and `QuerySpeculativeAsync` |
+| `_ptrCache` | Reverse lookups, keyed `ptr:ip` | yes | yes | yes | Distinguishes a failed lookup from an absent PTR — see below |
+| `_serverQueryCache` | Per-nameserver answers, keyed `sq:server:domain:type` | yes | yes | yes | The only path with the unreachable-server breaker |
 | `_probeCache` | SMTP handshakes, keyed `smtp:host:port` | yes | yes | yes | |
-| `_portCache` | Port reachability, keyed `port:host:port` | yes | yes | **no** | A `ProbeCacheValue<bool>`; never shared between pods |
+| `_portCache` | Port reachability, keyed `port:host:port` | yes | yes | **no** | A `ProbeCacheValue<bool>` |
 | `_rcptCache` | RCPT verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
 | `_relayCache` | Open-relay verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
 | `_getCache` / `_getWithHeadersCache` | HTTP GETs, keyed by URL | yes | yes | yes | Any HTTP status is definitive; only a status-0 network failure is transient |
-| `_axfrCache` | Zone-transfer verdicts | yes | yes | **no** | The transfer *response* is cached in memory only — a whole zone is far too large to persist |
+| `_axfrCache` | Zone-transfer verdicts | yes | yes | **no** | The transfer *response* is held in memory only — a whole zone is too large to persist |
 
-**Rechecks reach all of them.** `ProbeCache.TryGet`, `ProbeCacheValue.TryGet` and
+All of them honour the recheck bypass: `ProbeCache.TryGet`, `ProbeCacheValue.TryGet` and
 `ExpiringMap.TryGetValue` each take the `CacheDep` flag and return a miss for the types
-the current validation is rechecking, and `GetOrCreateAsync` skips the L2 read as well.
+being rechecked, and `GetOrCreateAsync` skips the L2 read as well.
 
-### Where a non-result is the expected answer
-
-For most checks a negative answer means something is missing. For three families it is
-routine, and they are the bulk of all negatives a validation produces:
+### Families where a negative is the normal answer
 
 | Family | Query | A negative means | Volume per validation |
 |---|---|---|---|
-| DKIM / ARC selectors | `TXT`, `CNAME` at `<selector>._domainkey.<domain>` | that selector is not published | up to **39** selectors + 7 ARC |
-| DNSBL / DomainBL | `A` at `<reversed-ip>.<zone>` | **not listed** — the good outcome | 21 zones × each MX IP |
-| Subdomain probes | `TXT`/`A` at SPF, DMARC, mail-survey, SRV names | no record at that subdomain | 19 + 10 + 9 + 5 |
+| DKIM / ARC selectors | `TXT`, `CNAME` at `<selector>._domainkey.<domain>` | that selector is not published | up to 39 selectors + 7 ARC |
+| DNSBL / DomainBL | `A` at `<reversed-ip>.<zone>` | not listed — the good outcome | 21 zones × each MX IP |
+| Subdomain probes | `TXT`/`A` at SPF, DMARC, mail-survey and SRV names | no record at that subdomain | 19 + 10 + 9 + 5 |
 
-Validating a *clean* domain is therefore the heaviest negative-caching case: nothing is
-listed and nothing exists, so nearly every answer is a negative one. That is why
-`DnsNegativeTtlCapSeconds` governs far more entries than its name suggests.
+A clean domain is the heaviest negative-caching case: nothing is listed and nothing
+exists, so most answers in the run are negative ones.
 
-### The PTR exception
+### Reverse lookups: failure versus absence
 
-`_ptrCache` is the one place where a failure and a negative are distinguishable to
-callers, because the value is a `List<string>` and both would otherwise be the empty
-list. A lookup that could not complete returns a distinguished instance, tested with
-`DnsResolverService.PtrLookupDidFail`, and the six consumers report `reverse lookup
-failed — not checked` instead of counting it as a finding:
+`_ptrCache` holds a `List<string>`, so an absent PTR and a failed lookup would both be
+the empty list. A lookup that could not complete returns a distinguished instance,
+tested with `DnsResolverService.PtrLookupDidFail`, and its consumers report it as
+unchecked rather than as a finding:
 
-| Check | On a genuine negative | On a failure |
+| Check | Genuine negative | Failure |
 |---|---|---|
 | Reverse DNS (PTR) | ⚠ `<ip>: No PTR record` | detail: `reverse lookup failed — not checked` |
 | MX Reverse DNS (PTR) | ✗ `No PTR record — many receivers reject mail…` | detail, and the IP drops out of the total |
 | Forward-Confirmed rDNS | ✗ `No PTR record — Gmail requires FCrDNS…` | detail, and the IP drops out of the total |
-| SMTP Banner vs Reverse DNS | detail: `No PTR record to compare with banner` | detail, and it is not counted as a mismatch |
+| SMTP Banner vs Reverse DNS | detail: `No PTR record to compare with banner` | detail, and not counted as a mismatch |
 | Authoritative NS, MX Records | `No PTR` / `none` in the detail line | `lookup failed` in the detail line |
 
-Everywhere else the two are still separated in the *cache* — a failure gets 30s and never
-leaves the pod — but the check output cannot tell you which it was.
+Elsewhere the two are still separated in the cache — a failure gets 30s and never leaves
+the pod — but the check output does not say which it was.
+
+---
 
 ## 4. Which tier holds what
 
@@ -306,20 +267,8 @@ flowchart LR
     style POS fill:#e6f4ea,stroke:#34a853
 ```
 
-A failure reaching disk or Redis would be a bug — it is gated in three places
+A failure reaching disk or Redis would be a bug. It is gated in three places
 independently: the write bag, the L2 write-through, and the shared-cache key index that
 `WarmSharedCache` reads.
 
----
-
-## 5. Settings that move these numbers
-
-| Setting | Default | Governs |
-|---|---|---|
-| `CacheTtlHours` | `2` | The outer ceiling on everything, and the lifetime of anything without a tighter rule |
-| `DnsCacheMinTtlSeconds` | `0` (off) | **Floor** on published TTLs. Off = published TTLs are ignored entirely and everything gets `CacheTtlHours` |
-| `DnsNegativeTtlCapSeconds` | `600` | **Ceiling** on negative answers only. Applies whether or not gating is on |
-| `ProbeCachePolicy.TransientLifetime` | `30s` (constant) | Failures. Not configurable — it only needs to span one validation |
-| `UnreachableDecayMinutes` | `5` | The per-nameserver breaker window (`_serverQueryCache` only) |
-
-Full reference: [configuration.md](configuration.md).
+Full setting reference: [configuration.md](configuration.md).

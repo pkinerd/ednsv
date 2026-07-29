@@ -1,8 +1,8 @@
 # Caching Architecture
 
-> Looking for "how long will this odd answer stick around?" — see
-> [cache-behaviour-map.md](cache-behaviour-map.md), which maps positive / negative /
-> failure results onto every check family and record type.
+> For a per-check view — what each of the 87 checks queries, which caches its results
+> land in, and how long each kind of answer is kept — see
+> [cache-behaviour-map.md](cache-behaviour-map.md).
 
 EDNSV uses a multi-tier caching system to minimize redundant network requests across checks and across multiple domain validations. This document covers the caching layers, in-flight deduplication, disk persistence, the recheck bypass mechanism, and how transient failures are handled differently from definitive ones.
 
