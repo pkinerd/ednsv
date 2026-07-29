@@ -1,0 +1,1044 @@
+﻿2026-07-29T01:39:57.9549817Z Current runner version: '2.336.0'
+2026-07-29T01:39:57.9584044Z ##[group]Runner Image Provisioner
+2026-07-29T01:39:57.9585614Z Hosted Compute Agent
+2026-07-29T01:39:57.9586482Z Version: 20260707.563
+2026-07-29T01:39:57.9587468Z Commit: 02667638d2b423fbc733a8e32a88b44996a3ba6e
+2026-07-29T01:39:57.9588534Z Build Date: 2026-07-07T19:33:50Z
+2026-07-29T01:39:57.9589589Z Worker ID: {b9d27dbe-0906-405c-bf45-c7c11fb813a4}
+2026-07-29T01:39:57.9590691Z Azure Region: eastus2
+2026-07-29T01:39:57.9591535Z ##[endgroup]
+2026-07-29T01:39:57.9593691Z ##[group]Operating System
+2026-07-29T01:39:57.9594625Z Ubuntu
+2026-07-29T01:39:57.9595565Z 24.04.4
+2026-07-29T01:39:57.9596540Z LTS
+2026-07-29T01:39:57.9597285Z ##[endgroup]
+2026-07-29T01:39:57.9598172Z ##[group]Runner Image
+2026-07-29T01:39:57.9599131Z Image: ubuntu-24.04
+2026-07-29T01:39:57.9599967Z Version: 20260720.247.2
+2026-07-29T01:39:57.9601893Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260720.247/images/ubuntu/Ubuntu2404-Readme.md
+2026-07-29T01:39:57.9604326Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260720.247
+2026-07-29T01:39:57.9606043Z ##[endgroup]
+2026-07-29T01:39:57.9607871Z ##[group]GITHUB_TOKEN Permissions
+2026-07-29T01:39:57.9610900Z Contents: read
+2026-07-29T01:39:57.9611781Z Metadata: read
+2026-07-29T01:39:57.9612761Z Packages: read
+2026-07-29T01:39:57.9613631Z ##[endgroup]
+2026-07-29T01:39:57.9617197Z Secret source: Actions
+2026-07-29T01:39:57.9619077Z Prepare workflow directory
+2026-07-29T01:39:58.0222501Z Prepare all required actions
+2026-07-29T01:39:58.0291348Z Getting action download info
+2026-07-29T01:39:58.2124872Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-07-29T01:39:58.4799074Z Download action repository 'actions/setup-dotnet@v4' (SHA:67a3573c9a986a3f9c594539f4ab511d57bb3ce9)
+2026-07-29T01:39:58.8048631Z Complete job name: Build & Unit Tests
+2026-07-29T01:39:58.8680925Z ##[group]Checking docker version
+2026-07-29T01:39:58.8694279Z ##[command]/usr/bin/docker version --format '{{.Server.APIVersion}}'
+2026-07-29T01:39:58.9390913Z '1.48'
+2026-07-29T01:39:58.9407815Z Docker daemon API version: '1.48'
+2026-07-29T01:39:58.9408867Z ##[command]/usr/bin/docker version --format '{{.Client.APIVersion}}'
+2026-07-29T01:39:58.9612562Z '1.48'
+2026-07-29T01:39:58.9629329Z Docker client API version: '1.48'
+2026-07-29T01:39:58.9636490Z ##[endgroup]
+2026-07-29T01:39:58.9641263Z ##[group]Clean up resources from previous jobs
+2026-07-29T01:39:58.9648902Z ##[command]/usr/bin/docker ps --all --quiet --no-trunc --filter "label=7b40d4"
+2026-07-29T01:39:58.9814123Z ##[command]/usr/bin/docker network prune --force --filter "label=7b40d4"
+2026-07-29T01:39:58.9980639Z ##[endgroup]
+2026-07-29T01:39:58.9981609Z ##[group]Create local container network
+2026-07-29T01:39:58.9995104Z ##[command]/usr/bin/docker network create --label 7b40d4 github_network_3b5fc45f778946008de9ff6936f83348
+2026-07-29T01:39:59.0662251Z 01d0db41e242575f65a08440e520e835f176804c257ec281e2a3c1eca9c1ec20
+2026-07-29T01:39:59.0680878Z ##[endgroup]
+2026-07-29T01:39:59.0706495Z ##[group]Starting redis service container
+2026-07-29T01:39:59.0728013Z ##[command]/usr/bin/docker pull redis:7-alpine
+2026-07-29T01:39:59.3618770Z 7-alpine: Pulling from library/redis
+2026-07-29T01:39:59.4450259Z 897d797d2723: Pulling fs layer
+2026-07-29T01:39:59.4452066Z f5a655897537: Pulling fs layer
+2026-07-29T01:39:59.4453045Z 63e63047b377: Pulling fs layer
+2026-07-29T01:39:59.4453956Z 627d9d06d3d0: Pulling fs layer
+2026-07-29T01:39:59.4454924Z 93ebed1aef27: Pulling fs layer
+2026-07-29T01:39:59.4455974Z 4f4fb700ef54: Pulling fs layer
+2026-07-29T01:39:59.4456973Z db197c512a33: Pulling fs layer
+2026-07-29T01:39:59.4457910Z 627d9d06d3d0: Waiting
+2026-07-29T01:39:59.4458700Z 93ebed1aef27: Waiting
+2026-07-29T01:39:59.4459500Z 4f4fb700ef54: Waiting
+2026-07-29T01:39:59.6338835Z f5a655897537: Download complete
+2026-07-29T01:39:59.6451047Z 63e63047b377: Download complete
+2026-07-29T01:39:59.6823777Z 897d797d2723: Verifying Checksum
+2026-07-29T01:39:59.6828591Z 897d797d2723: Download complete
+2026-07-29T01:39:59.6972061Z 93ebed1aef27: Verifying Checksum
+2026-07-29T01:39:59.6974904Z 93ebed1aef27: Download complete
+2026-07-29T01:39:59.7372399Z 4f4fb700ef54: Verifying Checksum
+2026-07-29T01:39:59.7373957Z 4f4fb700ef54: Download complete
+2026-07-29T01:39:59.7501673Z db197c512a33: Verifying Checksum
+2026-07-29T01:39:59.7503099Z db197c512a33: Download complete
+2026-07-29T01:39:59.7663643Z 627d9d06d3d0: Verifying Checksum
+2026-07-29T01:39:59.7664989Z 627d9d06d3d0: Download complete
+2026-07-29T01:39:59.8013943Z 897d797d2723: Pull complete
+2026-07-29T01:40:01.3589393Z f5a655897537: Pull complete
+2026-07-29T01:40:01.4927611Z 63e63047b377: Pull complete
+2026-07-29T01:40:01.6904526Z 627d9d06d3d0: Pull complete
+2026-07-29T01:40:01.6989733Z 93ebed1aef27: Pull complete
+2026-07-29T01:40:01.7080460Z 4f4fb700ef54: Pull complete
+2026-07-29T01:40:01.7176814Z db197c512a33: Pull complete
+2026-07-29T01:40:01.7217071Z Digest: sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+2026-07-29T01:40:01.7231682Z Status: Downloaded newer image for redis:7-alpine
+2026-07-29T01:40:01.7236977Z docker.io/library/redis:7-alpine
+2026-07-29T01:40:01.7274619Z ##[command]/usr/bin/docker create --name 1349df57db274972a69203fc022bcedd_redis7alpine_65573d --label 7b40d4 --network github_network_3b5fc45f778946008de9ff6936f83348 --network-alias redis -p 6380:6379 --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10 -e GITHUB_ACTIONS=true -e CI=true redis:7-alpine
+2026-07-29T01:40:01.7533090Z aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:01.7559536Z ##[command]/usr/bin/docker start aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:01.9573464Z aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:01.9599038Z ##[command]/usr/bin/docker ps --all --filter id=aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a --filter status=running --no-trunc --format "{{.ID}} {{.Status}}"
+2026-07-29T01:40:01.9740136Z aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a Up Less than a second (health: starting)
+2026-07-29T01:40:01.9761061Z ##[command]/usr/bin/docker port aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:01.9905746Z 6379/tcp -> 0.0.0.0:6380
+2026-07-29T01:40:01.9906129Z 6379/tcp -> [::]:6380
+2026-07-29T01:40:01.9956271Z ##[endgroup]
+2026-07-29T01:40:01.9964792Z ##[group]Waiting for all services to be ready
+2026-07-29T01:40:01.9979229Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:02.0113171Z starting
+2026-07-29T01:40:02.0136490Z redis service is starting, waiting 2 seconds before checking again.
+2026-07-29T01:40:04.0144727Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:04.0277455Z starting
+2026-07-29T01:40:04.0291617Z redis service is starting, waiting 4 seconds before checking again.
+2026-07-29T01:40:08.3166210Z ##[command]/usr/bin/docker inspect --format="{{if .Config.Healthcheck}}{{print .State.Health.Status}}{{end}}" aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:08.3311295Z healthy
+2026-07-29T01:40:08.3341406Z redis service is healthy.
+2026-07-29T01:40:08.3342659Z ##[endgroup]
+2026-07-29T01:40:08.3708523Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-29T01:40:08.3793288Z ##[group]Run actions/checkout@v4
+2026-07-29T01:40:08.3793739Z with:
+2026-07-29T01:40:08.3793978Z   repository: pkinerd/ednsv
+2026-07-29T01:40:08.3797235Z   token: ***
+2026-07-29T01:40:08.3797464Z   ssh-strict: true
+2026-07-29T01:40:08.3797704Z   ssh-user: git
+2026-07-29T01:40:08.3797956Z   persist-credentials: true
+2026-07-29T01:40:08.3798210Z   clean: true
+2026-07-29T01:40:08.3798440Z   sparse-checkout-cone-mode: true
+2026-07-29T01:40:08.3798699Z   fetch-depth: 1
+2026-07-29T01:40:08.3798903Z   fetch-tags: false
+2026-07-29T01:40:08.3799113Z   show-progress: true
+2026-07-29T01:40:08.3799313Z   lfs: false
+2026-07-29T01:40:08.3799561Z   submodules: false
+2026-07-29T01:40:08.3799776Z   set-safe-directory: true
+2026-07-29T01:40:08.3800023Z   allow-unsafe-pr-checkout: false
+2026-07-29T01:40:08.3800732Z ##[endgroup]
+2026-07-29T01:40:08.4859000Z Syncing repository: pkinerd/ednsv
+2026-07-29T01:40:08.4861024Z ##[group]Getting Git version info
+2026-07-29T01:40:08.4861442Z Working directory is '/home/runner/work/ednsv/ednsv'
+2026-07-29T01:40:08.4862209Z [command]/usr/bin/git version
+2026-07-29T01:40:08.4893845Z git version 2.54.0
+2026-07-29T01:40:08.4928842Z ##[endgroup]
+2026-07-29T01:40:08.4938855Z Temporarily overriding HOME='/home/runner/work/_temp/166a46cb-97fa-4861-af84-d63a90ce3077' before making global git config changes
+2026-07-29T01:40:08.4940112Z Adding repository directory to the temporary git global config as a safe directory
+2026-07-29T01:40:08.4942829Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ednsv/ednsv
+2026-07-29T01:40:08.4998733Z Deleting the contents of '/home/runner/work/ednsv/ednsv'
+2026-07-29T01:40:08.5003378Z ##[group]Initializing the repository
+2026-07-29T01:40:08.5009024Z [command]/usr/bin/git init /home/runner/work/ednsv/ednsv
+2026-07-29T01:40:08.5100953Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-07-29T01:40:08.5102034Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-07-29T01:40:08.5103095Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-07-29T01:40:08.5103937Z hint: call:
+2026-07-29T01:40:08.5104469Z hint:
+2026-07-29T01:40:08.5105046Z hint: 	git config --global init.defaultBranch <name>
+2026-07-29T01:40:08.5105885Z hint:
+2026-07-29T01:40:08.5106524Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-07-29T01:40:08.5107496Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-07-29T01:40:08.5108290Z hint:
+2026-07-29T01:40:08.5108771Z hint: 	git branch -m <name>
+2026-07-29T01:40:08.5109300Z hint:
+2026-07-29T01:40:08.5110005Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-07-29T01:40:08.5111095Z Initialized empty Git repository in /home/runner/work/ednsv/ednsv/.git/
+2026-07-29T01:40:08.5117710Z [command]/usr/bin/git remote add origin https://github.com/pkinerd/ednsv
+2026-07-29T01:40:08.5199285Z ##[endgroup]
+2026-07-29T01:40:08.5199994Z ##[group]Disabling automatic garbage collection
+2026-07-29T01:40:08.5205142Z [command]/usr/bin/git config --local gc.auto 0
+2026-07-29T01:40:08.5244214Z ##[endgroup]
+2026-07-29T01:40:08.5244789Z ##[group]Setting up auth
+2026-07-29T01:40:08.5265879Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-07-29T01:40:08.5313070Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-07-29T01:40:08.5699029Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-07-29T01:40:08.5742781Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-07-29T01:40:08.6004186Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-07-29T01:40:08.6044411Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-07-29T01:40:08.6294524Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-07-29T01:40:08.6338676Z ##[endgroup]
+2026-07-29T01:40:08.6339210Z ##[group]Fetching the repository
+2026-07-29T01:40:08.6348555Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +1922b44284f62cd80982bec1ce9c1364eae55f97:refs/remotes/pull/30/merge
+2026-07-29T01:40:08.9432714Z From https://github.com/pkinerd/ednsv
+2026-07-29T01:40:08.9433278Z  * [new ref]         1922b44284f62cd80982bec1ce9c1364eae55f97 -> pull/30/merge
+2026-07-29T01:40:08.9467496Z ##[endgroup]
+2026-07-29T01:40:08.9468058Z ##[group]Determining the checkout info
+2026-07-29T01:40:08.9470297Z ##[endgroup]
+2026-07-29T01:40:08.9476498Z [command]/usr/bin/git sparse-checkout disable
+2026-07-29T01:40:08.9536323Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-07-29T01:40:08.9570484Z ##[group]Checking out the ref
+2026-07-29T01:40:08.9574703Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/30/merge
+2026-07-29T01:40:08.9740665Z Note: switching to 'refs/remotes/pull/30/merge'.
+2026-07-29T01:40:08.9741106Z 
+2026-07-29T01:40:08.9741348Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-07-29T01:40:08.9741844Z changes and commit them, and you can discard any commits you make in this
+2026-07-29T01:40:08.9742327Z state without impacting any branches by switching back to a branch.
+2026-07-29T01:40:08.9742643Z 
+2026-07-29T01:40:08.9742836Z If you want to create a new branch to retain commits you create, you may
+2026-07-29T01:40:08.9743258Z do so (now or later) by using -c with the switch command. Example:
+2026-07-29T01:40:08.9743496Z 
+2026-07-29T01:40:08.9743614Z   git switch -c <new-branch-name>
+2026-07-29T01:40:08.9743855Z 
+2026-07-29T01:40:08.9744018Z Or undo this operation with:
+2026-07-29T01:40:08.9744252Z 
+2026-07-29T01:40:08.9744396Z   git switch -
+2026-07-29T01:40:08.9744626Z 
+2026-07-29T01:40:08.9744928Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-07-29T01:40:08.9745541Z 
+2026-07-29T01:40:08.9746098Z HEAD is now at 1922b44 Merge bff4ff0fdade3fbc889bee5a440bb78a4195f264 into b39be414bd0957dd8574f7aa105e6a17842b92ab
+2026-07-29T01:40:08.9748955Z ##[endgroup]
+2026-07-29T01:40:08.9801279Z [command]/usr/bin/git log -1 --format=%H
+2026-07-29T01:40:08.9831735Z 1922b44284f62cd80982bec1ce9c1364eae55f97
+2026-07-29T01:40:09.0063615Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-29T01:40:09.0065562Z ##[group]Run actions/setup-dotnet@v4
+2026-07-29T01:40:09.0065838Z with:
+2026-07-29T01:40:09.0066046Z   dotnet-version: 8.0.x
+2026-07-29T01:40:09.0066282Z   cache: false
+2026-07-29T01:40:09.0066515Z ##[endgroup]
+2026-07-29T01:40:09.1538311Z (node:2626) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-07-29T01:40:09.1539421Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-07-29T01:40:09.1564525Z [command]/home/runner/work/_actions/actions/setup-dotnet/v4/externals/install-dotnet.sh --skip-non-versioned-files --runtime dotnet --channel LTS
+2026-07-29T01:40:09.4220389Z dotnet-install: .NET Core Runtime with version '10.0.10' is already installed.
+2026-07-29T01:40:09.4258665Z [command]/home/runner/work/_actions/actions/setup-dotnet/v4/externals/install-dotnet.sh --skip-non-versioned-files --channel 8.0
+2026-07-29T01:40:09.6751616Z dotnet-install: .NET Core SDK with version '8.0.423' is already installed.
+2026-07-29T01:40:09.6928591Z ##[group]Run dotnet restore
+2026-07-29T01:40:09.6928932Z [36;1mdotnet restore[0m
+2026-07-29T01:40:09.6984480Z shell: /usr/bin/bash -e {0}
+2026-07-29T01:40:09.6984992Z env:
+2026-07-29T01:40:09.6985225Z   DOTNET_ROOT: /usr/share/dotnet
+2026-07-29T01:40:09.6985696Z ##[endgroup]
+2026-07-29T01:40:16.2453947Z   Determining projects to restore...
+2026-07-29T01:40:27.1043912Z   Restored /home/runner/work/ednsv/ednsv/src/Ednsv.Web/Ednsv.Web.csproj (in 9.75 sec).
+2026-07-29T01:40:27.1056677Z   Restored /home/runner/work/ednsv/ednsv/src/Ednsv.Cli/Ednsv.Cli.csproj (in 9.75 sec).
+2026-07-29T01:40:27.1155682Z   Restored /home/runner/work/ednsv/ednsv/src/Ednsv.Core/Ednsv.Core.csproj (in 5 ms).
+2026-07-29T01:40:27.2427857Z   Restored /home/runner/work/ednsv/ednsv/tests/Ednsv.Core.Tests/Ednsv.Core.Tests.csproj (in 9.91 sec).
+2026-07-29T01:40:27.2448571Z   Restored /home/runner/work/ednsv/ednsv/tests/Ednsv.Web.Tests/Ednsv.Web.Tests.csproj (in 9.91 sec).
+2026-07-29T01:40:27.3120700Z ##[group]Run dotnet build --no-restore --configuration Release
+2026-07-29T01:40:27.3121242Z [36;1mdotnet build --no-restore --configuration Release[0m
+2026-07-29T01:40:27.3170914Z shell: /usr/bin/bash -e {0}
+2026-07-29T01:40:27.3171204Z env:
+2026-07-29T01:40:27.3171414Z   DOTNET_ROOT: /usr/share/dotnet
+2026-07-29T01:40:27.3171672Z ##[endgroup]
+2026-07-29T01:40:35.5678166Z   Ednsv.Core -> /home/runner/work/ednsv/ednsv/src/Ednsv.Core/bin/Release/net8.0/Ednsv.Core.dll
+2026-07-29T01:40:38.6319537Z   Ednsv.Core.Tests -> /home/runner/work/ednsv/ednsv/tests/Ednsv.Core.Tests/bin/Release/net8.0/Ednsv.Core.Tests.dll
+2026-07-29T01:40:39.2713168Z   Ednsv.Cli -> /home/runner/work/ednsv/ednsv/src/Ednsv.Cli/bin/Release/net8.0/Ednsv.Cli.dll
+2026-07-29T01:40:40.9456948Z   Ednsv.Web -> /home/runner/work/ednsv/ednsv/src/Ednsv.Web/bin/Release/net8.0/Ednsv.Web.dll
+2026-07-29T01:40:41.8408390Z   Ednsv.Web.Tests -> /home/runner/work/ednsv/ednsv/tests/Ednsv.Web.Tests/bin/Release/net8.0/Ednsv.Web.Tests.dll
+2026-07-29T01:40:41.9516184Z 
+2026-07-29T01:40:41.9529455Z Build succeeded.
+2026-07-29T01:40:41.9530104Z     0 Warning(s)
+2026-07-29T01:40:41.9530558Z     0 Error(s)
+2026-07-29T01:40:41.9530745Z 
+2026-07-29T01:40:41.9531089Z Time Elapsed 00:00:14.27
+2026-07-29T01:40:41.9984351Z ##[group]Run dotnet test --no-build --configuration Release --verbosity normal
+2026-07-29T01:40:41.9984922Z [36;1mdotnet test --no-build --configuration Release --verbosity normal[0m
+2026-07-29T01:40:42.0033293Z shell: /usr/bin/bash -e {0}
+2026-07-29T01:40:42.0033552Z env:
+2026-07-29T01:40:42.0033754Z   DOTNET_ROOT: /usr/share/dotnet
+2026-07-29T01:40:42.0034017Z   EDNSV_REQUIRE_REDIS: 1
+2026-07-29T01:40:42.0034247Z ##[endgroup]
+2026-07-29T01:40:42.4717291Z Build started 07/29/2026 01:40:42.
+2026-07-29T01:40:42.6820251Z      1>Project "/home/runner/work/ednsv/ednsv/ednsv.sln" on node 1 (VSTest target(s)).
+2026-07-29T01:40:42.6823386Z      1>ValidateSolutionConfiguration:
+2026-07-29T01:40:42.6824071Z          Building solution configuration "Release|Any CPU".
+2026-07-29T01:40:43.2246849Z Test run for /home/runner/work/ednsv/ednsv/tests/Ednsv.Web.Tests/bin/Release/net8.0/Ednsv.Web.Tests.dll (.NETCoreApp,Version=v8.0)
+2026-07-29T01:40:43.6874449Z Test run for /home/runner/work/ednsv/ednsv/tests/Ednsv.Core.Tests/bin/Release/net8.0/Ednsv.Core.Tests.dll (.NETCoreApp,Version=v8.0)
+2026-07-29T01:40:44.1512445Z A total of 1 test files matched the specified pattern.
+2026-07-29T01:40:44.1536692Z A total of 1 test files matched the specified pattern.
+2026-07-29T01:40:46.3638753Z [xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.4.5+1caef2f33e (64-bit .NET 8.0.29)
+2026-07-29T01:40:46.3664231Z [xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.4.5+1caef2f33e (64-bit .NET 8.0.29)
+2026-07-29T01:40:48.1974769Z [xUnit.net 00:00:01.85]   Discovering: Ednsv.Core.Tests
+2026-07-29T01:40:48.3764125Z [xUnit.net 00:00:02.03]   Discovered:  Ednsv.Core.Tests
+2026-07-29T01:40:48.3788003Z [xUnit.net 00:00:02.03]   Starting:    Ednsv.Core.Tests
+2026-07-29T01:40:48.5722303Z   Passed Ednsv.Core.Tests.ExpiringMapTests.WithoutATtlNothingExpires [83 ms]
+2026-07-29T01:40:48.5746636Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_IPv4_StillMasked [85 ms]
+2026-07-29T01:40:48.5750644Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_SameSelectorProducesSameHash [4 ms]
+2026-07-29T01:40:48.5759199Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimAndHostname_BothMaskedInSameMessage [< 1 ms]
+2026-07-29T01:40:48.5760877Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_DomainNotDoubleHashedByHostnamePass [< 1 ms]
+2026-07-29T01:40:48.5769564Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_NonPrivateHostnames_NotMasked [< 1 ms]
+2026-07-29T01:40:48.5770497Z   Passed Ednsv.Core.Tests.TraceMaskerTests.MaskResult_MasksAllStringFields [2 ms]
+2026-07-29T01:40:48.5771452Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_WithSubdomain [< 1 ms]
+2026-07-29T01:40:48.5772559Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_DifferentSelectorsProduceDifferentHashes [1 ms]
+2026-07-29T01:40:48.5773692Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_PreservesStructure [3 ms]
+2026-07-29T01:40:48.5774777Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_MultipleSelectorsInSameMessage [< 1 ms]
+2026-07-29T01:40:48.5776184Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelectorWithAlreadyMaskedDomain_StillMasksSelector [< 1 ms]
+2026-07-29T01:40:48.5777560Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_DomainHashMatchesStandaloneHostnameHash [< 1 ms]
+2026-07-29T01:40:48.5778594Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_Email_StillMasked [< 1 ms]
+2026-07-29T01:40:48.5779542Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_EmailBeforeHostname_DomainNotDoubleMasked [< 1 ms]
+2026-07-29T01:40:48.6257189Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_Hostname_StillMasked [< 1 ms]
+2026-07-29T01:40:48.6258124Z   Passed Ednsv.Core.Tests.TraceMaskerTests.Mask_DkimSelector_PreservesSurroundingText [< 1 ms]
+2026-07-29T01:40:48.6259187Z   Passed Ednsv.Core.Tests.BuildInfoTests.TheDisplayFormCarriesBothHalvesWhenThereIsARevision [3 ms]
+2026-07-29T01:40:48.6260131Z   Passed Ednsv.Core.Tests.BuildInfoTests.TheVersionIsAlwaysReported [2 ms]
+2026-07-29T01:40:48.6261399Z   Passed Ednsv.Core.Tests.BuildInfoTests.ARevisionIsEmbeddedByThisBuild [2 ms]
+2026-07-29T01:40:48.6262043Z   Passed Ednsv.Core.Tests.BuildInfoTests.TheShortCommitIsAPrefixOfTheFullOne [< 1 ms]
+2026-07-29T01:40:48.6540026Z   Passed Ednsv.Core.Tests.ExpiringMapTests.GetOrAddRebuildsAfterTheTtl [127 ms]
+2026-07-29T01:40:48.6541581Z   Passed Ednsv.Core.Tests.ExpiringMapTests.SetReplacesWhateverIsThere [< 1 ms]
+2026-07-29T01:40:48.6542885Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Unconfigured_IsDisabled(connString: "") [< 1 ms]
+2026-07-29T01:40:48.6544343Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Unconfigured_IsDisabled(connString: "   ") [< 1 ms]
+2026-07-29T01:40:48.6545712Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Unconfigured_IsDisabled(connString: null) [< 1 ms]
+2026-07-29T01:40:48.6546742Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Unconfigured_IsHealthy [< 1 ms]
+2026-07-29T01:40:48.6547694Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Key_UsesCustomInstanceNamespace [< 1 ms]
+2026-07-29T01:40:48.6757780Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Key_FallsBackToDefaultWhenInstanceNameBlank(instanceName: "   ") [< 1 ms]
+2026-07-29T01:40:48.6759271Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Key_FallsBackToDefaultWhenInstanceNameBlank(instanceName: "") [< 1 ms]
+2026-07-29T01:40:48.6760665Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Key_FallsBackToDefaultWhenInstanceNameBlank(instanceName: null) [< 1 ms]
+2026-07-29T01:40:48.6761895Z   Passed Ednsv.Core.Tests.RedisConnectionTests.AccessKey_WithoutPlaceholder_StillParses [< 1 ms]
+2026-07-29T01:40:48.6762951Z   Passed Ednsv.Core.Tests.RedisConnectionTests.Key_UsesDefaultInstanceNamespace [< 1 ms]
+2026-07-29T01:40:48.6799823Z   Passed Ednsv.Core.Tests.RedisConnectionTests.TryAcquireLock_Unconfigured_ReturnsNull [< 1 ms]
+2026-07-29T01:40:48.6801306Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "../../../etc/passwd") [61 ms]
+2026-07-29T01:40:48.6803199Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "ABCDEF12") [1 ms]
+2026-07-29T01:40:48.7121980Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "..%2Fconfig") [< 1 ms]
+2026-07-29T01:40:48.7126346Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "zzzzzzzz") [< 1 ms]
+2026-07-29T01:40:48.7128045Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "abc/def") [1 ms]
+2026-07-29T01:40:48.7129742Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetQuarantinedRaw_RejectsKeysThatAreNotContentHashes(key: "") [< 1 ms]
+2026-07-29T01:40:48.7131232Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_ValidConfigIsPreferredOverSeed [20 ms]
+2026-07-29T01:40:48.7132616Z   Passed Ednsv.Core.Tests.ConfigServiceTests.ReplaceRecordsRevisionWithUserNewestFirst [5 ms]
+2026-07-29T01:40:48.7133922Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetRevisionReturnsThatConfig [2 ms]
+2026-07-29T01:40:48.7135162Z   Passed Ednsv.Core.Tests.ConfigServiceTests.SeedsBaselineRevisionOnFirstLoad [1 ms]
+2026-07-29T01:40:48.7136793Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_ConfigParsingToNullIsTreatedAsCorrupt [2 ms]
+2026-07-29T01:40:48.7384770Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_RepeatedCorruptionOfSameContentQuarantinesOnce [6 ms]
+2026-07-29T01:40:48.7389228Z   Passed Ednsv.Core.Tests.ConfigServiceTests.QuarantineKeyIsStableAcrossLaterCorruptions [4 ms]
+2026-07-29T01:40:48.7391160Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_CorruptConfigRestoresNewestValidRevision [2 ms]
+2026-07-29T01:40:48.7392866Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_SweepsStaleTempFiles [1 ms]
+2026-07-29T01:40:48.7394341Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_CorruptConfigIsRepublishedSoPeersConverge [2 ms]
+2026-07-29T01:40:48.7396414Z   Passed Ednsv.Core.Tests.ConfigServiceTests.GetRevisionRaw_UnknownIdsReturnNull [1 ms]
+2026-07-29T01:40:48.7397970Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_EmptyConfigStillSeeds [1 ms]
+2026-07-29T01:40:48.7399625Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_QuarantineIsListedFirstAlongsideRealRevisions [2 ms]
+2026-07-29T01:40:48.7401031Z   Passed Ednsv.Core.Tests.ConfigServiceTests.HistoryPersistsAcrossReload [2 ms]
+2026-07-29T01:40:48.8547546Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AnExpiredValueCountsAsAbsentSoARefetchIsStored [120 ms]
+2026-07-29T01:40:48.8617120Z   Passed Ednsv.Core.Tests.RedisConnectionTests.TryAcquireLock_Unreachable_ReturnsNullPromptly [182 ms]
+2026-07-29T01:40:48.8636444Z   Passed Ednsv.Core.Tests.RedisConnectionTests.AccessKey_IsInjectedIntoConnectionStringPlaceholder [< 1 ms]
+2026-07-29T01:40:48.8662686Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.ServiceAccountPrefixApplied [7 ms]
+2026-07-29T01:40:48.8684849Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.UsernameFallbackChain [< 1 ms]
+2026-07-29T01:40:48.8690961Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.GroupsClaimVariant [< 1 ms]
+2026-07-29T01:40:48.8716243Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.ServiceAccountAppIdFallback [< 1 ms]
+2026-07-29T01:40:48.9220823Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.RootUsernameCollisionRejected(claimed: "ednsv") [1 ms]
+2026-07-29T01:40:48.9224042Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.RootUsernameCollisionRejected(claimed: "EDNSV") [< 1 ms]
+2026-07-29T01:40:48.9225827Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.MapsUsernameAndAdminRole [< 1 ms]
+2026-07-29T01:40:48.9227208Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.MissingUsernameFails [< 1 ms]
+2026-07-29T01:40:48.9228484Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.AdminRoleMatchIsCaseInsensitive [< 1 ms]
+2026-07-29T01:40:48.9229731Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.RequiredRolesEnforced [< 1 ms]
+2026-07-29T01:40:48.9230917Z   Passed Ednsv.Core.Tests.ExternalUserMapperTests.NonAdminWithoutAdminRole [< 1 ms]
+2026-07-29T01:40:48.9232551Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AnImportKeepsItsOwnExpiryRatherThanAFreshFullTtl [152 ms]
+2026-07-29T01:40:49.0881073Z   Passed Ednsv.Core.Tests.ExpiringMapTests.ExpiryIsEnforcedOnReadRatherThanWaitingForAPrune [120 ms]
+2026-07-29T01:40:49.0886464Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AMissingKeyIsSimplyAMiss [< 1 ms]
+2026-07-29T01:40:49.0916587Z   Passed Ednsv.Core.Tests.ExpiringMapTests.GetOrAddBuildsOnceAndThenServesTheCachedValue [< 1 ms]
+2026-07-29T01:40:49.0946360Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.WithoutATtlNothingExpiresAnywhere [497 ms]
+2026-07-29T01:40:49.0976390Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.NoServiceHoldsCachedResultsInAPlainDictionary [1 ms]
+2026-07-29T01:40:49.0977906Z   Passed Ednsv.Core.Tests.AuthServiceTests.Issue_RejectsDuplicateAndRootUsername [24 ms]
+2026-07-29T01:40:49.1177085Z   Passed Ednsv.Core.Tests.AuthServiceTests.Revoke_Elevated_CascadesToDescendants [5 ms]
+2026-07-29T01:40:49.1178617Z   Passed Ednsv.Core.Tests.AuthServiceTests.Disabled_When_HashIsNoneOrEmpty [< 1 ms]
+2026-07-29T01:40:49.1206461Z   Passed Ednsv.Core.Tests.AuthServiceTests.Hash_MatchesKnownVector [< 1 ms]
+2026-07-29T01:40:49.1228084Z   Passed Ednsv.Core.Tests.AuthServiceTests.ListVisibleTo_ReturnsDescendantsOnly [2 ms]
+2026-07-29T01:40:49.1266326Z   Passed Ednsv.Core.Tests.AuthServiceTests.Load_MigratesLegacyCanIssue_ToIsAdmin [11 ms]
+2026-07-29T01:40:49.1267716Z   Passed Ednsv.Core.Tests.AuthServiceTests.RootUser_AuthenticatesWithBasicAndBearer [< 1 ms]
+2026-07-29T01:40:49.1296532Z   Passed Ednsv.Core.Tests.AuthServiceTests.Revoke_Elevated_AllowsRevokingUnrelatedUserButNotRoot [1 ms]
+2026-07-29T01:40:49.1325669Z   Passed Ednsv.Core.Tests.AuthServiceTests.Issue_RejectsInvalidUsernames [< 1 ms]
+2026-07-29T01:40:49.1356269Z   Passed Ednsv.Core.Tests.AuthServiceTests.Delete_OnlyRoot_OnlyRevoked_CascadesAndRemoves [4 ms]
+2026-07-29T01:40:49.1358177Z   Passed Ednsv.Core.Tests.AuthServiceTests.Revoke_AncestorChain_AllowsIndirectAncestor [1 ms]
+2026-07-29T01:40:49.1372210Z   Passed Ednsv.Core.Tests.AuthServiceTests.Revoke_RequiresAncestorOrRoot [1 ms]
+2026-07-29T01:40:49.1415110Z   Passed Ednsv.Core.Tests.AuthServiceTests.Issue_CreatesUser_AndTokenAuthenticates [< 1 ms]
+2026-07-29T01:40:49.1426349Z   Passed Ednsv.Core.Tests.AuthServiceTests.Persistence_RoundTripsAcrossInstances [2 ms]
+2026-07-29T01:40:49.1456371Z   Passed Ednsv.Core.Tests.AuthServiceTests.Revoke_CascadesToDescendants [1 ms]
+2026-07-29T01:40:49.1457620Z   Passed Ednsv.Core.Tests.ConfigServiceTests.HistoryIsCappedAtMaxRevisions [383 ms]
+2026-07-29T01:40:49.1506655Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_CorruptConfigWithNoUsableHistoryFallsBackToSeed [2 ms]
+2026-07-29T01:40:49.1530021Z   Passed Ednsv.Core.Tests.ConfigServiceTests.RevisionsWithoutABodyFileAreNotListed [6 ms]
+2026-07-29T01:40:49.1586746Z   Passed Ednsv.Core.Tests.ConfigServiceTests.LoadOrSeed_CorruptConfigIsQuarantinedAndListedForInspection [12 ms]
+2026-07-29T01:40:49.1614261Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.ZoneTransferStillRunsWhenDirectDnsIsEnabled [24 ms]
+2026-07-29T01:40:49.1663100Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.AShortSoaMinimumIsStillHonoured [3 ms]
+2026-07-29T01:40:49.1686338Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.WithNoCapConfiguredNothingChanges [< 1 ms]
+2026-07-29T01:40:49.1723032Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.TheCacheTtlRemainsTheOuterCeiling [< 1 ms]
+2026-07-29T01:40:49.1724362Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.TheShippedDefaultIsTenMinutes [1 ms]
+2026-07-29T01:40:49.1756352Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.TheCapAppliesEvenWithGatingOff [< 1 ms]
+2026-07-29T01:40:49.1787439Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.ANegativeAnswerWithNoSoaTakesTheCapRatherThanTheCacheTtl [< 1 ms]
+2026-07-29T01:40:49.1807162Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.PositiveAnswersAreUntouchedByTheNegativeCap [< 1 ms]
+2026-07-29T01:40:49.1822516Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.TheFloorStillRaisesAVeryShortNegativeTtl [< 1 ms]
+2026-07-29T01:40:49.1836355Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.ALongSoaMinimumIsHeldToTheNegativeCap [< 1 ms]
+2026-07-29T01:40:49.1856439Z   Passed Ednsv.Core.Tests.NegativeTtlCapTests.ARecheckStillBypassesACappedNegativeEntry [< 1 ms]
+2026-07-29T01:40:49.1886593Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.ZoneTransferIsSkippedWhenDirectDnsIsDisabled [8 ms]
+2026-07-29T01:40:49.1917271Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AResponseThatPublishedNoTtlInheritsTheCacheTtl(floor: 60) [2 ms]
+2026-07-29T01:40:49.1928596Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AResponseThatPublishedNoTtlInheritsTheCacheTtl(floor: 300) [< 1 ms]
+2026-07-29T01:40:49.1932135Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.WithNoFloorEveryAnswerGetsTheCacheTtl(recordSeconds: 30) [< 1 ms]
+2026-07-29T01:40:49.1957597Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.WithNoFloorEveryAnswerGetsTheCacheTtl(recordSeconds: 0) [< 1 ms]
+2026-07-29T01:40:49.2000219Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.WithNoFloorEveryAnswerGetsTheCacheTtl(recordSeconds: 1800) [< 1 ms]
+2026-07-29T01:40:49.2021242Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.WithNoFloorEveryAnswerGetsTheCacheTtl(recordSeconds: 86400) [< 1 ms]
+2026-07-29T01:40:49.2046592Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AValueIsReadableUntilItExpires [120 ms]
+2026-07-29T01:40:49.2047968Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.WithTheWatchDisabledThereIsNoIndexEither [9 ms]
+2026-07-29T01:40:49.2049946Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "propagation", check: DnsPropagationCheck { Category = NS, Name = "DNS Propagation Consistency" }) [4 ms]
+2026-07-29T01:40:49.2052087Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "lame delegation", check: NsLameDelegationCheck { Category = NS, Name = "NS Lame Delegation" }) [2 ms]
+2026-07-29T01:40:49.2054429Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "SOA serial", check: SoaSerialConsistencyCheck { Category = SOA, Name = "SOA Serial Consistency" }) [3 ms]
+2026-07-29T01:40:49.2056554Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "glue records", check: NsGlueRecordCheck { Category = Delegation, Name = "NS Glue Records" }) [1 ms]
+2026-07-29T01:40:49.2058678Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "parent delegation", check: DelegationConsistencyCheck { Category = Delegation, Name = "Delegation Consistency" }) [3 ms]
+2026-07-29T01:40:49.2060827Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "open resolver", check: OpenRecursiveResolverCheck { Category = NS, Name = "Open Recursive Resolver Detection" }) [1 ms]
+2026-07-29T01:40:49.2062827Z   Passed Ednsv.Core.Tests.DirectDnsGatingTests.EveryDirectDnsCheckReportsItselfSkipped(label: "AXFR", check: ZoneTransferCheck { Category = ZoneTransfer, Name = "AXFR Exposure" }) [< 1 ms]
+2026-07-29T01:40:49.2221313Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.RemoveClearsBothTheCacheAndTheQueue [7 ms]
+2026-07-29T01:40:49.2224399Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.AnImportedEntryIsReadableButNotQueued [< 1 ms]
+2026-07-29T01:40:49.2226212Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.TransientResultsAreStillExcludedByShouldPersist [< 1 ms]
+2026-07-29T01:40:49.2227700Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.AStaleBagEntryCannotEvictANewerOne [< 1 ms]
+2026-07-29T01:40:49.2229225Z   Passed Ednsv.Core.Tests.ConfigRecoveryConcurrencyTests.ConcurrentPods_LeaveConfigJsonValidAndConverged [51 ms]
+2026-07-29T01:40:49.2230603Z   Passed Ednsv.Core.Tests.WriteBagTests.CommittingDrainsTheBag [2 ms]
+2026-07-29T01:40:49.2232691Z   Passed Ednsv.Core.Tests.WriteBagTests.AnEmptyBagCollectsNothing [< 1 ms]
+2026-07-29T01:40:49.2259580Z   Passed Ednsv.Core.Tests.WriteBagTests.CollectingWithoutCommittingLeavesTheEntryQueued [< 1 ms]
+2026-07-29T01:40:49.2274419Z   Passed Ednsv.Core.Tests.WriteBagTests.AnAddIsQueuedForTheNextFlush [< 1 ms]
+2026-07-29T01:40:49.2276006Z   Passed Ednsv.Core.Tests.WriteBagTests.EntriesCarryAnExpiryDerivedFromTheTtl [< 1 ms]
+2026-07-29T01:40:49.2279395Z   Passed Ednsv.Core.Tests.WriteBagTests.AValueTheSerialiserRejectsStaysQueuedRatherThanBeingLost [< 1 ms]
+2026-07-29T01:40:49.2291930Z   Passed Ednsv.Core.Tests.WriteBagTests.RemovingAKeyUnqueuesIt [< 1 ms]
+2026-07-29T01:40:49.2293377Z   Passed Ednsv.Core.Tests.WriteBagTests.AnIdenticalValueReplacedDuringAFlushAlsoSurvives [< 1 ms]
+2026-07-29T01:40:49.2295045Z   Passed Ednsv.Core.Tests.WriteBagTests.WithoutATtlEntriesNeverExpireOnTheirOwn [1 ms]
+2026-07-29T01:40:49.2297092Z   Passed Ednsv.Core.Tests.WriteBagTests.RemovingByPredicateUnqueuesTheMatches [< 1 ms]
+2026-07-29T01:40:49.2298570Z   Passed Ednsv.Core.Tests.WriteBagTests.AValueReplacedDuringAFlushSurvivesTheCommit [< 1 ms]
+2026-07-29T01:40:49.3567309Z   Passed Ednsv.Core.Tests.ConfigRecoveryConcurrencyTests.ConcurrentPods_DoNotDuplicateOrLoseRevisionHistory [20 ms]
+2026-07-29T01:40:49.3595750Z   Passed Ednsv.Core.Tests.ConfigRecoveryConcurrencyTests.ConcurrentPods_AllRecoverTheSameConfig [19 ms]
+2026-07-29T01:40:49.3597465Z   Passed Ednsv.Core.Tests.ConfigRecoveryConcurrencyTests.ConcurrentPods_QuarantineExactlyOneCopy [14 ms]
+2026-07-29T01:40:49.3599034Z   Passed Ednsv.Core.Tests.ConfigRecoveryConcurrencyTests.ConcurrentPods_WithNoHistoryAllSeedIdentically [13 ms]
+2026-07-29T01:40:49.3600776Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.ARejectedValueExpiresOnTheTransientWindowNotTheCacheTtl [666 ms]
+2026-07-29T01:40:49.3602688Z   Passed Ednsv.Core.Tests.CacheFlushConcurrencyTests.AValueWrittenWhileAFlushIsInFlightIsNeverDroppedByItsCommit [265 ms]
+2026-07-29T01:40:49.4223531Z   Passed Ednsv.Core.Tests.RedisTestPrerequisiteTests.RedisIsReachableWhereTheEnvironmentSaysItMustBe [93 ms]
+2026-07-29T01:40:49.4236852Z   Passed Ednsv.Core.Tests.WriteLeaseTests.UserIssueRefusesWhenTheLeaseCannotBeTaken [480 ms]
+2026-07-29T01:40:49.4238675Z   Passed Ednsv.Core.Tests.ExpiringMapTests.ExpiredEntriesStopBeingServedAndAreEventuallyReleased [162 ms]
+2026-07-29T01:40:49.4240353Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AnAlreadyExpiredEntryIsRefusedOutright [< 1 ms]
+2026-07-29T01:40:49.4241545Z   Passed Ednsv.Core.Tests.ExpiringMapTests.TupleKeysWorkAsThemselves [< 1 ms]
+2026-07-29T01:40:49.4242717Z   Passed Ednsv.Core.Tests.AtomicFileTests.WriteAllTextAsync_OverwritesExisting [489 ms]
+2026-07-29T01:40:49.4243989Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.PtrRecordsAreImportedAndCounted [177 ms]
+2026-07-29T01:40:49.4830301Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.TheFirstCheckNeverAsksForARewarm [970 ms]
+2026-07-29T01:40:49.4831688Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.TryGetSharedFallsBackToTheSharedTierAndPopulatesL1 [808 ms]
+2026-07-29T01:40:49.4834418Z   Passed Ednsv.Core.Tests.BeaconLossTests.AnUnreadableUsersFileNeverLetsAPodClobberAPeersRevocation [1 s]
+2026-07-29T01:40:49.4836812Z   Passed Ednsv.Core.Tests.BeaconLossTests.AFailedUsersReadDoesNotRecordThatVersionAsHeld [13 ms]
+2026-07-29T01:40:49.4841706Z   Passed Ednsv.Core.Tests.ExpiringMapTests.CountIsWhatIsHeldRatherThanWhatIsReadable [120 ms]
+2026-07-29T01:40:49.5566790Z   Passed Ednsv.Core.Tests.BeaconLossTests.AUserWriteRefusesRatherThanCommitOnAHeadItCouldNotVerify [29 ms]
+2026-07-29T01:40:49.5568397Z   Passed Ednsv.Core.Tests.BeaconLossTests.AConfigChangeIsSeenEvenIfTheBeaconNeverMoves [8 ms]
+2026-07-29T01:40:49.5569705Z   Passed Ednsv.Core.Tests.BeaconLossTests.AUserChangeIsSeenEvenIfTheBeaconNeverMoves [8 ms]
+2026-07-29T01:40:49.5571835Z   Passed Ednsv.Core.Tests.BeaconLossTests.AUsersHeadIsNotAdoptedWhenTheFileCannotBeRead [5 ms]
+2026-07-29T01:40:49.5573247Z   Passed Ednsv.Core.Tests.BeaconLossTests.AFailedConfigReadDoesNotRecordThatVersionAsHeld [5 ms]
+2026-07-29T01:40:49.5574731Z   Passed Ednsv.Core.Tests.BeaconLossTests.ALostUsersBeaconIsRepublishedFromDiskNotFromMemory [13 ms]
+2026-07-29T01:40:49.5576673Z   Passed Ednsv.Core.Tests.BeaconLossTests.AConfigHeadIsNotAdoptedWhenTheFileCannotBeRead [5 ms]
+2026-07-29T01:40:49.5578642Z   Passed Ednsv.Core.Tests.BeaconLossTests.ALostConfigBeaconIsRepublishedFromDiskNotFromMemory [12 ms]
+2026-07-29T01:40:49.5580017Z   Passed Ednsv.Core.Tests.DnsTtlGatingTests.AGenerousFloorRaisesAShortRecordTtl [188 ms]
+2026-07-29T01:40:49.5840819Z   Passed Ednsv.Core.Tests.CacheFlushConcurrencyTests.EveryFetchIsPersistedExactlyOnceAcrossConcurrentFlushes [91 ms]
+2026-07-29T01:40:49.5860216Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.RcptProbe_ConnectionFailure_NotCached [359 ms]
+2026-07-29T01:40:49.5861674Z   Passed Ednsv.Core.Tests.AtomicFileTests.ConcurrentAsyncWriters_TargetIsAlwaysOneCompletePayload [165 ms]
+2026-07-29T01:40:49.5863062Z   Passed Ednsv.Core.Tests.AtomicFileTests.WriteAllText_FailureDoesNotLeakTempFile [1 ms]
+2026-07-29T01:40:49.5864239Z   Passed Ednsv.Core.Tests.AtomicFileTests.SweepStaleTemps_MissingDirectoryIsNoOp [< 1 ms]
+2026-07-29T01:40:49.5865517Z   Passed Ednsv.Core.Tests.AtomicFileTests.SweepStaleTemps_IgnoresTempsBelongingToOtherFiles [< 1 ms]
+2026-07-29T01:40:49.5868148Z   Passed Ednsv.Core.Tests.AtomicFileTests.WriteAllText_WritesContentAndLeavesNoTemp [< 1 ms]
+2026-07-29T01:40:49.5869303Z   Passed Ednsv.Core.Tests.AtomicFileTests.SweepStaleTemps_RemovesOldTempsAndLegacyName [< 1 ms]
+2026-07-29T01:40:49.6143155Z   Passed Ednsv.Core.Tests.AtomicFileTests.SweepStaleTemps_LeavesTempsFromAnInFlightWrite [11 ms]
+2026-07-29T01:40:49.6144375Z   Passed Ednsv.Core.Tests.AtomicFileTests.DeleteAllTemps_RemovesRegardlessOfAge [< 1 ms]
+2026-07-29T01:40:49.6145573Z   Passed Ednsv.Core.Tests.DiskCacheTests.DnsCache_RoundTrip_RestoresEntries [324 ms]
+2026-07-29T01:40:49.6146547Z   Passed Ednsv.Core.Tests.DiskCacheTests.LoadAsync_MissingDirectory_ReturnsNull [2 ms]
+2026-07-29T01:40:49.6147662Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AddOrUpdateStartsOverWhenTheEntryHasExpired [121 ms]
+2026-07-29T01:40:49.6148861Z   Passed Ednsv.Core.Tests.ExpiringMapTests.ConcurrentWritersAgreeOnOneWinnerPerKey [8 ms]
+2026-07-29T01:40:49.6150743Z   Passed Ednsv.Core.Tests.ExpiringMapTests.ALiveValueIsNotOverwrittenByTryAdd [< 1 ms]
+2026-07-29T01:40:49.6553721Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AddOrUpdateAddsThenUpdates [< 1 ms]
+2026-07-29T01:40:49.6578654Z   Passed Ednsv.Core.Tests.RecheckBypassTests.AFreshRcptVerdictReplacesTheOneTheBypassSkipped [713 ms]
+2026-07-29T01:40:49.6580255Z   Passed Ednsv.Core.Tests.RecheckBypassTests.OnlyZoneTransferPullsInTheAxfrFlag [1 ms]
+2026-07-29T01:40:49.6583246Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepAppliesToThisInstancesOwnFilesToo [147 ms]
+2026-07-29T01:40:49.6585922Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.DomainSummariesExpire [542 ms]
+2026-07-29T01:40:49.6587510Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.TryGetSharedMissesBothTiersUnderARecheck [194 ms]
+2026-07-29T01:40:49.6863430Z   Passed Ednsv.Core.Tests.WriteLeaseTests.UserDeleteRefusesWhenTheLeaseCannotBeTaken [313 ms]
+2026-07-29T01:40:49.6868283Z   Passed Ednsv.Core.Tests.WriteLeaseTests.ConfigWritesStillWorkWithoutRedis [2 ms]
+2026-07-29T01:40:49.6894851Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingSmtpRefetchesTheRelayVerdict [36 ms]
+2026-07-29T01:40:49.6896856Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AFlushThatThrowsLeavesTheBagIntactForTheNextOne [28 ms]
+2026-07-29T01:40:49.6898859Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepRemovesAnEmptyForeignFolderOnceItHasAgedPastTheTtl [2 ms]
+2026-07-29T01:40:49.6900967Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepNeverRemovesThisInstancesOwnFolderEvenWhenEmptyAndOld [1 ms]
+2026-07-29T01:40:49.7377246Z   Passed Ednsv.Core.Tests.DnsTtlGatingTests.WithAFloorSetTheEntryIsBoundedByTheZonesRecordTtls [120 ms]
+2026-07-29T01:40:49.7386568Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.SmtpProbe_DefinitiveFailure_IsCached [133 ms]
+2026-07-29T01:40:49.7407925Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.AnL2HitIsCachedInMemoryButNotQueuedForPersistence [65 ms]
+2026-07-29T01:40:49.7433466Z   Passed Ednsv.Core.Tests.AtomicFileTests.ConcurrentWriters_TargetIsAlwaysOneCompletePayload [138 ms]
+2026-07-29T01:40:49.7439736Z   Passed Ednsv.Core.Tests.DiskCacheTests.HttpCache_RoundTrip_RestoresEntries [133 ms]
+2026-07-29T01:40:49.7441238Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.APerEntryTtlAlsoExpiresTheMemoryCopy [512 ms]
+2026-07-29T01:40:49.7479040Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ImportRefusesAnEntryAlreadyPastItsExpiry [< 1 ms]
+2026-07-29T01:40:49.7480700Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.CollectedRecordsCarryTheFetchTimeAndTheEntrysExpiry [1 ms]
+2026-07-29T01:40:49.7482699Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ImportWithAnExpiryIsAlsoMemoryOnly [< 1 ms]
+2026-07-29T01:40:49.7502886Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.NoPerEntryTtlLeavesTheCacheWideOneGoverning [2 ms]
+2026-07-29T01:40:49.7504722Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ImportDoesNotClobberAValueAlreadyFetched [< 1 ms]
+2026-07-29T01:40:49.7506810Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ImportDoesNotClobberAFetchStillInFlight [< 1 ms]
+2026-07-29T01:40:49.7509418Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.APerEntryTtlBoundsBothTheCacheAndTheDiskRecord [1 ms]
+2026-07-29T01:40:49.7566314Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.AFreshFetchIsQueuedForPersistence [< 1 ms]
+2026-07-29T01:40:49.7596652Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheLaterFetchWinsRegardlessOfWhichFileItIsIn [48 ms]
+2026-07-29T01:40:49.7897362Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AZeroTtlKeepsFilesInsideTheRetentionFloor [3 ms]
+2026-07-29T01:40:49.7936744Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.WarmingTheL2UsesTheEntrysRemainingLifeNotAFullTtl [32 ms]
+2026-07-29T01:40:49.7938182Z   Passed Ednsv.Core.Tests.DnsTtlGatingTests.TheCacheTtlRemainsTheCeilingEvenWithAnAbsurdFloor [54 ms]
+2026-07-29T01:40:49.7939339Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.HttpGet_SameUrl_ReturnsCachedResult [63 ms]
+2026-07-29T01:40:49.7940485Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.ASecondFlushWithNothingNewWritesNothing [21 ms]
+2026-07-29T01:40:49.7942050Z   Passed Ednsv.Core.Tests.DiskCacheTests.PtrCache_RoundTrip_RestoresEntries [58 ms]
+2026-07-29T01:40:49.8198593Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AnUnparseableLineIsSkippedAndTheRestOfTheFileLoads [13 ms]
+2026-07-29T01:40:49.8206762Z   Passed Ednsv.Core.Tests.DnsTtlGatingTests.ByDefaultAnEntryIsBoundedOnlyByTheCacheTtl [33 ms]
+2026-07-29T01:40:49.8209979Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.ImportedEntriesInThePlainDictionaryCachesAreNotWrittenBack [11 ms]
+2026-07-29T01:40:49.8257960Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepLeavesAFolderThatStillHasLiveFiles [2 ms]
+2026-07-29T01:40:49.8318722Z   Passed Ednsv.Core.Tests.ExpiringMapTests.AWriteRefreshesTheExpiry [202 ms]
+2026-07-29T01:40:49.8327426Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.AnImportWarmsTheL2EvenWhenL1AlreadyHasTheKey [56 ms]
+2026-07-29T01:40:49.8386554Z   Passed Ednsv.Core.Tests.ExpiringMapTests.ConcurrentIncrementsAreNotLost [1 ms]
+2026-07-29T01:40:49.8407783Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.DnsQuery_DifferentTypes_AreCachedSeparately [41 ms]
+2026-07-29T01:40:49.8410343Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.CrlfLineEndingsAreRead [12 ms]
+2026-07-29T01:40:49.8458534Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.APlainSetIsWrittenThroughToTheSharedTier [14 ms]
+2026-07-29T01:40:49.8472190Z   Passed Ednsv.Core.Tests.RecheckBypassTests.ARefetchedVerdictIsQueuedForDiskAsWellAsMemory [155 ms]
+2026-07-29T01:40:49.8498278Z   Passed Ednsv.Core.Tests.DiskCacheTests.SaveAsync_WritesEveryCacheTypeIntoOneFile [49 ms]
+2026-07-29T01:40:49.8666735Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.FilesFromEveryInstanceAreMerged [12 ms]
+2026-07-29T01:40:49.8686771Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepRemovesStaleTempsLeftByAKilledWriter [2 ms]
+2026-07-29T01:40:49.8711041Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepLeavesFilesItDidNotWrite [4 ms]
+2026-07-29T01:40:49.8738015Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AFlushWritesOneFileIntoThisInstancesFolder [7 ms]
+2026-07-29T01:40:49.8759745Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.DnsQuery_SameDomainAndType_ReturnsCachedResult [42 ms]
+2026-07-29T01:40:49.8775999Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.APlainSetCarriesTheEntryTtlToTheSharedTier [28 ms]
+2026-07-29T01:40:49.9114359Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.PortProbe_DefinitiveClosedPort_IsCached [16 ms]
+2026-07-29T01:40:49.9116822Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AZeroTtlBoundsHowManyFilesAccumulate [29 ms]
+2026-07-29T01:40:49.9118251Z   Passed Ednsv.Core.Tests.DiskCacheTests.RetryErrors_KeepsSuccessfulEntries [53 ms]
+2026-07-29T01:40:49.9119386Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AZeroTtlStillSweepsAtTheRetentionFloor [2 ms]
+2026-07-29T01:40:49.9120740Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AFlushRecreatesItsFolderIfSomethingRemovedIt [4 ms]
+2026-07-29T01:40:49.9122056Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.ARecordOfAnUnknownTypeIsIgnored [6 ms]
+2026-07-29T01:40:49.9123221Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.DnsblQuery_ErrorNotCached_RetriesOnNextCall [33 ms]
+2026-07-29T01:40:49.9437865Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.DomainResultsRoundTripThroughTheBag [10 ms]
+2026-07-29T01:40:49.9440946Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.NothingQueuedWritesNoFile [2 ms]
+2026-07-29T01:40:49.9442142Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.DnsQuery_CaseInsensitive [11 ms]
+2026-07-29T01:40:49.9446041Z   Passed Ednsv.Core.Tests.L2LifetimeTests.TheCoordinationKeysAreLeftPersistentSoNothingCanEvictThem [1 s]
+2026-07-29T01:40:49.9447656Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.PtrLookup_ReturnsCachedResult [10 ms]
+2026-07-29T01:40:49.9449303Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.FieldsAddedByALaterVersionAreSkippedRatherThanFailingTheLine [12 ms]
+2026-07-29T01:40:49.9450988Z   Passed Ednsv.Core.Tests.DiskCacheTests.SaveAndLoad_SuccessfulCacheTypes_CountsMatch [53 ms]
+2026-07-29T01:40:49.9822666Z [xUnit.net 00:00:03.63]   Discovering: Ednsv.Web.Tests
+2026-07-29T01:40:50.0301173Z [xUnit.net 00:00:03.68]   Discovered:  Ednsv.Web.Tests
+2026-07-29T01:40:50.0327267Z [xUnit.net 00:00:03.68]   Starting:    Ednsv.Web.Tests
+2026-07-29T01:40:50.0946843Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AnEntryAddedDuringAFlushSurvivesTheDrain [8 ms]
+2026-07-29T01:40:50.0948713Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.DnsQuery_AfterFirstQuery_SubsequentConcurrentCallsHitCache [20 ms]
+2026-07-29T01:40:50.0950313Z   Passed Ednsv.Core.Tests.DiskCacheTests.LoadAsync_EntriesOlderThanTheTtl_FilteredOut [15 ms]
+2026-07-29T01:40:50.0951620Z   Passed Ednsv.Core.Tests.InMemoryCacheTests.HttpGetWithHeaders_SameUrl_ReturnsCachedResult [27 ms]
+2026-07-29T01:40:50.0952962Z   Passed Ednsv.Core.Tests.DiskCacheTests.SaveAsync_MergesWithExistingEntries [37 ms]
+2026-07-29T01:40:50.0954124Z   Passed Ednsv.Core.Tests.DiskCacheTests.LoadAsync_CorruptFile_ReturnsNull [8 ms]
+2026-07-29T01:40:50.0955648Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheFlusherStillSweepsWhenExpiryIsDisabled [61 ms]
+2026-07-29T01:40:50.0957159Z   Passed Ednsv.Core.Tests.DiskCacheTests.LoadAsync_ZeroTtl_MeansNoCapNotEverythingExpired [31 ms]
+2026-07-29T01:40:50.0960247Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.WarmingTheL2DoesNotOverwriteAFresherValue [226 ms]
+2026-07-29T01:40:50.1364263Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.AnImportDoesNotGetAFreshFullTtl [453 ms]
+2026-07-29T01:40:50.1367762Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.AnImportPastItsExpiryIsRefusedRatherThanResurrected [6 ms]
+2026-07-29T01:40:50.1369065Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.ImportingFromDiskWarmsTheSharedL2 [21 ms]
+2026-07-29T01:40:50.1370075Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheFlusherSweepsEvenWithNothingToWrite [113 ms]
+2026-07-29T01:40:50.1371158Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.ALineMissingItsTypeOrKeyIsSkipped [8 ms]
+2026-07-29T01:40:50.1372306Z   Passed Ednsv.Core.Tests.WriteLeaseTests.UserRevokeRefusesWhenTheLeaseCannotBeTaken [460 ms]
+2026-07-29T01:40:50.1794363Z   Passed Ednsv.Core.Tests.LiveRedisL2Tests.AnL2MissStillQueuesTheNetworkResult [23 ms]
+2026-07-29T01:40:50.1795985Z   Passed Ednsv.Core.Tests.L2LifetimeTests.AnUnboundedRemainingLifeIsCappedAtWhatAFreshWriteWouldGet [214 ms]
+2026-07-29T01:40:50.1797388Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.ARecordFileBeatsALegacyFileForTheSameKey [16 ms]
+2026-07-29T01:40:50.1798612Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AWarmDoesNotOverwriteWhatIsAlreadyThere [988 ms]
+2026-07-29T01:40:50.1799923Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingServerDnsRetriesAServerMarkedUnreachable [327 ms]
+2026-07-29T01:40:50.1801294Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingAxfrRetriesTheTransferInsteadOfServingTheVerdict [14 ms]
+2026-07-29T01:40:50.2079020Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.FromConfig_ReturnsNull_WhenUnset(secret: null) [2 ms]
+2026-07-29T01:40:50.2080612Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.FromConfig_ReturnsNull_WhenUnset(secret: "") [< 1 ms]
+2026-07-29T01:40:50.2082099Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.RemoveUnencryptedKeys_DeletesPlaintextKeepsEncrypted [30 ms]
+2026-07-29T01:40:50.2083491Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.Decrypt_TamperedCiphertext_Fails [44 ms]
+2026-07-29T01:40:50.2084646Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.FromConfig_Throws_WhenTooShort [< 1 ms]
+2026-07-29T01:40:50.2086261Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.RemoveStaleKeys_DeletesLongExpired_KeepsRecentActiveAndUndated [6 ms]
+2026-07-29T01:40:50.2649964Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ValueCache_ImportDoesNotClobberOrResurrect [505 ms]
+2026-07-29T01:40:50.2660047Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.BagEntryEqualityIsReferenceIdentity [< 1 ms]
+2026-07-29T01:40:50.2666316Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ValueCache_FreshFetchQueuedAndImportIsNot [3 ms]
+2026-07-29T01:40:50.2667882Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ReadingAnImportedEntryDoesNotQueueIt [< 1 ms]
+2026-07-29T01:40:50.2669063Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.CountTracksWhatIsCachedNotWhatIsQueued [1 ms]
+2026-07-29T01:40:50.2670258Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ATtlDelegateThatThrowsFallsBackToTheCacheTtl [1 ms]
+2026-07-29T01:40:50.2671366Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheFlusherSweepsOnItsTimer [111 ms]
+2026-07-29T01:40:50.2672859Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingRcptRefetchesInsteadOfServingTheCachedVerdict [87 ms]
+2026-07-29T01:40:50.3536556Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheEnvelopeIsFoundWhateverOrderTheFieldsAreIn [8 ms]
+2026-07-29T01:40:50.3537860Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.TheReadersTtlBoundsARecordThatCarriesNoExpiryOfItsOwn [5 ms]
+2026-07-29T01:40:50.3539072Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.SweepDeletesRecordFilesByTheirFilenameTimestamp [2 ms]
+2026-07-29T01:40:50.3540584Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.EachFlushWritesANewFileAndNeverRewritesAnOldOne [4 ms]
+2026-07-29T01:40:50.3546748Z   Passed Ednsv.Core.Tests.DiskCacheRecordFileTests.AnExpiredRecordIsDropped [5 ms]
+2026-07-29T01:40:50.3606737Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.AFailedLookupIsReportedAsAFailureAndNotCached [1 s]
+2026-07-29T01:40:50.3637570Z   Passed Ednsv.Core.Tests.RecheckBypassTests.AFreshRelayVerdictReplacesTheOneTheBypassSkipped [89 ms]
+2026-07-29T01:40:50.3697331Z   Passed Ednsv.Core.Tests.RecheckBypassTests.ZoneTransferDeclaresTheAxfrFlag [< 1 ms]
+2026-07-29T01:40:50.3729304Z   Passed Ednsv.Core.Tests.RecheckBypassTests.AFailedTransferDoesNotOverwriteTheVerdictItCouldNotCheck [7 ms]
+2026-07-29T01:40:50.3731085Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheInitialTtlIsUsedSoAgeingDoesNotShortenTheEntry [1 s]
+2026-07-29T01:40:50.3732610Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AnAuthoritySectionWithNoSoaHasNoNegativeTtl [< 1 ms]
+2026-07-29T01:40:50.3734765Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 60, floor: 60, expected: 60) [< 1 ms]
+2026-07-29T01:40:50.3737053Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 7200, floor: 60, expected: 7200) [< 1 ms]
+2026-07-29T01:40:50.3739049Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 86400, floor: 300, expected: 7200) [< 1 ms]
+2026-07-29T01:40:50.3741045Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 30, floor: 300, expected: 300) [< 1 ms]
+2026-07-29T01:40:50.3743033Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 1800, floor: 60, expected: 1800) [< 1 ms]
+2026-07-29T01:40:50.3744393Z SKIPPED: cannot bind 127.0.0.1:53
+2026-07-29T01:40:50.3745864Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 1800, floor: 300, expected: 1800) [< 1 ms]
+2026-07-29T01:40:50.3747914Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 86400, floor: 60, expected: 7200) [< 1 ms]
+2026-07-29T01:40:50.3749874Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 0, floor: 60, expected: 60) [< 1 ms]
+2026-07-29T01:40:50.3751793Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheRecordTtlIsClampedBetweenTheFloorAndTheCap(record: 30, floor: 60, expected: 60) [< 1 ms]
+2026-07-29T01:40:50.3753710Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingAxfrDoesNotSkipSelectorDiscoveryOnAStaleDenial [2 ms]
+2026-07-29T01:40:50.3755552Z   Passed Ednsv.Core.Tests.RecheckBypassTests.RecheckingSomethingElseLeavesTheRcptVerdictAlone [< 1 ms]
+2026-07-29T01:40:50.3757096Z   Passed Ednsv.Core.Tests.RecheckBypassTests.WithoutARecheckACachedRcptVerdictIsServed [< 1 ms]
+2026-07-29T01:40:50.3758496Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeTtlIsClampedLikeAnyOtherPublishedTtl [2 ms]
+2026-07-29T01:40:50.3760622Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeAnswerTakesTheLesserOfTheSoaTtlAndItsMinimum(soaTtl: 900, minimum: 3600, expected: 900) [< 1 ms]
+2026-07-29T01:40:50.3762942Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeAnswerTakesTheLesserOfTheSoaTtlAndItsMinimum(soaTtl: 1800, minimum: 1800, expected: 1800) [< 1 ms]
+2026-07-29T01:40:50.3765654Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeAnswerTakesTheLesserOfTheSoaTtlAndItsMinimum(soaTtl: 0, minimum: 900, expected: 0) [< 1 ms]
+2026-07-29T01:40:50.3767759Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeAnswerTakesTheLesserOfTheSoaTtlAndItsMinimum(soaTtl: 3600, minimum: 900, expected: 900) [< 1 ms]
+2026-07-29T01:40:50.3769552Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.WithNoCapTheFloorAndRecordTtlGovernAlone [< 1 ms]
+2026-07-29T01:40:50.3770776Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheShortestSoaWins [< 1 ms]
+2026-07-29T01:40:50.3772166Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AFloorAboveTheCapIsStillCappedSoNothingOutlivesItsFile [< 1 ms]
+2026-07-29T01:40:50.3773732Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheMinimumTtlAcrossTheAnswerSectionIsUsed [< 1 ms]
+2026-07-29T01:40:50.3775099Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AnEmptyAnswerSectionHasNoMinimum [< 1 ms]
+2026-07-29T01:40:50.3776610Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.AZeroTtlRecordIsReadAsZeroNotAsAbsent [< 1 ms]
+2026-07-29T01:40:50.3836889Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:50.3839739Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:50.3842229Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:50.4111077Z 2026-07-29 01:40:50.408 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-ce685cb7c9404657af0f3316826f4265/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.4112778Z 2026-07-29 01:40:50.407 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-29adf81c2a224f689ce0f1ff28197b57/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.4120098Z 2026-07-29 01:40:50.406 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-bgload-2a9b588d043b4d3fb9e8e198e79714f7/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:50.4122104Z 2026-07-29 01:40:50.407 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-a4142ec401fa4e49b69ba91d0e642f84/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.4133769Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.4139381Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] Authentication enabled — token auth: off, OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-29adf81c2a224f689ce0f1ff28197b57/auth
+2026-07-29T01:40:50.4142920Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:50.4145208Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.4147866Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-a4142ec401fa4e49b69ba91d0e642f84/auth
+2026-07-29T01:40:50.4151231Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:50.4153967Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.4156733Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-ce685cb7c9404657af0f3316826f4265/auth
+2026-07-29T01:40:50.4159730Z 2026-07-29 01:40:50.412 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:50.4164538Z 2026-07-29 01:40:50.413 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.4166690Z 2026-07-29 01:40:50.413 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-bgload-2a9b588d043b4d3fb9e8e198e79714f7/auth
+2026-07-29T01:40:50.4369158Z 2026-07-29 01:40:50.436 info: Ednsv.Web[0] Loaded cache (1 entries, 0m old): 0 DNS, 0 SMTP, 0 RCPT, 0 HTTP, 1 PTR, 0 port
+2026-07-29T01:40:50.4575290Z 2026-07-29 01:40:50.456 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {10add133-cdd3-4648-8fad-e9d015fe5e45} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:50.4578780Z 2026-07-29 01:40:50.456 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {abb3116b-6fe2-4e9d-83ff-cca4eff61a48} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:50.4599751Z 2026-07-29 01:40:50.456 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {f6644419-c622-453b-a4e8-49c55e4fb763} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:50.5179485Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.Encrypt_ProducesDifferentCiphertextEachTime [14 ms]
+2026-07-29T01:40:50.5222796Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.EncryptDecrypt_RoundTrips [< 1 ms]
+2026-07-29T01:40:50.5227670Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.RealDataProtection_UnprotectAfterRestart_UsesAmbientDecryptor [64 ms]
+2026-07-29T01:40:50.5263065Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.RemoveStaleKeys_MalformedAndMissingDir_AreNoOps [34 ms]
+2026-07-29T01:40:50.5264485Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.Decrypt_WithWrongSecret_Fails [< 1 ms]
+2026-07-29T01:40:50.5266178Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.Decryptor_ParameterlessCtor_RoundTripsViaAmbientSecret [< 1 ms]
+2026-07-29T01:40:50.5267823Z   Passed Ednsv.Web.Tests.DataProtectionSecretTests.RemoveUnencryptedKeys_IgnoresNonKeyMalformedAndMissingDir [1 ms]
+2026-07-29T01:40:50.5447536Z 2026-07-29 01:40:50.540 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-shutdown-854f5ff180294355889990b4301914f3/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:50.5449445Z 2026-07-29 01:40:50.541 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.5451862Z 2026-07-29 01:40:50.541 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-shutdown-854f5ff180294355889990b4301914f3/auth
+2026-07-29T01:40:50.5508572Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:50.5577148Z 2026-07-29 01:40:50.552 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-bd9090c035fa4adf9ec0e6ff189a4ed8/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.5578810Z 2026-07-29 01:40:50.552 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.5581489Z 2026-07-29 01:40:50.552 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-bd9090c035fa4adf9ec0e6ff189a4ed8/auth
+2026-07-29T01:40:50.5584187Z 2026-07-29 01:40:50.552 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:50.5586931Z 2026-07-29 01:40:50.554 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {4fc54edf-fbcc-41bb-9fc7-f39aa919ac97} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:50.6852623Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.ANegativeFloorIsTreatedAsOffRatherThanAsATtl [< 1 ms]
+2026-07-29T01:40:50.6858680Z   Passed Ednsv.Core.Tests.DnsCacheTtlTests.TheAnswerSectionIsPreferredOverTheAuthoritySection [< 1 ms]
+2026-07-29T01:40:50.6872087Z   Passed Ednsv.Core.Tests.L2LifetimeTests.AnL2HitDoesNotRestartTheClockInL1 [325 ms]
+2026-07-29T01:40:50.6873872Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.RcptProbesExpire [450 ms]
+2026-07-29T01:40:50.6875156Z   Passed Ednsv.Core.Tests.WriteLeaseTests.RejectedWritesAreRefusedBeforeTheyTouchDisk [458 ms]
+2026-07-29T01:40:50.6876849Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AWarmDoesNotPublishWhatShouldPersistRejected [522 ms]
+2026-07-29T01:40:50.8341778Z 2026-07-29 01:40:50.825 info: Ednsv.Audit[0] => SpanId:3ea5d3f2308956df, TraceId:1ec18877a527e36ce2359d7724e86ed6, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR504 => RequestId=0HNND29LQR504 Method=PUT Path=/api/config => Username=clear-user@contoso.com IsAdmin=True Config updated by=clear-user@contoso.com (revision saved)
+2026-07-29T01:40:50.8777782Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:50.8807100Z 2026-07-29 01:40:50.875 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-449bc0a51d824ff0b49bb33728732a8d/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.8836675Z 2026-07-29 01:40:50.875 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.8844826Z 2026-07-29 01:40:50.875 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-449bc0a51d824ff0b49bb33728732a8d/auth
+2026-07-29T01:40:50.8876755Z 2026-07-29 01:40:50.878 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-0990a433cdbd4f58a40f1e7a7d72f466/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:50.8893528Z 2026-07-29 01:40:50.878 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:50.8908488Z 2026-07-29 01:40:50.878 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: on (https://idp.test/tenant/v2.0). Auth data: /tmp/ednsv-web-test-0990a433cdbd4f58a40f1e7a7d72f466/auth
+2026-07-29T01:40:50.8937739Z 2026-07-29 01:40:50.882 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {4979a3db-544e-448e-94cc-f312f96771f9} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:50.8943727Z 2026-07-29 01:40:50.883 info: Ednsv.Audit[0] => SpanId:a4c1ec8ece9de756, TraceId:910e600fb2f2c182a2049da3e816506a, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR506 => RequestId=0HNND29LQR506 Method=POST Path=/api/auth/users => Username=hxNIG3-Ljy IsAdmin=True Token issued: user=UdzlENZX0M admin=False by=hxNIG3-Ljy ip=(null)
+2026-07-29T01:40:51.0141718Z 2026-07-29 01:40:51.012 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.0146226Z 2026-07-29 01:40:51.013 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.0641132Z 2026-07-29 01:40:51.061 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.0667552Z 2026-07-29 01:40:51.062 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.0668861Z 2026-07-29 01:40:51.064 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.1126755Z 2026-07-29 01:40:51.106 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-bgload-50bdeec4c250457da47a239658fd80cd/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:51.1185554Z 2026-07-29 01:40:51.106 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.1200423Z 2026-07-29 01:40:51.106 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-bgload-50bdeec4c250457da47a239658fd80cd/auth
+2026-07-29T01:40:51.1240621Z 2026-07-29 01:40:51.117 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-633c6133517d489ba0e558af0387909b/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:51.1264949Z 2026-07-29 01:40:51.117 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.1302231Z 2026-07-29 01:40:51.117 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-633c6133517d489ba0e558af0387909b/auth
+2026-07-29T01:40:51.1310909Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.Lease_ExpiresSoADeadHolderCannotBlockForever [1 s]
+2026-07-29T01:40:51.1312629Z   Passed Ednsv.Core.Tests.ProbeCacheBagTests.ImportExpiresAtTheEntrysOwnTimeNotAFreshTtl [501 ms]
+2026-07-29T01:40:51.1356466Z   Passed Ednsv.Core.Tests.L2LifetimeTests.ASharedKeyWithNoExpiryLeavesOurOwnTtlGoverning [320 ms]
+2026-07-29T01:40:51.1366457Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.AnAcceptedValueStillTakesTheCacheTtl [602 ms]
+2026-07-29T01:40:51.1396607Z   Passed Ednsv.Core.Tests.WriteLeaseTests.ConfigWriteRefusesWhenTheLeaseCannotBeTaken [460 ms]
+2026-07-29T01:40:51.1402012Z   Passed Ednsv.Core.Tests.WriteLeaseTests.UserWritesStillWorkWithoutRedis [1 ms]
+2026-07-29T01:40:51.1426732Z   Passed Ednsv.Core.Tests.L2LifetimeTests.WithNoConfiguredTtlAnL2HitTakesTheSharedKeysRemainingLife [328 ms]
+2026-07-29T01:40:51.1456640Z   Passed Ednsv.Web.Tests.ShutdownFlushTests.ShutdownWritesTheCacheToDisk [561 ms]
+2026-07-29T01:40:51.1466542Z   Passed Ednsv.Web.Tests.BackgroundCacheLoadTests.TheCacheIsLoadedAfterTheAppStartsServing [726 ms]
+2026-07-29T01:40:51.1467686Z   Passed Ednsv.Web.Tests.OidcFlowTests.LogoutClearsSsoSession [509 ms]
+2026-07-29T01:40:51.1496574Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.SessionCookieWithRootUsernameIsRejected [940 ms]
+2026-07-29T01:40:51.1530075Z 2026-07-29 01:40:51.121 info: Ednsv.Web[0] Loaded cache (1 entries, 0m old): 0 DNS, 0 SMTP, 0 RCPT, 0 HTTP, 1 PTR, 0 port
+2026-07-29T01:40:51.1558290Z 2026-07-29 01:40:51.129 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-3b9960266fec499399be6c4caeec6ac3/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.1586512Z 2026-07-29 01:40:51.129 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.1610559Z 2026-07-29 01:40:51.129 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-3b9960266fec499399be6c4caeec6ac3/auth
+2026-07-29T01:40:51.1637188Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.1646578Z 2026-07-29 01:40:51.163 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-91bcce77b8e843cca2bda038ca151b6d/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.1686808Z 2026-07-29 01:40:51.163 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.1697923Z 2026-07-29 01:40:51.163 info: Ednsv.Web[0] Authentication enabled — token auth: off, OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-91bcce77b8e843cca2bda038ca151b6d/auth
+2026-07-29T01:40:51.1728370Z 2026-07-29 01:40:51.163 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:51.1748580Z 2026-07-29 01:40:51.165 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {d0988f0a-9016-4ce8-88af-1f0733d02ade} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.2351543Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.2439108Z 2026-07-29 01:40:51.242 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-76f8e9cafe864c2cb8d1b02a5be528e7/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.2443574Z 2026-07-29 01:40:51.242 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.2464780Z 2026-07-29 01:40:51.242 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-76f8e9cafe864c2cb8d1b02a5be528e7/auth
+2026-07-29T01:40:51.2469749Z 2026-07-29 01:40:51.243 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-f4fa096b4dad4a61b9ab596e156d4531/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.2471745Z 2026-07-29 01:40:51.243 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.2474834Z 2026-07-29 01:40:51.243 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-f4fa096b4dad4a61b9ab596e156d4531/auth
+2026-07-29T01:40:51.2478676Z 2026-07-29 01:40:51.243 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:51.2501948Z 2026-07-29 01:40:51.249 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.2552713Z 2026-07-29 01:40:51.249 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {9fff0c37-c77a-4520-baad-80c6dd38d087} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.2744747Z SKIPPED: cannot bind 127.0.0.1:53
+2026-07-29T01:40:51.2835200Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.SsoNonAdminCannotRevokeUnrelatedToken [1 s]
+2026-07-29T01:40:51.2876461Z   Passed Ednsv.Web.Tests.AuditLoggingTests.UsernameAppearsRawWhenMaskingOff [1 s]
+2026-07-29T01:40:51.2912983Z   Passed Ednsv.Web.Tests.TokenAuthTests.BasicAuthAuthenticatesRoot [402 ms]
+2026-07-29T01:40:51.2976668Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.WrongIssuerIs401 [675 ms]
+2026-07-29T01:40:51.3006599Z   Passed Ednsv.Web.Tests.ShutdownFlushTests.ShutdownIsBoundedByTheConfiguredBudget [193 ms]
+2026-07-29T01:40:51.3396467Z 2026-07-29 01:40:51.309 info: Ednsv.Audit[0] => SpanId:4b3ce8c59ac41b8f, TraceId:3996fc2f039b253dab86a3066dc75e43, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR50E => RequestId=0HNND29LQR50E Method=POST Path=/api/auth/users => Username=ErbrGGadVr IsAdmin=True Token issued: user=medSJYnYEY admin=False by=ErbrGGadVr ip=(null)
+2026-07-29T01:40:51.3402863Z 2026-07-29 01:40:51.337 info: Ednsv.Audit[0] => SpanId:75d1c28a05822192, TraceId:bcd78e3309c4169c694b294aeb3dc36a, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR50G => RequestId=0HNND29LQR50G Method=PUT Path=/api/config => Username=YbxaI5u7Hc IsAdmin=True Config updated by=YbxaI5u7Hc (revision saved)
+2026-07-29T01:40:51.3431203Z 2026-07-29 01:40:51.338 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-c7707b7ebaec4a2db07db82925ace2a0/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:51.3437032Z 2026-07-29 01:40:51.338 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.3440180Z 2026-07-29 01:40:51.338 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-c7707b7ebaec4a2db07db82925ace2a0/auth
+2026-07-29T01:40:51.3442110Z 2026-07-29 01:40:51.338 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.3443253Z 2026-07-29 01:40:51.339 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.3540041Z 2026-07-29 01:40:51.352 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.3591848Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.3617898Z 2026-07-29 01:40:51.357 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.3668275Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.ConcurrentSavesAllLandWithACoherentHistory [475 ms]
+2026-07-29T01:40:51.3702991Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.StaleIfMatchIsStillRejectedUnderTheLease [47 ms]
+2026-07-29T01:40:51.3729521Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.UnreachableServerCountsExpire [710 ms]
+2026-07-29T01:40:51.3762808Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.EveryExpiringMapAServiceHoldsIsBuiltWithTheConfiguredTtl [2 ms]
+2026-07-29T01:40:51.3786416Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.AxfrVerdictsExpire [1 ms]
+2026-07-29T01:40:51.3816596Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.ZeroFreshnessWindowPropagatesRevocationImmediately [29 ms]
+2026-07-29T01:40:51.3846651Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.Lease_IsNamespacedPerDeployment [30 ms]
+2026-07-29T01:40:51.3876419Z   Passed Ednsv.Core.Tests.L2LifetimeTests.WithoutAConfiguredTtlKeysStillExpire [248 ms]
+2026-07-29T01:40:51.3878367Z 2026-07-29 01:40:51.369 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-91fadfa4594145b78b7230e2c7914626/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.3906653Z 2026-07-29 01:40:51.369 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.3939036Z 2026-07-29 01:40:51.369 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-91fadfa4594145b78b7230e2c7914626/auth
+2026-07-29T01:40:51.3967905Z 2026-07-29 01:40:51.369 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:51.3992590Z 2026-07-29 01:40:51.371 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {3526c1f2-045a-40ca-9f4a-813043e45a7e} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.4016799Z 2026-07-29 01:40:51.379 info: Ednsv.Web[0] Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only — the recommended shape for a multi-pod deployment, since instances republish their own cache into Redis whenever it is emptied.
+2026-07-29T01:40:51.4050229Z 2026-07-29 01:40:51.379 info: Ednsv.Web[0] Watching the shared cache every 30s; an emptied Redis is repopulated from memory.
+2026-07-29T01:40:51.4066778Z 2026-07-29 01:40:51.379 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.4082717Z 2026-07-29 01:40:51.379 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-cb3715388f094ac7b22488c69f04c8ea/auth
+2026-07-29T01:40:51.4107195Z 2026-07-29 01:40:51.404 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.4142121Z 2026-07-29 01:40:51.411 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.4166700Z   Passed Ednsv.Web.Tests.OidcFlowTests.OidcLoginIs404WhenDisabled [265 ms]
+2026-07-29T01:40:51.4197330Z   Passed Ednsv.Web.Tests.BackgroundCacheLoadTests.AGarbageCacheFileDoesNotStopTheGoodOnesLoading [264 ms]
+2026-07-29T01:40:51.4226142Z   Passed Ednsv.Web.Tests.TokenAuthTests.ApiWithoutCredentialsIs401Json [109 ms]
+2026-07-29T01:40:51.4250391Z   Passed Ednsv.Web.Tests.AuditLoggingTests.TokenIssuanceIsAudited [187 ms]
+2026-07-29T01:40:51.4266060Z   Passed Ednsv.Web.Tests.ShutdownFlushTests.ShutdownWithAnEmptyCacheIsClean [96 ms]
+2026-07-29T01:40:51.4276540Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.SsoUsernameRecordedOnConfigSave [238 ms]
+2026-07-29T01:40:51.4278459Z 2026-07-29 01:40:51.414 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-007f48f7d213425fb1e70b7594e818cf/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.4280053Z 2026-07-29 01:40:51.414 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.4282865Z 2026-07-29 01:40:51.414 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-007f48f7d213425fb1e70b7594e818cf/auth
+2026-07-29T01:40:51.4537719Z 2026-07-29 01:40:51.448 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-9ff42946d55a4bc6a1083a0b438e366d/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.4567125Z 2026-07-29 01:40:51.448 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.4597579Z 2026-07-29 01:40:51.448 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-9ff42946d55a4bc6a1083a0b438e366d/auth
+2026-07-29T01:40:51.4867047Z 2026-07-29 01:40:51.484 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.5006888Z 2026-07-29 01:40:51.495 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.5089277Z 2026-07-29 01:40:51.505 info: Program[0] => SpanId:ff6788e0615aa817, TraceId:dcdbab6645c96e21aa0fede07d30fbe2, ParentId:0000000000000000 => RequestPath:/api/validate RequestId:0HNND29LQR50N => RequestId=0HNND29LQR50N Method=POST Path=/api/validate => Username=ednsv IsAdmin=True Validation requested: job=05f99e4a6c08 domain=audit-example.com user=ednsv smtp=True http=True dnsbl=True directDns=True doh=False recheck=none dkimSelectors=39
+2026-07-29T01:40:51.5265889Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.NoneWithRedisDoesNotWarn [911 ms]
+2026-07-29T01:40:51.5294073Z   Passed Ednsv.Web.Tests.TokenAuthTests.LoginPageIsPublic [59 ms]
+2026-07-29T01:40:51.5338020Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.SsoOnly_MethodsReportsSsoOnly_AndGateStillCloses [360 ms]
+2026-07-29T01:40:51.5346528Z   Passed Ednsv.Web.Tests.TokenAuthTests.BearerTokenAuthenticatesRoot [75 ms]
+2026-07-29T01:40:51.5347869Z   Passed Ednsv.Web.Tests.OidcFlowTests.OidcCodeFlowStillAvailableWhenConfigured [155 ms]
+2026-07-29T01:40:51.5349223Z   Passed Ednsv.Web.Tests.TokenAuthTests.BrowserWithoutCredentialsRedirectsToLogin [21 ms]
+2026-07-29T01:40:51.5350930Z 2026-07-29 01:40:51.525 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-06146e85f4ef47f291fd4371581aa517/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.5352475Z 2026-07-29 01:40:51.525 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.5354875Z 2026-07-29 01:40:51.525 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-06146e85f4ef47f291fd4371581aa517/auth
+2026-07-29T01:40:51.5358437Z 2026-07-29 01:40:51.527 info: Ednsv.Audit[0] => SpanId:4222a0abdaa125d6, TraceId:30c002c79f664070ac5ade44c9ca18ac, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR50S => RequestId=0HNND29LQR50S Method=POST Path=/api/auth/users => Username=qZiWbhcZXz IsAdmin=True Token issued: user=eRUo23sDn8 admin=False by=qZiWbhcZXz ip=(null)
+2026-07-29T01:40:51.5577625Z 2026-07-29 01:40:51.551 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.5629823Z 2026-07-29 01:40:51.552 info: Ednsv.Audit[0] => SpanId:58196d4c3b3b1425, TraceId:7ed8c4322dd203c4cac495791d6f45a6, ParentId:0000000000000000 => RequestPath:/api/auth/login RequestId:0HNND29LQR511 => RequestId=0HNND29LQR511 Method=POST Path=/api/auth/login => Username=(anonymous) Sign-in: user=qZiWbhcZXz admin=True via=token
+2026-07-29T01:40:51.5661577Z 2026-07-29 01:40:51.560 warn: Ednsv.Audit[0] => SpanId:25194bf9729fae37, TraceId:1c7bbd2b4eb2b3164c8ca2c46696ec8d, ParentId:0000000000000000 => RequestPath:/api/auth/login RequestId:0HNND29LQR513 => RequestId=0HNND29LQR513 Method=POST Path=/api/auth/login => Username=(anonymous) Sign-in failed: user=qZiWbhcZXz via=token ip=(null)
+2026-07-29T01:40:51.5901593Z 2026-07-29 01:40:51.586 info: Ednsv.Audit[0] => SpanId:92cff529f403a8a6, TraceId:7818e3d69e822c11485819b7a7af5206, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR50P => RequestId=0HNND29LQR50P Method=PUT Path=/api/config => Username=CWfx7VjE1z IsAdmin=True Config updated by=CWfx7VjE1z (revision saved)
+2026-07-29T01:40:51.5935328Z 2026-07-29 01:40:51.589 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-d9c3562a96f845a1b0dcc28d8ed0053f/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.5966840Z 2026-07-29 01:40:51.589 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.5977741Z 2026-07-29 01:40:51.589 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-d9c3562a96f845a1b0dcc28d8ed0053f/auth
+2026-07-29T01:40:51.6008254Z 2026-07-29 01:40:51.591 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.6010187Z 2026-07-29 01:40:51.593 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.6396949Z 2026-07-29 01:40:51.620 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.6455773Z   Passed Ednsv.Web.Tests.OidcFlowTests.OidcLoginRejectsAbsoluteNextTargets [29 ms]
+2026-07-29T01:40:51.6460092Z   Passed Ednsv.Web.Tests.TokenAuthTests.NonAdminGets403OnConfigAdminGets200 [23 ms]
+2026-07-29T01:40:51.6462219Z   Passed Ednsv.Web.Tests.AuditLoggingTests.ValidationRequestIsLogged_RawDomainWhenMaskingOff [183 ms]
+2026-07-29T01:40:51.6464204Z   Passed Ednsv.Web.Tests.TokenAuthTests.LoginSetsTokenCookieAndCookieAuthenticates [13 ms]
+2026-07-29T01:40:51.6466716Z   Passed Ednsv.Web.Tests.OidcFlowTests.OidcLoginChallengesToAuthority_SecretlessIdTokenFlowByDefault [35 ms]
+2026-07-29T01:40:51.6468388Z   Passed Ednsv.Web.Tests.TokenAuthTests.InvalidLoginIs401 [26 ms]
+2026-07-29T01:40:51.6469507Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.WrongSigningKeyIs401 [331 ms]
+2026-07-29T01:40:51.6470861Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.TokenOnly_MethodsReportsTokenAuthOnly [154 ms]
+2026-07-29T01:40:51.6522855Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.6542550Z 2026-07-29 01:40:51.652 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.6585727Z 2026-07-29 01:40:51.656 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-910c6dda0e30473eb94e05e055a66c50/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.6619645Z 2026-07-29 01:40:51.656 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.6663082Z 2026-07-29 01:40:51.656 info: Ednsv.Web[0] Authentication enabled — token auth: off, OIDC SSO: off, JWT bearer: on (https://idp.test/tenant/v2.0). Auth data: /tmp/ednsv-web-test-910c6dda0e30473eb94e05e055a66c50/auth
+2026-07-29T01:40:51.6677151Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.6721575Z 2026-07-29 01:40:51.659 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {46676685-9715-4482-86a6-55daa2ec1200} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.6725163Z 2026-07-29 01:40:51.670 info: Ednsv.Audit[0] => SpanId:243df26af5aa870a, TraceId:64ebce01d10423b2a8cdb0acbebccbbe, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR516 => RequestId=0HNND29LQR516 Method=PUT Path=/api/config => Username=ill48_JldV IsAdmin=True Config updated by=ill48_JldV (revision saved)
+2026-07-29T01:40:51.6757688Z 2026-07-29 01:40:51.673 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-128e041b92b4447b90e0ce6c42e058ff/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.6776485Z 2026-07-29 01:40:51.674 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.6803797Z 2026-07-29 01:40:51.674 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-128e041b92b4447b90e0ce6c42e058ff/auth
+2026-07-29T01:40:51.6818399Z 2026-07-29 01:40:51.674 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:51.6848757Z 2026-07-29 01:40:51.676 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.6869580Z 2026-07-29 01:40:51.684 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {0917c3bc-8d1a-409b-a7dc-2152cbce3d10} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.6944285Z 2026-07-29 01:40:51.693 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-057209649af34167aeb5c0ebc61abc82/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.6962146Z 2026-07-29 01:40:51.693 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.6966653Z 2026-07-29 01:40:51.693 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-057209649af34167aeb5c0ebc61abc82/auth
+2026-07-29T01:40:51.7241150Z 2026-07-29 01:40:51.721 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-adcdf48a6f84405d83600283b296cb94/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.7275155Z 2026-07-29 01:40:51.721 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.7278131Z 2026-07-29 01:40:51.721 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-adcdf48a6f84405d83600283b296cb94/auth
+2026-07-29T01:40:51.7527528Z 2026-07-29 01:40:51.747 info: Ednsv.Audit[0] => SpanId:294fdcebd3eb636d, TraceId:c86df9ada177b40b382be3be34d64b13, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR51B => RequestId=0HNND29LQR51B Method=POST Path=/api/auth/users => Username=8tBIoGS1YC IsAdmin=True Token issued: user=va5g6WR3k1 admin=False by=8tBIoGS1YC ip=(null)
+2026-07-29T01:40:51.7981626Z 2026-07-29 01:40:51.795 info: Program[0] => SpanId:144288cf8575b01b, TraceId:09ab11ea6500c7aba955656d03865f1b, ParentId:0000000000000000 => RequestPath:/api/validate RequestId:0HNND29LQR51C => RequestId=0HNND29LQR51C Method=POST Path=/api/validate => Username=6SWYP3z2fS IsAdmin=True Validation requested: job=275f189f92d8 domain=9GzpR6nOWr user=6SWYP3z2fS smtp=True http=True dnsbl=True directDns=True doh=False recheck=none dkimSelectors=39
+2026-07-29T01:40:51.8236835Z 2026-07-29 01:40:51.822 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.8238912Z 2026-07-29 01:40:51.822 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.8255211Z 2026-07-29 01:40:51.824 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.8859555Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.9010336Z 2026-07-29 01:40:51.895 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-fbf976ebb103495bb7e8cbec36e5d1c3/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.9036658Z 2026-07-29 01:40:51.895 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.9039964Z 2026-07-29 01:40:51.895 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-fbf976ebb103495bb7e8cbec36e5d1c3/auth
+2026-07-29T01:40:51.9067064Z 2026-07-29 01:40:51.897 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-c88fc503a0014972bebd26c283bca70c/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.9068619Z 2026-07-29 01:40:51.897 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.9101682Z 2026-07-29 01:40:51.897 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-c88fc503a0014972bebd26c283bca70c/auth
+2026-07-29T01:40:51.9104586Z 2026-07-29 01:40:51.897 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:51.9111382Z 2026-07-29 01:40:51.902 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {357d1372-98c2-4b48-aece-02ac1cc727fd} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.9263852Z 2026-07-29 01:40:51.914 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:51.9281147Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AnEntryGoneFromMemoryIsNotRepublished [715 ms]
+2026-07-29T01:40:51.9318350Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.TheValueTypeCacheFollowsTheSameRule [601 ms]
+2026-07-29T01:40:51.9346845Z   Passed Ednsv.Core.Tests.L2LifetimeTests.AConfiguredTtlIsUsedAsIs [225 ms]
+2026-07-29T01:40:51.9347901Z   Passed Ednsv.Core.Tests.ServiceCacheExpiryTests.RelayTestsExpire [457 ms]
+2026-07-29T01:40:51.9387170Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.Lease_ExcludesASecondHolderAndFreesOnRelease [423 ms]
+2026-07-29T01:40:51.9388504Z   Passed Ednsv.Core.Tests.L2LifetimeTests.EveryKeyIsEvictableSoVolatilePoliciesHaveSomethingToShed [328 ms]
+2026-07-29T01:40:51.9504564Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:51.9557307Z 2026-07-29 01:40:51.951 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-watch-0a2c1ca15ceb49eeb86f0dcc9616171e/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:51.9582702Z 2026-07-29 01:40:51.951 warn: Ednsv.Web[0] Shared-cache watch disabled (SharedCacheWatchSeconds=0). An emptied Redis will not be repopulated, so the shared cache stays cold until entries age out of memory naturally. The key index the re-warm needs is not kept either, so re-enabling it requires a restart.
+2026-07-29T01:40:51.9599810Z 2026-07-29 01:40:51.951 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.9627540Z 2026-07-29 01:40:51.951 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-0a2c1ca15ceb49eeb86f0dcc9616171e/auth
+2026-07-29T01:40:51.9637508Z 2026-07-29 01:40:51.960 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-b4cf1fb0897a43d4a92b732eecf6a34e/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.9639363Z 2026-07-29 01:40:51.960 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.9642029Z 2026-07-29 01:40:51.960 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: on (https://idp.test/tenant/v2.0). Auth data: /tmp/ednsv-web-test-b4cf1fb0897a43d4a92b732eecf6a34e/auth
+2026-07-29T01:40:51.9645187Z 2026-07-29 01:40:51.963 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {9dca85c9-e7f1-4d8c-9f0e-56ad85636a10} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:51.9688958Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.GetRevisionReturnsSavedConfig [248 ms]
+2026-07-29T01:40:51.9692987Z   Passed Ednsv.Web.Tests.AuditLoggingTests.ConfigChangeIsAudited [124 ms]
+2026-07-29T01:40:51.9719800Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.ConfigHistoryIsAdminOnly [168 ms]
+2026-07-29T01:40:51.9746818Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.BothModes_TokenAndSsoWorkSideBySide [183 ms]
+2026-07-29T01:40:51.9757076Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.JwtOnly_NonAdminJwtDoesNotBecomeAdmin [307 ms]
+2026-07-29T01:40:51.9758850Z   Passed Ednsv.Web.Tests.AuditLoggingTests.ValidationRequestIsLogged_DomainMaskedByDefault [238 ms]
+2026-07-29T01:40:51.9938077Z 2026-07-29 01:40:51.989 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-408ea057f9a64c11a9e7dbe588bd3ae0/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:51.9964564Z 2026-07-29 01:40:51.989 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:51.9997687Z 2026-07-29 01:40:51.989 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-408ea057f9a64c11a9e7dbe588bd3ae0/auth
+2026-07-29T01:40:52.0261095Z 2026-07-29 01:40:52.015 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.0349710Z 2026-07-29 01:40:52.029 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.0787874Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:52.0823761Z 2026-07-29 01:40:52.076 info: Ednsv.Audit[0] => SpanId:b06467f81ea0228e, TraceId:ae57d828eb088eec7a9e005dd95fef65, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR51I => RequestId=0HNND29LQR51I Method=POST Path=/api/auth/users => Username=5lSeXB0646 IsAdmin=True Token issued: user=itPfrMrwFT admin=False by=5lSeXB0646 ip=(null)
+2026-07-29T01:40:52.0912431Z 2026-07-29 01:40:52.088 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-47a7cdfe814447039388246cedc9a589/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.0928142Z 2026-07-29 01:40:52.088 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.0986799Z 2026-07-29 01:40:52.088 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-47a7cdfe814447039388246cedc9a589/auth
+2026-07-29T01:40:52.1008292Z 2026-07-29 01:40:52.088 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:52.1037906Z 2026-07-29 01:40:52.090 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {c0d4d5a3-baf4-4e2c-8de6-20f64000f1d6} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:52.1092236Z 2026-07-29 01:40:52.107 info: Program[0] => SpanId:4d188c7d4f7c4e87, TraceId:3b4c7bba36045e0deb934fb66c1ce3eb, ParentId:0000000000000000 => RequestPath:/api/validate RequestId:0HNND29LQR51K => RequestId=0HNND29LQR51K Method=POST Path=/api/validate => Username=Ps7eG0eugZ IsAdmin=True Validation requested: job=49757406a682 domain=BpkjrSSaGm user=Ps7eG0eugZ smtp=False http=True dnsbl=True directDns=True doh=False recheck=none dkimSelectors=39
+2026-07-29T01:40:52.1326328Z 2026-07-29 01:40:52.107 info: Ednsv.Audit[0] => SpanId:b4df4fa0969675db, TraceId:fe22b92e55a21f4421dfff2d6495c7d7, ParentId:0000000000000000 => RequestPath:/api/auth/users/issued-by-sso/revoke RequestId:0HNND29LQR51Q => RequestId=0HNND29LQR51Q Method=POST Path=/api/auth/users/issued-by-sso/revoke => Username=5lSeXB0646 IsAdmin=True Token revoked: count=1 targets=itPfrMrwFT by=5lSeXB0646 elevated=True
+2026-07-29T01:40:52.1360729Z 2026-07-29 01:40:52.135 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.1412542Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.TheSharedCacheWatchCanBeTurnedOffAndSaysSo [603 ms]
+2026-07-29T01:40:52.1422972Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.QuarantinedConfigRawRejectsUnknownAndMalformedKeys [210 ms]
+2026-07-29T01:40:52.1437031Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.RequiredRolesRejectsTokensWithoutThem [220 ms]
+2026-07-29T01:40:52.1438937Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.SsoAdminCanIssueAndRevokeTokens [310 ms]
+2026-07-29T01:40:52.1440389Z   Passed Ednsv.Web.Tests.AuditLoggingTests.ValidationRequestRecordsInputFlags [173 ms]
+2026-07-29T01:40:52.1441635Z 2026-07-29 01:40:52.135 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.1442984Z 2026-07-29 01:40:52.136 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.1717564Z 2026-07-29 01:40:52.167 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.1744482Z 2026-07-29 01:40:52.168 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-4a314fb7a3484084a50b7990b142c0cd/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.1746374Z 2026-07-29 01:40:52.168 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.1759081Z 2026-07-29 01:40:52.168 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-4a314fb7a3484084a50b7990b142c0cd/auth
+2026-07-29T01:40:52.1787174Z 2026-07-29 01:40:52.174 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-6b1175acbe124b029b92fa4476c927e5/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.1820623Z 2026-07-29 01:40:52.175 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.1822729Z 2026-07-29 01:40:52.175 warn: Ednsv.Web[0] Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none, no external IdP configured) and the server is bound to localhost only. All endpoints are open to local callers.
+2026-07-29T01:40:52.1926952Z 2026-07-29 01:40:52.190 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.2185265Z 2026-07-29 01:40:52.213 info: Ednsv.Audit[0] => SpanId:74a961faa86c76cd, TraceId:c6d43820bc168990fa1ed1dfb404f39b, ParentId:0000000000000000 => RequestPath:/api/auth/login RequestId:0HNND29LQR522 => RequestId=0HNND29LQR522 Method=POST Path=/api/auth/login => Username=(anonymous) Sign-in: user=7-FH20bijQ admin=True via=token
+2026-07-29T01:40:52.2235858Z 2026-07-29 01:40:52.217 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.2252516Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.GarbageBearerIs401 [9 ms]
+2026-07-29T01:40:52.2286970Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.WrongAudienceIs401 [4 ms]
+2026-07-29T01:40:52.2319327Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.AdminRoleGrantsAdminEndpoints [7 ms]
+2026-07-29T01:40:52.2331365Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.ExpiredJwtIs401 [5 ms]
+2026-07-29T01:40:52.2332908Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.SsoAdminCannotRevokeRootUser [135 ms]
+2026-07-29T01:40:52.2334415Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.NoAdminRoleGets403OnAdminEndpoints [12 ms]
+2026-07-29T01:40:52.2336566Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.ValidJwtAuthenticatesAsAppPrincipal [9 ms]
+2026-07-29T01:40:52.2338421Z   Passed Ednsv.Web.Tests.JwtBearerAuthTests.EdnsvTokensStillWorkSideBySide [1 ms]
+2026-07-29T01:40:52.2339495Z   Passed Ednsv.Web.Tests.AuditLoggingTests.SuccessfulTokenSignInIsAudited [80 ms]
+2026-07-29T01:40:52.2340933Z 2026-07-29 01:40:52.227 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-5941857bc5f3488ab3c43b7b74168b5c/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.2342219Z 2026-07-29 01:40:52.227 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.2346463Z 2026-07-29 01:40:52.227 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-5941857bc5f3488ab3c43b7b74168b5c/auth
+2026-07-29T01:40:52.2477844Z 2026-07-29 01:40:52.236 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.2583340Z 2026-07-29 01:40:52.252 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-1e5b945e69e941d6a49b3d0e78490c69/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.2587353Z 2026-07-29 01:40:52.252 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.2590229Z 2026-07-29 01:40:52.252 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-1e5b945e69e941d6a49b3d0e78490c69/auth
+2026-07-29T01:40:52.2718940Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:52.2746271Z 2026-07-29 01:40:52.273 info: Ednsv.Audit[0] => SpanId:d0e2d772b281d52f, TraceId:5efac70b453181c229b9c6bf3c982bd8, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR528 => RequestId=0HNND29LQR528 Method=PUT Path=/api/config => Username=qpt3yXt0NA IsAdmin=True Config updated by=qpt3yXt0NA (revision saved)
+2026-07-29T01:40:52.2797302Z 2026-07-29 01:40:52.278 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.3192884Z 2026-07-29 01:40:52.278 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-24d43280947a4e9fa7a70cc4fcafdea3/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.3256680Z 2026-07-29 01:40:52.278 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.3289637Z 2026-07-29 01:40:52.278 info: Ednsv.Web[0] Authentication enabled — token auth: off, OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-24d43280947a4e9fa7a70cc4fcafdea3/auth
+2026-07-29T01:40:52.3328024Z 2026-07-29 01:40:52.278 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:52.3390945Z 2026-07-29 01:40:52.310 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {15c6c249-01d8-4f43-8fcf-f521aad3f260} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:52.3734928Z 2026-07-29 01:40:52.370 info: Program[0] => SpanId:9a0d31d88c182fb8, TraceId:adb3a5756b722bf12f39960a4870de12, ParentId:0000000000000000 => RequestPath:/api/validate RequestId:0HNND29LQR529 => RequestId=0HNND29LQR529 Method=POST Path=/api/validate => Username=lu0qJMJdzA IsAdmin=True Validation requested: job=d7ca205b2c67 domain=Lds7pcIcU1 user=lu0qJMJdzA smtp=True http=True dnsbl=True directDns=True doh=False recheck=all dkimSelectors=39
+2026-07-29T01:40:52.3771607Z 2026-07-29 01:40:52.370 info: Program[0] => SpanId:9a0d31d88c182fb8, TraceId:adb3a5756b722bf12f39960a4870de12, ParentId:0000000000000000 => RequestPath:/api/validate RequestId:0HNND29LQR529 => RequestId=0HNND29LQR529 Method=POST Path=/api/validate => Username=lu0qJMJdzA IsAdmin=True => JobId=d7ca205b2c67 Username=lu0qJMJdzA Endpoint=validateDomainAsync Domain=Lds7pcIcU1 Recheck: bypassing entire cache (recheck all)
+2026-07-29T01:40:52.3827117Z 2026-07-29 01:40:52.380 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-37e7438c1fb54a19872fa56f45cb1a0c/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.3847569Z 2026-07-29 01:40:52.380 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.3897948Z 2026-07-29 01:40:52.380 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-37e7438c1fb54a19872fa56f45cb1a0c/auth
+2026-07-29T01:40:52.4401411Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AWarmRepublishesEverythingHeldInMemory [533 ms]
+2026-07-29T01:40:52.4418356Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.ACacheShorterThanTheWindowIsNotLengthenedByAFailure [504 ms]
+2026-07-29T01:40:52.4462468Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.AnOrdinaryEmptyResultIsNotAFailure [< 1 ms]
+2026-07-29T01:40:52.4477526Z   Passed Ednsv.Core.Tests.TransientFailureCachingTests.TheShippedWindowIsShorterThanAValidation [< 1 ms]
+2026-07-29T01:40:52.4478953Z   Passed Ednsv.Core.Tests.L2LifetimeTests.ARemainingLifeShorterThanTheFloorIsHonoured [207 ms]
+2026-07-29T01:40:52.4539239Z   Passed Ednsv.Core.Tests.L2LifetimeTests.ATtlLongerThanTheFloorIsNotShortened [212 ms]
+2026-07-29T01:40:52.4558822Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AnUnreachableRedisIsNotMistakenForAFlush [3 s]
+2026-07-29T01:40:52.4668368Z 2026-07-29 01:40:52.464 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.5257348Z 2026-07-29 01:40:52.521 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.5278592Z 2026-07-29 01:40:52.523 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-d4b283fb883844ce9ff461f91d6fd65b/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.5314638Z 2026-07-29 01:40:52.523 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.5337912Z 2026-07-29 01:40:52.523 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-d4b283fb883844ce9ff461f91d6fd65b/auth
+2026-07-29T01:40:52.5376347Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AWarmUsesRemainingLifeSoNothingIsResurrected [519 ms]
+2026-07-29T01:40:52.5396756Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AnInstanceRewarmsWhenAnotherOneNoticedTheFlushFirst [21 ms]
+2026-07-29T01:40:52.5417674Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AFlushAsksForARewarm [10 ms]
+2026-07-29T01:40:52.5437884Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.RevocationOnAnotherInstanceLandsWithinTheFreshnessWindow [738 ms]
+2026-07-29T01:40:52.5471092Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AnInstanceStartingAfterOthersAdoptsTheirEpochWithoutRewarming [24 ms]
+2026-07-29T01:40:52.5497621Z   Passed Ednsv.Core.Tests.LiveRedisLeaseTests.ConcurrentAuthenticationIsNotSerialisedBehindRedis [40 ms]
+2026-07-29T01:40:52.5554188Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AFlushIsReportedOnceNotOnEveryTickAfterwards [35 ms]
+2026-07-29T01:40:52.5584679Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AnUnconfiguredRedisIsInert [< 1 ms]
+2026-07-29T01:40:52.5608799Z 2026-07-29 01:40:52.540 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-watch-e4573ca8119846c48a6746ec008144dc/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:52.5621768Z 2026-07-29 01:40:52.540 info: Ednsv.Web[0] Watching the shared cache every 30s; an emptied Redis is repopulated from memory.
+2026-07-29T01:40:52.5623304Z 2026-07-29 01:40:52.540 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.5625996Z 2026-07-29 01:40:52.540 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-e4573ca8119846c48a6746ec008144dc/auth
+2026-07-29T01:40:52.5629310Z 2026-07-29 01:40:52.542 info: Ednsv.Audit[0] => SpanId:15f1765a3f7a23fa, TraceId:324db1c37e2663b6dff262866f6836fc, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR52C => RequestId=0HNND29LQR52C Method=PUT Path=/api/config => Username=HArXTFrN03 IsAdmin=True Config updated by=HArXTFrN03 (revision saved)
+2026-07-29T01:40:52.5658904Z 2026-07-29 01:40:52.564 warn: Ednsv.Audit[0] => SpanId:41dfa44f0f945f62, TraceId:3d6433e9837f9048fc035ff4163d70dc, ParentId:0000000000000000 => RequestPath:/api/auth/login RequestId:0HNND29LQR52F => RequestId=0HNND29LQR52F Method=POST Path=/api/auth/login => Username=(anonymous) Sign-in failed: user=7oElQNuIyD via=token ip=(null)
+2026-07-29T01:40:52.5661768Z 2026-07-29 01:40:52.565 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.5668876Z 2026-07-29 01:40:52.566 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.5948329Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:52.5984854Z 2026-07-29 01:40:52.595 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-45d00335d06b4c72b86663cde5e89eb2/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.5987612Z 2026-07-29 01:40:52.595 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.5989874Z 2026-07-29 01:40:52.595 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-45d00335d06b4c72b86663cde5e89eb2/auth
+2026-07-29T01:40:52.5992310Z 2026-07-29 01:40:52.597 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-5991670b51c244fda26f1c3c22d0a0c7/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.5994019Z 2026-07-29 01:40:52.597 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.5996817Z 2026-07-29 01:40:52.597 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-5991670b51c244fda26f1c3c22d0a0c7/auth
+2026-07-29T01:40:52.5999865Z 2026-07-29 01:40:52.597 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:52.6010158Z 2026-07-29 01:40:52.600 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {f069211b-d826-4609-a8b5-d4102a2ac3bd} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:52.6294269Z 2026-07-29 01:40:52.627 info: Ednsv.Audit[0] => SpanId:4368258691cfb791, TraceId:35bdb03474c41d4cc24e661ab673eef5, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR52K => RequestId=0HNND29LQR52K Method=POST Path=/api/auth/users => Username=z7UQaOPyAH IsAdmin=True Token issued: user=tcLSaKKgAt admin=False by=z7UQaOPyAH ip=(null)
+2026-07-29T01:40:52.6299161Z 2026-07-29 01:40:52.627 info: Ednsv.Audit[0] => SpanId:58ae8aaac9e9930c, TraceId:8ef015750f4f48ea7c2002adea7509e7, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR52J => RequestId=0HNND29LQR52J Method=POST Path=/api/auth/users => Username=JJ1Yszk0fd IsAdmin=True Token issued: user=udZ9aHkMMr admin=False by=JJ1Yszk0fd ip=(null)
+2026-07-29T01:40:52.6360184Z 2026-07-29 01:40:52.632 info: Ednsv.Audit[0] => SpanId:17b380bb719de22f, TraceId:30da339cdffd8c9bdff8b600f1588450, ParentId:0000000000000000 => RequestPath:/api/auth/users/to-revoke/revoke RequestId:0HNND29LQR52M => RequestId=0HNND29LQR52M Method=POST Path=/api/auth/users/to-revoke/revoke => Username=JJ1Yszk0fd IsAdmin=True Token revoked: count=1 targets=udZ9aHkMMr by=JJ1Yszk0fd elevated=False
+2026-07-29T01:40:52.6374744Z 2026-07-29 01:40:52.632 info: Ednsv.Audit[0] => SpanId:e5f7fc63b3c74d8e, TraceId:5108831e4765c27849f0b1be71d87f13, ParentId:0000000000000000 => RequestPath:/api/auth/users/root-issued/revoke RequestId:0HNND29LQR52L => RequestId=0HNND29LQR52L Method=POST Path=/api/auth/users/root-issued/revoke => Username=O-b69bLADG IsAdmin=True Token revoked: count=1 targets=tcLSaKKgAt by=O-b69bLADG elevated=True
+2026-07-29T01:40:52.6377641Z 2026-07-29 01:40:52.634 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.6378396Z 2026-07-29 01:40:52.635 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.6399744Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.NoAuth_BypassTreatsCallersAsAdmin [100 ms]
+2026-07-29T01:40:52.6403777Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.PutConfigRecordsRevisionAttributedToCaller [138 ms]
+2026-07-29T01:40:52.6405900Z   Passed Ednsv.Web.Tests.AuditLoggingTests.RecheckAllIsAcceptedAndLogged [248 ms]
+2026-07-29T01:40:52.6407202Z   Passed Ednsv.Web.Tests.AuthModeMatrixTests.SsoOnly_SsoUserWithoutAdminRoleIsNotAdmin [283 ms]
+2026-07-29T01:40:52.6408517Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.GetRevisionRawReturnsStoredText [256 ms]
+2026-07-29T01:40:52.6409751Z   Passed Ednsv.Web.Tests.AuditLoggingTests.FailedTokenSignInIsAudited [100 ms]
+2026-07-29T01:40:52.6410939Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.SsoAdminCanRevokeTokenIssuedByRoot [68 ms]
+2026-07-29T01:40:52.6412051Z   Passed Ednsv.Web.Tests.AuditLoggingTests.TokenRevokeIsAudited [69 ms]
+2026-07-29T01:40:52.6537802Z WARNING: DataProtection key-ring is NOT encrypted at rest (DataProtection:KeyEncryptionSecret unset). Rely on mount permissions / encryption-at-rest, or set a 32+ char secret.
+2026-07-29T01:40:52.6579445Z 2026-07-29 01:40:52.655 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-aca2845f46b34214b6ec05fb22c75e30/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.6581407Z 2026-07-29 01:40:52.655 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.6584081Z 2026-07-29 01:40:52.655 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-web-test-aca2845f46b34214b6ec05fb22c75e30/auth
+2026-07-29T01:40:52.6619357Z 2026-07-29 01:40:52.659 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-web-test-432c2ea8ee6241e7ac909c22cb749ab3/cache (TTL 2h, flush every 600s).
+2026-07-29T01:40:52.6636450Z 2026-07-29 01:40:52.659 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:52.6640183Z 2026-07-29 01:40:52.659 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: on (https://idp.test/tenant/v2.0), JWT bearer: off. Auth data: /tmp/ednsv-web-test-432c2ea8ee6241e7ac909c22cb749ab3/auth
+2026-07-29T01:40:52.6643491Z 2026-07-29 01:40:52.659 info: Ednsv.Web[0] OIDC SSO callback paths: /signin-oidc, /signout-callback-oidc. Behind a reverse proxy, serve over HTTPS and set ASPNETCORE_FORWARDEDHEADERS_ENABLED=true so the redirect URI and cookie security reflect the public scheme/host.
+2026-07-29T01:40:52.6647294Z 2026-07-29 01:40:52.660 warn: Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager[35] No XML encryptor configured. Key {a8131597-9e3c-4ba0-b8f6-827292ea4b26} may be persisted to storage in unencrypted form.
+2026-07-29T01:40:52.6989698Z 2026-07-29 01:40:52.695 info: Ednsv.Audit[0] => SpanId:b96b67de82ee917b, TraceId:f1a74de8b40636a8b5357dca0216f754, ParentId:0000000000000000 => RequestPath:/api/auth/users RequestId:0HNND29LQR52N => RequestId=0HNND29LQR52N Method=POST Path=/api/auth/users => Username=uxXPTkjAqN IsAdmin=True Token issued: user=3xoBiBun_s admin=False by=uxXPTkjAqN ip=(null)
+2026-07-29T01:40:52.7018710Z 2026-07-29 01:40:52.698 info: Ednsv.Audit[0] => SpanId:38dd1c51fae3bc79, TraceId:a9a95ab84a0d031e8ab1ce8bdcee47be, ParentId:0000000000000000 => RequestPath:/api/config RequestId:0HNND29LQR52O => RequestId=0HNND29LQR52O Method=PUT Path=/api/config => Username=kocudb1KRi IsAdmin=True Config updated by=kocudb1KRi (revision saved)
+2026-07-29T01:40:52.7020364Z 2026-07-29 01:40:52.700 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:52.7021085Z 2026-07-29 01:40:52.700 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:53.0971162Z 2026-07-29 01:40:53.096 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:53.4841088Z [xUnit.net 00:00:07.13]   Finished:    Ednsv.Core.Tests
+2026-07-29T01:40:53.5555565Z   Passed Ednsv.Core.Tests.SharedCacheEpochTests.AnUnchangedEpochAsksForNothing [22 ms]
+2026-07-29T01:40:53.5556865Z   Passed Ednsv.Core.Tests.L2LifetimeTests.AnL2HitIsStillHeldToOurOwnTtl [311 ms]
+2026-07-29T01:40:53.5558011Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.AWarmWorksWithNoDiskTierAtAll [520 ms]
+2026-07-29T01:40:53.5559860Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.PruningDropsExpiredKeysSoTheIndexTracksTheLiveSet [506 ms]
+2026-07-29T01:40:53.5561187Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.WithTheWatchEnabledTheIndexIsKept [1 ms]
+2026-07-29T01:40:53.5562309Z   Passed Ednsv.Core.Tests.SharedCacheWarmTests.WithoutRedisThereIsNoIndexAtAll [< 1 ms]
+2026-07-29T01:40:53.5590115Z 
+2026-07-29T01:40:53.5643501Z Test Run Successful.
+2026-07-29T01:40:53.5643987Z Total tests: 354
+2026-07-29T01:40:53.5644397Z      Passed: 354
+2026-07-29T01:40:53.5646040Z  Total time: 9.4090 Seconds
+2026-07-29T01:40:53.5795748Z 2026-07-29 01:40:53.577 info: Ednsv.Web[0] Disk cache disabled (CacheDir=none). Probe results live in memory and the shared Redis cache only — the recommended shape for a multi-pod deployment, since instances republish their own cache into Redis whenever it is emptied.
+2026-07-29T01:40:53.5799699Z 2026-07-29 01:40:53.577 info: Ednsv.Web[0] Watching the shared cache every 17s; an emptied Redis is repopulated from memory.
+2026-07-29T01:40:53.5801203Z 2026-07-29 01:40:53.577 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:53.5803365Z 2026-07-29 01:40:53.577 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-1dd34b355d34405899d67dc7597cacb0/auth
+2026-07-29T01:40:53.5822330Z 2026-07-29 01:40:53.581 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.0519842Z 2026-07-29 01:40:54.050 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-watch-017af3570ed541d58e231f18e562a160/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:54.0522343Z 2026-07-29 01:40:54.051 warn: Ednsv.Web[0] Shared-cache watch disabled (SharedCacheWatchSeconds=0). An emptied Redis will not be repopulated, so the shared cache stays cold until entries age out of memory naturally. The key index the re-warm needs is not kept either, so re-enabling it requires a restart.
+2026-07-29T01:40:54.0524398Z 2026-07-29 01:40:54.051 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.0527204Z 2026-07-29 01:40:54.051 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-017af3570ed541d58e231f18e562a160/auth
+2026-07-29T01:40:54.1379973Z   Passed Ednsv.Web.Tests.AuditLoggingTests.SsoUsernameIsMaskedInLogsByDefault [64 ms]
+2026-07-29T01:40:54.1380863Z   Passed Ednsv.Web.Tests.ConfigHistoryAndRevokeTests.GetRevisionRawIsAdminOnly [65 ms]
+2026-07-29T01:40:54.1381686Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.WithTheWatchOnTheIndexIsKeptSoARewarmCanFindSomething [1 s]
+2026-07-29T01:40:54.1382582Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.TheSharedCacheWatchRunsOnItsOwnIntervalNotTheFlushInterval [483 ms]
+2026-07-29T01:40:54.5977515Z 2026-07-29 01:40:54.597 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6109193Z 2026-07-29 01:40:54.610 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-localcache-1aefbb0c941b493d89459cdac0848f82 (TTL 2h, flush every 3600s).
+2026-07-29T01:40:54.6110604Z 2026-07-29 01:40:54.610 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6112574Z 2026-07-29 01:40:54.610 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-9582e8b5d811440390b0dce276107341/auth
+2026-07-29T01:40:54.6160824Z 2026-07-29 01:40:54.615 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6293941Z 2026-07-29 01:40:54.628 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-cachedir-d651171425504385ab1e0470b19e52c3/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:54.6295650Z 2026-07-29 01:40:54.629 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6306517Z 2026-07-29 01:40:54.629 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-d651171425504385ab1e0470b19e52c3/auth
+2026-07-29T01:40:54.6357425Z 2026-07-29 01:40:54.635 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6489712Z 2026-07-29 01:40:54.648 warn: Ednsv.Web[0] Disk cache disabled (CacheDir=none) and no Redis is configured, so nothing survives a restart: every probe result is refetched from the network on each start. Reasonable for a dev box, almost certainly a misconfiguration in production.
+2026-07-29T01:40:54.6496500Z 2026-07-29 01:40:54.648 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6498831Z 2026-07-29 01:40:54.648 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-db16832fb40044589ebf0dceabd7b166/auth
+2026-07-29T01:40:54.6538997Z 2026-07-29 01:40:54.653 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6696814Z 2026-07-29 01:40:54.666 warn: Ednsv.Web[0] Disk cache disabled (CacheDir=none) and no Redis is configured, so nothing survives a restart: every probe result is refetched from the network on each start. Reasonable for a dev box, almost certainly a misconfiguration in production.
+2026-07-29T01:40:54.6699023Z 2026-07-29 01:40:54.666 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6701490Z 2026-07-29 01:40:54.666 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-0f2188d471c148a69b369f51a3c072b5/auth
+2026-07-29T01:40:54.6708022Z 2026-07-29 01:40:54.669 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6823639Z 2026-07-29 01:40:54.681 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-watch-845772f5e7214153ada87a802ffb025d/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:54.6825628Z 2026-07-29 01:40:54.681 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6827954Z 2026-07-29 01:40:54.681 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-845772f5e7214153ada87a802ffb025d/auth
+2026-07-29T01:40:54.6855690Z 2026-07-29 01:40:54.685 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:54.6991805Z 2026-07-29 01:40:54.698 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-cachedir-3882f9fa9d2647bcb7f99f6969ac94d9/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:54.6993469Z 2026-07-29 01:40:54.698 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:54.6996112Z 2026-07-29 01:40:54.698 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-cachedir-3882f9fa9d2647bcb7f99f6969ac94d9/auth
+2026-07-29T01:40:54.7048538Z 2026-07-29 01:40:54.704 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:55.1825744Z 2026-07-29 01:40:55.182 info: Ednsv.Web[0] Disk cache at /tmp/ednsv-watch-77ad442c0b1b4a10bc2a93540380bc80/cache (TTL 2h, flush every 3600s).
+2026-07-29T01:40:55.1827583Z 2026-07-29 01:40:55.182 info: Ednsv.Web[0] Watching the shared cache every 30s; an emptied Redis is repopulated from memory.
+2026-07-29T01:40:55.1828960Z 2026-07-29 01:40:55.182 info: Ednsv.Web[0] ednsv 1.0.0, commit 1922b44284f62cd80982bec1ce9c1364eae55f97.
+2026-07-29T01:40:55.1831001Z 2026-07-29 01:40:55.182 info: Ednsv.Web[0] Authentication enabled — token auth: on (root user 'ednsv'), OIDC SSO: off, JWT bearer: off. Auth data: /tmp/ednsv-watch-77ad442c0b1b4a10bc2a93540380bc80/auth
+2026-07-29T01:40:55.1859060Z 2026-07-29 01:40:55.185 info: Ednsv.Web[0] Cache flushed on shutdown.
+2026-07-29T01:40:55.1902832Z [xUnit.net 00:00:08.84]   Finished:    Ednsv.Web.Tests
+2026-07-29T01:40:55.2610132Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.TurningTheWatchOffAlsoTurnsOffTheIndexItWouldHavePruned [1 s]
+2026-07-29T01:40:55.2611572Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.APathOutsideTheDataDirectoryIsUsedAsGiven [18 ms]
+2026-07-29T01:40:55.2613395Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.UnsetResolvesToTheDataDirectorySoUpgradesAreUnchanged [19 ms]
+2026-07-29T01:40:55.2614230Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.NoneWritesNothingAndLeavesTheBagsEmpty [18 ms]
+2026-07-29T01:40:55.2615058Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.NoneWithoutRedisWarnsThatNothingSurvivesARestart [15 ms]
+2026-07-29T01:40:55.2616167Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.WithoutRedisThereIsNoWatchAtAll [15 ms]
+2026-07-29T01:40:55.2616888Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.BlankIsTreatedAsUnsetRatherThanAsDisabled [19 ms]
+2026-07-29T01:40:55.2617671Z   Passed Ednsv.Web.Tests.CacheDirSettingTests.TheShippedConfigurationWatchesEveryThirtySeconds [480 ms]
+2026-07-29T01:40:55.2641427Z 
+2026-07-29T01:40:55.2677114Z Test Run Successful.
+2026-07-29T01:40:55.2677481Z Total tests: 82
+2026-07-29T01:40:55.2677796Z      Passed: 82
+2026-07-29T01:40:55.2679616Z  Total time: 11.1142 Seconds
+2026-07-29T01:40:55.2878222Z      1>Done Building Project "/home/runner/work/ednsv/ednsv/ednsv.sln" (VSTest target(s)).
+2026-07-29T01:40:55.3057359Z 
+2026-07-29T01:40:55.3066926Z Build succeeded.
+2026-07-29T01:40:55.3067507Z     0 Warning(s)
+2026-07-29T01:40:55.3068066Z     0 Error(s)
+2026-07-29T01:40:55.3068407Z 
+2026-07-29T01:40:55.3068760Z Time Elapsed 00:00:12.83
+2026-07-29T01:40:55.3383892Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-29T01:40:55.3385083Z Post job cleanup.
+2026-07-29T01:40:55.4623295Z (node:3710) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-07-29T01:40:55.4624079Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-07-29T01:40:55.4799124Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+2026-07-29T01:40:55.4800493Z Post job cleanup.
+2026-07-29T01:40:55.5723197Z [command]/usr/bin/git version
+2026-07-29T01:40:55.5774129Z git version 2.54.0
+2026-07-29T01:40:55.5817799Z Temporarily overriding HOME='/home/runner/work/_temp/ddf75512-ea3f-407b-a4a4-dc0f2777929c' before making global git config changes
+2026-07-29T01:40:55.5819057Z Adding repository directory to the temporary git global config as a safe directory
+2026-07-29T01:40:55.5824220Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/ednsv/ednsv
+2026-07-29T01:40:55.5870133Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-07-29T01:40:55.5909210Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-07-29T01:40:55.6174463Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-07-29T01:40:55.6209777Z http.https://github.com/.extraheader
+2026-07-29T01:40:55.6223491Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-07-29T01:40:55.6262616Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-07-29T01:40:55.6619068Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-07-29T01:40:55.6689427Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-07-29T01:40:55.7157838Z Print service container logs: 1349df57db274972a69203fc022bcedd_redis7alpine_65573d
+2026-07-29T01:40:55.7162182Z ##[command]/usr/bin/docker logs --details aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:55.7295146Z  1:C 29 Jul 2026 01:40:01.963 # WARNING Memory overcommit must be enabled! Without it, a background save or replication may fail under low memory condition. Being disabled, it can also cause failures without low memory condition, see https://github.com/jemalloc/jemalloc/issues/1328. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+2026-07-29T01:40:55.7299183Z  1:C 29 Jul 2026 01:40:01.963 * oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+2026-07-29T01:40:55.7300115Z  1:C 29 Jul 2026 01:40:01.963 * Redis version=7.4.10, bits=64, commit=00000000, modified=0, pid=1, just started
+2026-07-29T01:40:55.7301511Z  1:C 29 Jul 2026 01:40:01.963 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+2026-07-29T01:40:55.7302553Z  1:M 29 Jul 2026 01:40:01.963 * monotonic clock: POSIX clock_gettime
+2026-07-29T01:40:55.7303150Z  1:M 29 Jul 2026 01:40:01.963 * Running mode=standalone, port=6379.
+2026-07-29T01:40:55.7303700Z  1:M 29 Jul 2026 01:40:01.964 * Server initialized
+2026-07-29T01:40:55.7304216Z  1:M 29 Jul 2026 01:40:01.964 * Ready to accept connections tcp
+2026-07-29T01:40:55.7319289Z Stop and remove container: 1349df57db274972a69203fc022bcedd_redis7alpine_65573d
+2026-07-29T01:40:55.7325103Z ##[command]/usr/bin/docker rm --force aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:56.7640562Z aae0ebf4ff345b72d8477b28206af8c96c4cb042e951f65e51e235ca15f1865a
+2026-07-29T01:40:56.7669365Z Remove container network: github_network_3b5fc45f778946008de9ff6936f83348
+2026-07-29T01:40:56.7673583Z ##[command]/usr/bin/docker network rm github_network_3b5fc45f778946008de9ff6936f83348
+2026-07-29T01:40:56.8811599Z github_network_3b5fc45f778946008de9ff6936f83348
+2026-07-29T01:40:56.8883763Z Cleaning up orphan processes
+2026-07-29T01:40:56.9241961Z Terminate orphan process: pid (2868) (dotnet)
+2026-07-29T01:40:56.9269729Z Terminate orphan process: pid (2869) (dotnet)
+2026-07-29T01:40:56.9301146Z Terminate orphan process: pid (2870) (dotnet)
+2026-07-29T01:40:56.9333467Z Terminate orphan process: pid (3092) (VBCSCompiler)
+2026-07-29T01:40:56.9513326Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-dotnet@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
