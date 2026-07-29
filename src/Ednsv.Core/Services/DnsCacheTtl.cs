@@ -47,6 +47,50 @@ public static class DnsCacheTtl
     }
 
     /// <summary>
+    /// <c>clamp(negativeTtl, floor, min(cap, negativeCap))</c> — the same clamp as
+    /// <see cref="For"/> under a second, tighter ceiling that applies to negative
+    /// answers alone.
+    ///
+    /// <para><b>The asymmetry is the point.</b> A stale "this exists" goes out of date;
+    /// a stale "this does not exist" produces a false finding — "No PTR record, Gmail
+    /// will reject mail" against an IP that has perfectly good reverse DNS. Resolvers
+    /// routinely cap negative caching well below positive for exactly this reason, and
+    /// RFC 2308 §5 recommends the same. Honouring an SOA MINIMUM of a day for an answer
+    /// a stressed resolver may simply have got wrong means one bad reply becomes a
+    /// long-lived, disk-persisted, fleet-shared error.</para>
+    ///
+    /// <para><b>Independent of the floor.</b> Unlike <see cref="For"/>, this applies
+    /// even with record-TTL gating switched off: it is a ceiling, and the damage it
+    /// bounds does not depend on whether the gating is on. With gating off nothing reads
+    /// a published TTL at all, so the ceiling alone governs.</para>
+    ///
+    /// <para>A negative answer that published no SOA takes the ceiling rather than
+    /// inheriting the cache-wide TTL. It is still a negative answer — the caller only
+    /// reaches here once the response has been confirmed an answer with an empty
+    /// answer section — so the cap is the safer of the two readings.</para>
+    /// </summary>
+    public static TimeSpan? ForNegative(TimeSpan? negativeTtl, TimeSpan floor, TimeSpan? cap,
+        TimeSpan? negativeCap)
+    {
+        // The tighter of the two ceilings.
+        var ceiling = cap;
+        if (negativeCap is { } n && n > TimeSpan.Zero && (ceiling is not { } c || n < c))
+            ceiling = n;
+
+        // Gating off: no published TTL is consulted, so the ceiling is the whole policy.
+        // Null when there is no negative cap either, which leaves the cache-wide TTL
+        // governing exactly as before this existed.
+        if (floor <= TimeSpan.Zero)
+            return negativeCap is { } set && set > TimeSpan.Zero ? ceiling : null;
+
+        if (negativeTtl is not { } ttl) return ceiling;
+
+        if (ttl < floor) ttl = floor;
+        if (ceiling is { } max && ttl > max) ttl = max;
+        return ttl;
+    }
+
+    /// <summary>
     /// The shortest TTL published across an answer section, or null when it is empty.
     ///
     /// <para><c>InitialTimeToLive</c> rather than <c>TimeToLive</c>: the latter counts

@@ -412,13 +412,21 @@ jobs:
             type=raw,value=latest-any
 
       - name: Build and push
-        # SOURCE_COMMIT is what makes a running pod identifiable — see the Dockerfile.
+        # What makes a running pod identifiable — see the Dockerfile.
+        #
+        # head.sha rather than github.sha on pull_request events: there, github.sha is
+        # the ephemeral merge commit GitHub synthesises for the run, which exists on no
+        # branch and cannot be looked up afterwards. Stamping it produced a hash that
+        # resolved to nothing, which is worse than useless on the one question this
+        # exists to answer.
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           build-args: |
-            SOURCE_COMMIT=${{ github.sha }}
+            SOURCE_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+            SOURCE_BRANCH=${{ github.event.pull_request.head.ref || github.ref_name }}
+            SOURCE_PR=${{ github.event.pull_request.number }}
           push: ${{ steps.gate.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

@@ -43,6 +43,33 @@ public static class BuildInfo
     public static string Display { get; } =
         ShortCommit.Length > 0 ? $"{Version} ({ShortCommit})" : Version;
 
+    /// <summary>Everything known about this build's provenance, for the startup log —
+    /// e.g. <c>1.0.0, commit ab867c4…, branch claude/x, PR #30</c>. Whatever is missing
+    /// is omitted rather than padded with placeholders.</summary>
+    public static string Provenance
+    {
+        get
+        {
+            var parts = new List<string> { Version };
+            parts.Add(Commit.Length > 0 ? $"commit {Commit}" : "commit unknown (no source revision embedded)");
+            if (Branch.Length > 0) parts.Add($"branch {Branch}");
+            if (PullRequest.Length > 0) parts.Add($"PR #{PullRequest}");
+            return string.Join(", ", parts);
+        }
+    }
+
+    /// <summary>The branch the image was built from, or empty. Assembly metadata
+    /// rather than part of the informational version: the SDK has a hook for the
+    /// revision and none for this.</summary>
+    public static string Branch { get; } = Metadata("SourceBranch");
+
+    /// <summary>The pull request number, or empty when the build was not a PR build.</summary>
+    public static string PullRequest { get; } = Metadata("SourcePullRequest");
+
+    private static string Metadata(string key) =>
+        typeof(BuildInfo).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(a => a.Key == key)?.Value ?? "";
+
     private static (string Version, string Commit) Split()
     {
         if (Informational.Length == 0) return ("unknown", "");

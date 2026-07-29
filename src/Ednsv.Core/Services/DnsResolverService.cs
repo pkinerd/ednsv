@@ -48,6 +48,18 @@ public sealed record DnsTuning
     /// <see cref="DnsCacheTtl.For"/> for why that distinction is load-bearing.</para>
     /// </summary>
     public double CacheMinTtlSeconds { get; init; } = 0;
+
+    /// <summary>
+    /// Ceiling on how long a <b>negative</b> answer (NXDOMAIN / NODATA) may be cached,
+    /// in seconds. Default 600. <c>0</c> removes it, leaving negatives bounded only by
+    /// the cache TTL like anything else.
+    ///
+    /// <para>Deliberately far below <c>CacheTtlHours</c>, and deliberately independent
+    /// of <see cref="CacheMinTtlSeconds"/>: a stale "exists" goes out of date, a stale
+    /// "does not exist" produces a false finding, and the second is worth far less
+    /// tolerance than the first. See <see cref="DnsCacheTtl.ForNegative"/>.</para>
+    /// </summary>
+    public double CacheNegativeTtlCapSeconds { get; init; } = 600;
 }
 
 public class DnsResolverService
@@ -93,6 +105,10 @@ public class DnsResolverService
     /// <summary>Floor for record-TTL gating. Zero disables the gating entirely —
     /// see <see cref="DnsTuning.CacheMinTtlSeconds"/>.</summary>
     private readonly TimeSpan _dnsMinTtl;
+
+    /// <summary>Ceiling on negative answers — see
+    /// <see cref="DnsTuning.CacheNegativeTtlCapSeconds"/>. Null when disabled.</summary>
+    private readonly TimeSpan? _dnsNegativeCap;
 
     // Unified caches — single source of truth (MemoryCache) with export log
     private readonly ProbeCache<IDnsQueryResponse> _queryCache;
@@ -223,6 +239,8 @@ public class DnsResolverService
         // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
         _dnsMinTtl = t.CacheMinTtlSeconds > 0 ? TimeSpan.FromSeconds(t.CacheMinTtlSeconds) : TimeSpan.Zero;
+        _dnsNegativeCap = t.CacheNegativeTtlCapSeconds > 0
+            ? TimeSpan.FromSeconds(t.CacheNegativeTtlCapSeconds) : null;
         _unreachableBag = new WriteBag<int>(cacheTtl, persistToDisk);
         _axfrBag = new WriteBag<bool>(cacheTtl, persistToDisk);
         _unreachableServerCounts = new ExpiringMap<string, (int count, DateTime lastFailure)>(cacheTtl);
@@ -893,9 +911,17 @@ public class DnsResolverService
     }
 
     private TimeSpan? DnsEntryTtl(IDnsQueryResponse response)
-        => DnsCacheTtl.For(
-            DnsCacheTtl.MinRecordTtl(response.Answers) ?? DnsCacheTtl.NegativeTtl(response.Authorities),
-            _dnsMinTtl, _cacheTtl);
+    {
+        // A positive answer is governed by its own record TTLs. Reaching the authority
+        // section at all means the answer section was empty, which — the caller having
+        // already established this is an answer rather than a failure — makes it a
+        // negative answer, and those carry their own, much tighter ceiling.
+        var positive = DnsCacheTtl.MinRecordTtl(response.Answers);
+        return positive is not null
+            ? DnsCacheTtl.For(positive, _dnsMinTtl, _cacheTtl)
+            : DnsCacheTtl.ForNegative(DnsCacheTtl.NegativeTtl(response.Authorities),
+                _dnsMinTtl, _cacheTtl, _dnsNegativeCap);
+    }
 
     private static JsonNode? DnsToNode(IDnsQueryResponse response)
     {

@@ -260,9 +260,13 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
     const stamp = document.getElementById('buildStamp');
     const short = d.shortCommit || '';
     stamp.textContent = short ? `${d.version} · ${short}` : `${d.version} · no commit`;
-    stamp.title = d.commit
-      ? `Build ${d.version}, commit ${d.commit}\nClick to copy`
-      : `Build ${d.version}. No source revision embedded in this image.`;
+    const lines = [`Build ${d.version}`];
+    lines.push(d.commit ? `commit ${d.commit}` : 'no source revision embedded in this image');
+    if (d.branch) lines.push(`branch ${d.branch}`);
+    if (d.pullRequest) lines.push(`PR #${d.pullRequest}`);
+    if (d.commit) lines.push('Click to copy the commit');
+    stamp.title = lines.join('\n');
+    if (d.pullRequest) stamp.textContent += ` · PR #${d.pullRequest}`;
     stamp.hidden = false;
     if (d.commit) stamp.addEventListener('click', () => {
       navigator.clipboard?.writeText(d.commit).then(() => {

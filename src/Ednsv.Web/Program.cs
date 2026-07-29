@@ -124,7 +124,8 @@ var dnsTuning = new DnsTuning
     // 0 = off, which is the default: every DNS entry gets the full cache TTL, as
     // before. Above zero and answers are bounded by their own record TTLs with this
     // as the floor. See DnsTuning.CacheMinTtlSeconds.
-    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0)
+    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0),
+    CacheNegativeTtlCapSeconds = builder.Configuration.GetValue("DnsNegativeTtlCapSeconds", 600.0)
 };
 DnsResolverService.SetMaxRetries(dnsTuning.MaxRetries);
 var smtpTimeoutSeconds     = builder.Configuration.GetValue("Smtp:TimeoutSeconds",     10.0);
@@ -679,8 +680,7 @@ if (!anyAuthEnabled && !IsLoopbackOnlyBinding(builder))
 
 // First thing in the log, so "which build is this pod running?" is answerable from
 // `kubectl logs` without reaching the UI or the API.
-app.Logger.LogInformation("ednsv {Version}, commit {Commit}.",
-    BuildInfo.Version, BuildInfo.Commit.Length > 0 ? BuildInfo.Commit : "unknown (no source revision embedded)");
+app.Logger.LogInformation("ednsv {Provenance}.", BuildInfo.Provenance);
 
 if (!anyAuthEnabled)
     app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none, no external IdP configured) and the server is bound to localhost only. All endpoints are open to local callers.");
@@ -1199,7 +1199,9 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
         // exactly like a fix that did not work.
         version          = BuildInfo.Version,
         commit           = BuildInfo.Commit,
-        shortCommit      = BuildInfo.ShortCommit
+        shortCommit      = BuildInfo.ShortCommit,
+        branch           = BuildInfo.Branch,
+        pullRequest      = BuildInfo.PullRequest
     });
 })
 .WithName("GetDefaults")

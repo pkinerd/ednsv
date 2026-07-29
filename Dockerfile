@@ -10,6 +10,8 @@ WORKDIR /src
 # here — so without this argument every image reports a bare version and no revision,
 # and a running pod cannot be told apart from any other build.
 ARG SOURCE_COMMIT=""
+ARG SOURCE_BRANCH=""
+ARG SOURCE_PR=""
 
 COPY src/Ednsv.Core/Ednsv.Core.csproj src/Ednsv.Core/
 COPY src/Ednsv.Web/Ednsv.Web.csproj src/Ednsv.Web/
@@ -22,7 +24,9 @@ RUN dotnet publish src/Ednsv.Web/Ednsv.Web.csproj \
         --no-restore \
         --output /app/publish \
         /p:UseAppHost=false \
-        /p:SourceRevisionId="$SOURCE_COMMIT"
+        /p:SourceRevisionId="$SOURCE_COMMIT" \
+        /p:SourceBranch="$SOURCE_BRANCH" \
+        /p:SourcePullRequest="$SOURCE_PR"
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_VERSION} AS runtime
 WORKDIR /app

@@ -13,4 +13,14 @@
     <PackageReference Include="System.Text.Json" Version="10.0.5" />
   </ItemGroup>
 
+
+  <!-- Build provenance. SourceRevisionId is the SDK's own hook (it appends to
+       AssemblyInformationalVersion); branch and PR have no equivalent, so they ride as
+       assembly metadata. All three are supplied by the container build, which has no
+       .git to derive them from. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="SourceBranch" Value="$(SourceBranch)" Condition="'$(SourceBranch)' != ''" />
+    <AssemblyMetadata Include="SourcePullRequest" Value="$(SourcePullRequest)" Condition="'$(SourcePullRequest)' != ''" />
+  </ItemGroup>
+
 </Project>
