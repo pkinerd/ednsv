@@ -123,7 +123,7 @@ flowchart TD
     NprobeCache[["_probeCache<br/><i>smtp:host:port</i>"]]
     NportCache[["_portCache<br/><i>port:host:port</i>"]]
     NgetCache[["_getCache<br/><i>url</i>"]]
-    NaxfrCache[["_axfrCache<br/><i>ip|domain</i>"]]
+    NaxfrCache[["_axfrCache<br/><i>ExpiringMap</i>"]]
     NARecords -->|"A"| NqueryCache
     NAAAARecords -->|"AAAA"| NqueryCache
     NAutodiscover -->|"A, CNAME, SRV"| NqueryCache
@@ -193,6 +193,12 @@ flowchart TD
     LBT["30s<br/><b>L1 only</b>"]
     BD --> LBD
     BT --> LBT
+    ED(["<b>definitive</b>"])
+    ET(["<b>transient</b>"])
+    LED["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LET["<b>not cached at all</b><br/>refetched on the next request"]
+    ED --> LED
+    ET --> LET
     LD(["<b>definitive</b>"])
     LT(["<b>transient</b>"])
     LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
@@ -211,12 +217,15 @@ flowchart TD
     NportCache --> LT
     NgetCache --> BD
     NgetCache --> BT
-    NaxfrCache --> LD
-    NaxfrCache --> LT
+    NaxfrCache --> ED
+    NaxfrCache --> ET
     style BD fill:#e6f4ea,stroke:#34a853
     style BT fill:#fce8e6,stroke:#ea4335
+    style ED fill:#e6f4ea,stroke:#34a853
+    style ET fill:#fce8e6,stroke:#ea4335
     style LBT fill:#fce8e6,stroke:#ea4335
     style LD fill:#e6f4ea,stroke:#34a853
+    style LET fill:#fce8e6,stroke:#ea4335
     style LF fill:#fce8e6,stroke:#ea4335
     style LLT fill:#fce8e6,stroke:#ea4335
     style LN fill:#fef7e0,stroke:#f9ab00
@@ -430,8 +439,8 @@ flowchart TD
     NptrCache[["_ptrCache<br/><i>ptr:ip</i>"]]
     NprobeCache[["_probeCache<br/><i>smtp:host:port</i>"]]
     NportCache[["_portCache<br/><i>port:host:port</i>"]]
-    NrcptCache[["_rcptCache<br/><i>host|email</i>"]]
-    NrelayCache[["_relayCache<br/><i>relay:host|domain</i>"]]
+    NrcptCache[["_rcptCache<br/><i>ExpiringMap</i>"]]
+    NrelayCache[["_relayCache<br/><i>ExpiringMap</i>"]]
     NCatchAllDetection -->|"MX"| NqueryCache
     NCatchAllDetection --> NrcptCache
     NEHLOCapabilities --> NprobeCache
@@ -475,6 +484,12 @@ flowchart TD
     LBT["30s<br/><b>L1 only</b>"]
     BD --> LBD
     BT --> LBT
+    ED(["<b>definitive</b>"])
+    ET(["<b>transient</b>"])
+    LED["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LET["<b>not cached at all</b><br/>refetched on the next request"]
+    ED --> LED
+    ET --> LET
     LD(["<b>definitive</b>"])
     LT(["<b>transient</b>"])
     LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
@@ -491,14 +506,17 @@ flowchart TD
     NprobeCache --> BT
     NportCache --> LD
     NportCache --> LT
-    NrcptCache --> LD
-    NrcptCache --> LT
-    NrelayCache --> LD
-    NrelayCache --> LT
+    NrcptCache --> ED
+    NrcptCache --> ET
+    NrelayCache --> ED
+    NrelayCache --> ET
     style BD fill:#e6f4ea,stroke:#34a853
     style BT fill:#fce8e6,stroke:#ea4335
+    style ED fill:#e6f4ea,stroke:#34a853
+    style ET fill:#fce8e6,stroke:#ea4335
     style LBT fill:#fce8e6,stroke:#ea4335
     style LD fill:#e6f4ea,stroke:#34a853
+    style LET fill:#fce8e6,stroke:#ea4335
     style LF fill:#fce8e6,stroke:#ea4335
     style LLT fill:#fce8e6,stroke:#ea4335
     style LN fill:#fef7e0,stroke:#f9ab00
@@ -524,7 +542,7 @@ flowchart TD
         NAbuseAddress["Abuse Address"]
     end
     NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
-    NrcptCache[["_rcptCache<br/><i>host|email</i>"]]
+    NrcptCache[["_rcptCache<br/><i>ExpiringMap</i>"]]
     NAbuseAddress -->|"MX"| NqueryCache
     NAbuseAddress --> NrcptCache
     NPostmasterAddress -->|"MX"| NqueryCache
@@ -538,22 +556,22 @@ flowchart TD
     RP --> LP
     RN --> LN
     RF --> LF
-    LD(["<b>definitive</b>"])
-    LT(["<b>transient</b>"])
-    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
-    LLT["30s<br/><b>L1 only</b>"]
-    LD --> LLD
-    LT --> LLT
+    ED(["<b>definitive</b>"])
+    ET(["<b>transient</b>"])
+    LED["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LET["<b>not cached at all</b><br/>refetched on the next request"]
+    ED --> LED
+    ET --> LET
     NqueryCache --> RP
     NqueryCache --> RN
     NqueryCache --> RF
-    NrcptCache --> LD
-    NrcptCache --> LT
-    style LD fill:#e6f4ea,stroke:#34a853
+    NrcptCache --> ED
+    NrcptCache --> ET
+    style ED fill:#e6f4ea,stroke:#34a853
+    style ET fill:#fce8e6,stroke:#ea4335
+    style LET fill:#fce8e6,stroke:#ea4335
     style LF fill:#fce8e6,stroke:#ea4335
-    style LLT fill:#fce8e6,stroke:#ea4335
     style LN fill:#fef7e0,stroke:#f9ab00
-    style LT fill:#fce8e6,stroke:#ea4335
     style RF fill:#fce8e6,stroke:#ea4335
     style RN fill:#fef7e0,stroke:#f9ab00
     style RP fill:#e6f4ea,stroke:#34a853
@@ -627,7 +645,7 @@ flowchart TD
         NAXFRExposure["AXFR Exposure"]
     end
     NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
-    NaxfrCache[["_axfrCache<br/><i>ip|domain</i>"]]
+    NaxfrCache[["_axfrCache<br/><i>ExpiringMap</i>"]]
     NAXFRExposure --> NaxfrCache
     NAXFRExposure -->|"A, AAAA, NS"| NqueryCache
     RP(["<b>positive</b><br/>records returned"])
@@ -639,22 +657,22 @@ flowchart TD
     RP --> LP
     RN --> LN
     RF --> LF
-    LD(["<b>definitive</b>"])
-    LT(["<b>transient</b>"])
-    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
-    LLT["30s<br/><b>L1 only</b>"]
-    LD --> LLD
-    LT --> LLT
+    ED(["<b>definitive</b>"])
+    ET(["<b>transient</b>"])
+    LED["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LET["<b>not cached at all</b><br/>refetched on the next request"]
+    ED --> LED
+    ET --> LET
     NqueryCache --> RP
     NqueryCache --> RN
     NqueryCache --> RF
-    NaxfrCache --> LD
-    NaxfrCache --> LT
-    style LD fill:#e6f4ea,stroke:#34a853
+    NaxfrCache --> ED
+    NaxfrCache --> ET
+    style ED fill:#e6f4ea,stroke:#34a853
+    style ET fill:#fce8e6,stroke:#ea4335
+    style LET fill:#fce8e6,stroke:#ea4335
     style LF fill:#fce8e6,stroke:#ea4335
-    style LLT fill:#fce8e6,stroke:#ea4335
     style LN fill:#fef7e0,stroke:#f9ab00
-    style LT fill:#fce8e6,stroke:#ea4335
     style RF fill:#fce8e6,stroke:#ea4335
     style RN fill:#fef7e0,stroke:#f9ab00
     style RP fill:#e6f4ea,stroke:#34a853
@@ -720,16 +738,22 @@ no PTR, a "not listed" blocklist reply, a name that publishes no CAA.
 
 The other probes have no equivalent of a negative answer — there is no protocol-level way
 for a mail server to publish "this port is authoritatively shut for the next hour". They
-split two ways instead: **definitive** (persisted, `CacheTtlHours`) or **transient**
-(L1 only, 30s).
+split two ways instead: **definitive** (persisted, `CacheTtlHours`) or **transient**.
+
+What "transient" costs depends on the cache type, and the difference is easy to miss.
+`_probeCache`, `_portCache` and the HTTP caches are a `ProbeCache`/`ProbeCacheValue`, so a
+transient result is held in L1 for 30s to stop one validation re-asking. The three
+`ExpiringMap` caches — `_rcptCache`, `_relayCache`, `_axfrCache` — have no such
+mechanism: their callers simply do not write on a transient failure, so nothing is cached
+and the next request refetches.
 
 | Probe | Cache | Definitive — persisted | Transient — L1 only |
 |---|---|---|---|
 | SMTP handshake | `_probeCache` | connected, or failed with a stated reason | `Connection timed out` |
 | Port reachability | `_portCache` | open, or at least one attempt was refused | every attempt timed out |
-| RCPT / relay | `_rcptCache`, `_relayCache` | the server gave a verdict | no usable conversation |
+| RCPT / relay | `_rcptCache`, `_relayCache` | the server gave a verdict | **not cached at all** |
 | HTTP GET | `_getCache`, `_getWithHeadersCache` | any HTTP status, 4xx and 5xx included | status 0 — the host was never reached |
-| Zone transfer | `_axfrCache` | the transfer was allowed or refused | the TCP attempt failed |
+| Zone transfer | `_axfrCache` | the transfer was allowed or refused | **not cached at all** |
 
 Two of these are worth noting:
 
@@ -879,17 +903,17 @@ that category bypasses; see *Recheck System* in
 | ZoneTransfer | AXFR Exposure | `A`, `AAAA`, `NS` | `_axfrCache`, `_queryCache` | `Dns, Axfr` |
 ### The caches
 
-| Cache | Holds | L1 | Disk | Redis | Notes |
-|---|---|---|---|---|---|
-| `_queryCache` | DNS answers, keyed `q:domain:type` | yes | yes | yes | The busiest cache. Shared by `QueryAsync`, `QueryDnsblAsync` and `QuerySpeculativeAsync` |
-| `_ptrCache` | Reverse lookups, keyed `ptr:ip` | yes | yes | yes | Distinguishes a failed lookup from an absent PTR — see below |
-| `_serverQueryCache` | Per-nameserver answers, keyed `sq:server:domain:type` | yes | yes | yes | The only path with the unreachable-server breaker |
-| `_probeCache` | SMTP handshakes, keyed `smtp:host:port` | yes | yes | yes | |
-| `_portCache` | Port reachability, keyed `port:host:port` | yes | yes | **no** | A `ProbeCacheValue<bool>` |
-| `_rcptCache` | RCPT verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
-| `_relayCache` | Open-relay verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
-| `_getCache` / `_getWithHeadersCache` | HTTP GETs, keyed by URL | yes | yes | yes | Any HTTP status is definitive; only a status-0 network failure is transient |
-| `_axfrCache` | Zone-transfer verdicts | yes | yes | **no** | The transfer *response* is held in memory only — a whole zone is too large to persist |
+| Cache | Type | Holds | L1 | Disk | Redis | On a transient failure |
+|---|---|---|---|---|---|---|
+| `_queryCache` | `ProbeCache` | DNS answers, keyed `q:domain:type` | yes | yes | yes | 30s, L1 only |
+| `_ptrCache` | `ProbeCache` | Reverse lookups, keyed `ptr:ip` | yes | yes | yes | 30s, L1 only — and distinguishable from an absent PTR, see below |
+| `_serverQueryCache` | `ProbeCache` | Per-nameserver answers, keyed `sq:server:domain:type` | yes | yes | yes | 30s, L1 only. The only path with the unreachable-server breaker |
+| `_probeCache` | `ProbeCache` | SMTP handshakes, keyed `smtp:host:port` | yes | yes | yes | 30s, L1 only |
+| `_portCache` | `ProbeCacheValue` | Port reachability, keyed `port:host:port` | yes | yes | **no** | 30s, L1 only |
+| `_rcptCache` | `ExpiringMap` | RCPT verdicts | yes | yes | **no** | **not cached at all** |
+| `_relayCache` | `ExpiringMap` | Open-relay verdicts | yes | yes | **no** | **not cached at all** |
+| `_getCache` / `_getWithHeadersCache` | `ProbeCache` | HTTP GETs, keyed by URL | yes | yes | yes | 30s, L1 only. Any HTTP status is definitive; only status 0 is transient |
+| `_axfrCache` | `ExpiringMap` | Zone-transfer verdicts | yes | yes | **no** | **not cached at all**. The transfer *response* is held in memory only — a whole zone is too large to persist |
 
 All of them honour the recheck bypass: `ProbeCache.TryGet`, `ProbeCacheValue.TryGet` and
 `ExpiringMap.TryGetValue` each take the `CacheDep` flag and return a miss for the types

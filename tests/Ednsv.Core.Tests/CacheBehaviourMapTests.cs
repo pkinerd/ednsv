@@ -58,6 +58,42 @@ public sealed class CacheBehaviourMapTests
         Assert.True(missing.Count == 0, $"categories missing from the map: {string.Join(", ", missing)}");
     }
 
+    /// <summary>
+    /// The cache table's Redis column and transient-failure column must follow from the
+    /// wrapper type, which is the thing that actually decides them. An `ExpiringMap` has
+    /// no <c>shouldPersist</c> and no transient window — its callers simply do not write
+    /// on a failure — so claiming a 30s L1 hold for one is wrong in a way that reads
+    /// entirely plausible. The doc did claim exactly that until it was reconciled.
+    /// </summary>
+    [Theory]
+    [InlineData("_queryCache", "ProbeCache", true)]
+    [InlineData("_serverQueryCache", "ProbeCache", true)]
+    [InlineData("_ptrCache", "ProbeCache", true)]
+    [InlineData("_probeCache", "ProbeCache", true)]
+    [InlineData("_portCache", "ProbeCacheValue", false)]
+    [InlineData("_rcptCache", "ExpiringMap", false)]
+    [InlineData("_relayCache", "ExpiringMap", false)]
+    [InlineData("_getCache", "ProbeCache", true)]
+    [InlineData("_axfrCache", "ExpiringMap", false)]
+    public void TheCacheTableMatchesTheWrapperType(string cache, string type, bool redis)
+    {
+        var row = Doc().Split('\n')
+            .FirstOrDefault(l => l.StartsWith("| `", StringComparison.Ordinal)
+                                 && l.Count(ch => ch == '|') == 8
+                                 && l.Split('|')[1].Contains('`' + cache + '`', StringComparison.Ordinal));
+        Assert.True(row != null, $"no cache-table row for {cache}");
+
+        var cols = row!.Split('|');
+        Assert.Contains('`' + type + '`', row, StringComparison.Ordinal);
+        Assert.Equal(redis ? "yes" : "**no**", cols[6].Trim());
+
+        // The transient column must follow from the type, not be chosen freely.
+        if (type == "ExpiringMap")
+            Assert.Contains("not cached at all", cols[7], StringComparison.Ordinal);
+        else
+            Assert.Contains("30s", cols[7], StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TheStatedCheckCountMatchesReality()
     {
