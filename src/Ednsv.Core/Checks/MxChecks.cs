@@ -1,3 +1,4 @@
+using Ednsv.Core.Services;
 using System.Net;
 using DnsClient;
 using DnsClient.Protocol;
@@ -47,7 +48,8 @@ public class MxRecordsCheck : ICheck
                     foreach (var ip in aRecs)
                     {
                         var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
-                        ptrInfo.Add($"{ip} PTR: {(ptrs.Any() ? string.Join(", ", ptrs) : "none")}");
+                        ptrInfo.Add($"{ip} PTR: {(ptrs.Any() ? string.Join(", ", ptrs)
+                            : DnsResolverService.PtrLookupDidFail(ptrs) ? "lookup failed" : "none")}");
                     }
 
                     result.Details.Add($"Priority {mx.Preference}: {host} -> {ips}{ipv6}");

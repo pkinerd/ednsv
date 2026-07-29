@@ -79,16 +79,32 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
     private TimeSpan LifetimeFor(TimeSpan? ttl)
         => ttl is { } t && t > TimeSpan.Zero ? t : ProbeCacheL2.UncappedLifetime;
 
-    /// <summary>Read a value from the L2, or null on miss / any error.</summary>
-    public async Task<TValue?> TryGetAsync(string key)
+    /// <summary>
+    /// Read a value from the L2 together with its remaining lifetime, or null on miss
+    /// / any error.
+    ///
+    /// <para><b>The remaining lifetime is part of the hit, not an optional extra.</b>
+    /// The caller puts the value into its own L1, and without knowing what is left on
+    /// the shared key it can only guess — which meant a fresh full <c>CacheTtlHours</c>,
+    /// letting the local copy outlive the shared entry it came from. <c>GETEX</c>-style
+    /// retrieval costs nothing over a plain <c>GET</c> here: one round trip either
+    /// way.</para>
+    ///
+    /// <para>A null lifetime means the key carries no expiry. Nothing this class writes
+    /// is ever without one, so it means a key from somewhere else; the caller falls back
+    /// to its own TTL rather than assuming immortality.</para>
+    /// </summary>
+    public async Task<(TValue Value, TimeSpan? Remaining)?> TryGetAsync(string key)
     {
         var db = _redis.GetDatabase();
         if (db == null) return null;
         try
         {
-            var val = await db.StringGetAsync(_redis.Key(_prefix + key));
-            if (val.IsNullOrEmpty) return null;
-            return _deserialize(val!);
+            var hit = await db.StringGetWithExpiryAsync(_redis.Key(_prefix + key));
+            if (hit.Value.IsNullOrEmpty) return null;
+            var value = _deserialize(hit.Value!);
+            if (value == null) return null;
+            return (value, hit.Expiry);
         }
         catch { return null; }
     }
@@ -168,9 +184,36 @@ public sealed class ProbeCacheL2<TValue> where TValue : class
 /// recheck deps, MemoryCache is skipped and a fresh value is obtained.
 /// The fresh value is written back to MemoryCache for other users.
 /// </summary>
+/// <summary>Cache policy shared by both probe-cache variants, and so belonging to
+/// neither closed generic.</summary>
+public static class ProbeCachePolicy
+{
+    /// <summary>
+    /// How long a value rejected by <c>shouldPersist</c> stays in L1.
+    ///
+    /// <para>These are failures to obtain an answer — a timeout, a SERVFAIL, an
+    /// unreachable host — cached only so that concurrent and closely-following work
+    /// within one validation does not re-ask something that has just failed. The
+    /// in-flight map already collapses the concurrent case, so this only needs to span
+    /// a single validation.</para>
+    ///
+    /// <para><b>It used to be the cache-wide TTL, and that was badly wrong.</b> The
+    /// intent was recorded as "for the rest of the current process", which is one run
+    /// for the CLI but <i>days</i> for the web service. A single transient PTR timeout
+    /// was therefore returned as an empty list — indistinguishable from "this IP has no
+    /// reverse DNS" — and held for the whole <c>CacheTtlHours</c>, so one unlucky
+    /// lookup pinned a false "no PTR record, Gmail will reject mail" finding for hours.
+    /// Worse with record-TTL gating on, where a <i>successful</i> answer might live
+    /// sixty seconds: the failure outlived the success by two orders of magnitude, and
+    /// every refetch was a fresh chance to acquire one.</para>
+    /// </summary>
+    public static readonly TimeSpan TransientLifetime = TimeSpan.FromSeconds(30);
+}
+
 public class ProbeCache<TValue> where TValue : class
 {
     private readonly MemoryCache _cache;
+    private readonly TimeSpan _transientLifetime;
     private readonly TimeSpan? _ttl;
     // Optional shared L2 (Redis). Null in single-instance mode.
     private readonly ProbeCacheL2<TValue>? _l2;
@@ -224,11 +267,16 @@ public class ProbeCache<TValue> where TValue : class
     /// <param name="warmSharedCache">False when nothing will ever republish this cache
     /// into the shared tier — no Redis, or the shared-cache watch disabled. Skips the
     /// key index entirely; see <see cref="_l2Index"/>.</param>
+    /// <param name="transientLifetime">Overrides
+    /// <see cref="ProbeCachePolicy.TransientLifetime"/> for values rejected by
+    /// <c>shouldPersist</c>. Exists so the behaviour can be asserted without a test
+    /// sleeping out the real window; production leaves it null.</param>
     public ProbeCache(TimeSpan? ttl = null, ProbeCacheL2<TValue>? l2 = null, bool persist = true,
-        bool warmSharedCache = true)
+        bool warmSharedCache = true, TimeSpan? transientLifetime = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _transientLifetime = transientLifetime ?? ProbeCachePolicy.TransientLifetime;
         _l2 = l2 != null && l2.Enabled ? l2 : null;
         _persist = persist;
         _l2Index = _l2 != null && warmSharedCache ? new ConcurrentDictionary<string, DateTime>() : null;
@@ -239,6 +287,59 @@ public class ProbeCache<TValue> where TValue : class
     {
         var ttl = entryTtl ?? _ttl;
         return ttl.HasValue ? DateTime.UtcNow + ttl.Value : DateTime.MaxValue;
+    }
+
+    /// <summary>
+    /// When the L1 copy of a value read from the shared cache should expire: the
+    /// sooner of what is left on the shared key and a full cache TTL from now.
+    ///
+    /// <para><b>An L2 hit must not restart the clock.</b> It used to: the value was
+    /// cached locally with a fresh <c>CacheTtlHours</c> regardless of how little was
+    /// left on the Redis key. With record-TTL gating on, a DNS answer bounded to sixty
+    /// seconds by its own record TTL and read from Redis at fifty-nine seconds old was
+    /// then served from L1 for two more hours. The key index recorded that expiry too,
+    /// so an emptied-Redis re-warm republished the entry with more life than it had
+    /// ever been given — the shared and local tiers steadily drifting apart on every
+    /// hit.</para>
+    ///
+    /// <para><b>Capped at our own TTL in the other direction.</b> Every value written
+    /// here carries a lifetime, so what comes back is always a real bound — but it is
+    /// the <i>writer's</i> bound, and the writer need not be running our configuration.
+    /// Redis outlives a pod: keys written under a longer <c>CacheTtlHours</c> survive
+    /// the deploy that lowered it, and a rolling change has peers on both settings at
+    /// once. The cap is what keeps <c>CacheTtlHours</c> meaning the same thing on every
+    /// path in this process, restarts and config changes included.</para>
+    ///
+    /// <para>It bounds how long a value is <i>held</i>, not how stale it may get — a
+    /// distinction worth not misreading. When this expiry passes we take an L1 miss,
+    /// re-read the L2, find the same key still alive and cache it again. Total age
+    /// stays governed by the shared key's own lifetime, which is the shared tier's
+    /// contract to keep and the right place for it.</para>
+    ///
+    /// <para>With no TTL configured the shared key's lifetime governs alone: it is a
+    /// real bound, and preferring "never expires" over it is exactly the drift this
+    /// prevents.</para>
+    ///
+    /// <para>Null when the shared key carries no expiry at all, which leaves
+    /// <see cref="SetMemoryOnly"/> falling back to the cache-wide TTL.</para>
+    /// </summary>
+    /// <summary>When a <c>shouldPersist</c>-rejected value should expire: never later
+    /// than a normal entry, so a cache configured shorter than
+    /// <see cref="TransientLifetime"/> is not lengthened by a failure.</summary>
+    private DateTime TransientExpiry()
+    {
+        var brief = DateTime.UtcNow + _transientLifetime;
+        var normal = AbsoluteExpiry(null);
+        return brief < normal ? brief : normal;
+    }
+
+    private DateTime? L1ExpiryForL2Hit(TimeSpan? remaining)
+    {
+        if (remaining is not { } left) return null;
+
+        var theirs = DateTime.UtcNow + left;
+        var ours = AbsoluteExpiry(null);
+        return theirs < ours ? theirs : ours;
     }
 
     /// <summary>Evict every entry: MemoryCache, the disk-export log, and any in-flight map.</summary>
@@ -324,14 +425,16 @@ public class ProbeCache<TValue> where TValue : class
             // populates L1 so subsequent local reads are fast.
             if (!skipL2Read && _l2 != null)
             {
-                var l2v = await _l2.TryGetAsync(key);
-                if (l2v != null)
+                var hit = await _l2.TryGetAsync(key);
+                if (hit is { } h)
                 {
                     Trace?.Invoke($"[CACHE] L2 HIT {key}");
                     // Memory only: another instance fetched and persisted this, so
                     // writing it out again would duplicate their work on our disk.
-                    SetMemoryOnly(key, l2v);
-                    return l2v;
+                    // Bounded by what is left on the shared key, so the local copy
+                    // cannot outlive the entry it was read from.
+                    SetMemoryOnly(key, h.Value, L1ExpiryForL2Hit(h.Remaining));
+                    return h.Value;
                 }
             }
 
@@ -346,11 +449,14 @@ public class ProbeCache<TValue> where TValue : class
                 TimeSpan? ttl;
                 try { ttl = entryTtl?.Invoke(result); }
                 catch { ttl = null; } // a TTL we cannot derive falls back to the cache's
-                Set(key, result, ttl);
-                _l2?.Set(key, result, ttl);
+                Set(key, result, ttl); // write-through to the L2 included
             }
             else
-                SetMemoryOnly(key, result);
+                // A failure, not an answer. Held briefly so one validation does not
+                // re-ask what just failed, and kept out of the key index as well as the
+                // bag and the write-through — a re-warm would otherwise publish it to
+                // peers regardless.
+                SetMemoryOnly(key, result, TransientExpiry(), shareable: false);
             return result;
         }
         finally
@@ -364,8 +470,17 @@ public class ProbeCache<TValue> where TValue : class
     ///
     /// <para><paramref name="entryTtl"/> lets a value shorten its own life below the
     /// cache-wide TTL — a DNS answer whose records say thirty seconds should not be
-    /// served for two hours. It applies to the MemoryCache expiry and to the expiry
-    /// stamped on the disk record together, so the two never disagree.</para>
+    /// served for two hours. It applies to the MemoryCache expiry, to the expiry
+    /// stamped on the disk record and to the shared copy together, so the three never
+    /// disagree.</para>
+    ///
+    /// <para><b>All three tiers, not just the local two.</b> The write-through used to
+    /// live at the one call site that went through <see cref="GetOrCreateAsync"/>,
+    /// which left every other caller writing to L1 and disk but never to Redis — the
+    /// speculative DNS path among them, so a pod's DKIM-selector and SRV probes were
+    /// invisible to its peers and each one re-probed the same absent names. Caching a
+    /// value this process fetched means the same thing wherever it is called from, so
+    /// it belongs here rather than in each caller's hands.</para>
     /// </summary>
     public void Set(string key, TValue value, TimeSpan? entryTtl = null)
     {
@@ -379,9 +494,43 @@ public class ProbeCache<TValue> where TValue : class
 
         if (_l2Index != null) _l2Index[key] = expires;
 
+        _l2?.Set(key, value, entryTtl);
+
         if (!_persist) return; // no disk tier — nothing would ever drain the bag
 
         _bag[key] = new BagEntry<TValue>(value, DateTime.UtcNow, expires);
+    }
+
+    /// <summary>
+    /// Read from L1, falling back to the shared L2 and populating L1 from a hit — the
+    /// read half of <see cref="GetOrCreateAsync"/>, for callers that cannot use it.
+    ///
+    /// <para>The speculative DNS path is the one such caller: it must not cache its own
+    /// timeouts, and <see cref="GetOrCreateAsync"/> caches every factory result in L1
+    /// one way or another, which would leave a short-timeout miss shadowing the longer
+    /// query that comes after it. Reading with a plain <see cref="TryGet"/> instead
+    /// meant it never consulted the shared tier at all, so publishing its results there
+    /// would have been write-only.</para>
+    ///
+    /// <para>A recheck misses the L2 as well as L1, exactly as
+    /// <see cref="GetOrCreateAsync"/> arranges: a peer's cached copy must not satisfy
+    /// the read the recheck exists to refresh.</para>
+    /// </summary>
+    public async Task<TValue?> TryGetSharedAsync(string key,
+        RecheckHelper.CacheDep recheckFlag = RecheckHelper.CacheDep.None)
+    {
+        if (TryGet(key, out var cached, recheckFlag)) return cached;
+
+        if (_l2 == null) return null;
+        if (recheckFlag != RecheckHelper.CacheDep.None &&
+            RecheckHelper.CurrentRecheckDeps.Value.HasFlag(recheckFlag)) return null;
+
+        var hit = await _l2.TryGetAsync(key);
+        if (hit is not { } h) return null;
+
+        Trace?.Invoke($"[CACHE] L2 HIT {key}");
+        SetMemoryOnly(key, h.Value, L1ExpiryForL2Hit(h.Remaining));
+        return h.Value;
     }
 
     /// <summary>
@@ -390,8 +539,19 @@ public class ProbeCache<TValue> where TValue : class
     /// should not outlive the process, values read from the shared Redis L2 (another
     /// instance already persisted them), and entries imported from disk (they are
     /// on disk by definition).
+    ///
+    /// <para><paramref name="shareable"/> separates the first of those three from the
+    /// other two. All three skip the disk bag, but only transient errors must also stay
+    /// out of the shared-cache key index: <see cref="WarmSharedCache"/> republishes
+    /// everything the index names, and it cannot tell a timeout from a real answer.
+    /// Indexing them meant a value deliberately kept out of the write-through reached
+    /// Redis anyway the next time the shared cache was emptied — the long way round,
+    /// but the same destination the <c>shouldPersist</c> predicate exists to keep it
+    /// from. L2 hits and disk imports are already published by definition, so they
+    /// belong in the index; a re-warm is the only thing that will put them back.</para>
     /// </summary>
-    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null)
+    private void SetMemoryOnly(string key, TValue value, DateTime? absoluteExpiryUtc = null,
+        bool shareable = true)
     {
         if (absoluteExpiryUtc.HasValue)
             _cache.Set(key, value, new DateTimeOffset(
@@ -401,7 +561,7 @@ public class ProbeCache<TValue> where TValue : class
         else
             _cache.Set(key, value);
 
-        if (_l2Index != null) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
+        if (_l2Index != null && shareable) _l2Index[key] = absoluteExpiryUtc ?? AbsoluteExpiry(null);
     }
 
     /// <summary>
@@ -590,6 +750,7 @@ public class ProbeCache<TValue> where TValue : class
 public class ProbeCacheValue<TValue> where TValue : struct
 {
     private readonly MemoryCache _cache;
+    private readonly TimeSpan _transientLifetime;
     private readonly TimeSpan? _ttl;
     // See ProbeCache<T>._bag — values this process fetched and has yet to persist.
     private readonly ConcurrentDictionary<string, BagEntry<TValue>> _bag = new();
@@ -610,10 +771,13 @@ public class ProbeCacheValue<TValue> where TValue : struct
     /// <summary>See <see cref="ProbeCache{T}"/> — false when there is no disk tier.</summary>
     private readonly bool _persist;
 
-    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true)
+    /// <param name="transientLifetime">See <see cref="ProbeCache{T}"/>'s parameter of
+    /// the same name.</param>
+    public ProbeCacheValue(TimeSpan? ttl = null, bool persist = true, TimeSpan? transientLifetime = null)
     {
         _cache = new MemoryCache(new MemoryCacheOptions());
         _ttl = ttl;
+        _transientLifetime = transientLifetime ?? ProbeCachePolicy.TransientLifetime;
         _persist = persist;
     }
 
@@ -676,13 +840,25 @@ public class ProbeCacheValue<TValue> where TValue : struct
             if (shouldPersist == null || shouldPersist(result))
                 Set(key, result);
             else
-                SetMemoryOnly(key, result);
+                // Briefly, like the reference-type cache — see
+                // ProbeCache<T>.TransientLifetime. A port probe that timed out is not
+                // evidence the port is shut, and holding it for the cache-wide TTL
+                // reported exactly that for hours.
+                SetMemoryOnly(key, result, TransientExpiry());
             return result;
         }
         finally
         {
             _inflight.TryRemove(key, out _);
         }
+    }
+
+    /// <summary>See <see cref="ProbeCache{T}.TransientExpiry"/>.</summary>
+    private DateTime TransientExpiry()
+    {
+        var brief = DateTime.UtcNow + _transientLifetime;
+        var normal = _ttl.HasValue ? DateTime.UtcNow + _ttl.Value : DateTime.MaxValue;
+        return brief < normal ? brief : normal;
     }
 
     public void Set(string key, TValue value)

@@ -84,8 +84,8 @@ public sealed class SharedCacheWarmTests
 
         Assert.Equal(3, warmed);
         Assert.Equal(3, await PresentAsync(l2));
-        Assert.Equal("va", await l2.TryGetAsync("a"));
-        Assert.Equal("vc", await l2.TryGetAsync("c"));
+        Assert.Equal("va", (await l2.TryGetAsync("a"))?.Value);
+        Assert.Equal("vc", (await l2.TryGetAsync("c"))?.Value);
     }
 
     [Fact]
@@ -106,7 +106,7 @@ public sealed class SharedCacheWarmTests
         Assert.Equal(1, cache.WarmSharedCache());
         await Task.Delay(300);
 
-        Assert.Equal("va", await l2.TryGetAsync("a"));
+        Assert.Equal("va", (await l2.TryGetAsync("a"))?.Value);
     }
 
     [Fact]
@@ -128,7 +128,37 @@ public sealed class SharedCacheWarmTests
         cache.WarmSharedCache();
         await Task.Delay(300);
 
-        Assert.Equal("published-by-a-peer", await l2.TryGetAsync("a"));
+        Assert.Equal("published-by-a-peer", (await l2.TryGetAsync("a"))?.Value);
+    }
+
+    [Fact]
+    public async Task AWarmDoesNotPublishWhatShouldPersistRejected()
+    {
+        // The predicate keeps transient errors out of the disk bag and the L2
+        // write-through alike. The re-warm is the third way into the shared cache and
+        // it reads the key index, which cannot tell a timeout from a real answer — so
+        // the index has to be gated too, or a value deliberately withheld from peers
+        // reaches them anyway the first time Redis is emptied.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+        var l2 = L2(redis, TimeSpan.FromMinutes(5));
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
+
+        await cache.GetOrCreateAsync("a", () => Task.FromResult("timed-out"),
+            shouldPersist: _ => false);
+        await cache.GetOrCreateAsync("b", () => Task.FromResult("vb"));
+        await Task.Delay(200);
+
+        // Cached locally either way — the predicate never gated in-process dedup.
+        Assert.True(cache.TryGet("a", out var held) && held == "timed-out");
+        Assert.Equal(1, cache.SharedCacheIndexCount);
+
+        await EmptyAsync(redis);
+        Assert.Equal(1, cache.WarmSharedCache());
+        await Task.Delay(300);
+
+        Assert.Null(await l2.TryGetAsync("a"));
+        Assert.Equal("vb", (await l2.TryGetAsync("b"))?.Value);
     }
 
     [Fact]

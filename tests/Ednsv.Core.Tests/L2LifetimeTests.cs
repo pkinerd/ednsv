@@ -143,6 +143,123 @@ public sealed class L2LifetimeTests
         AssertNear(TimeSpan.FromMinutes(5), ttl!.Value);
     }
 
+    // ── The read path: L2 → L1 ───────────────────────────────────────────
+    //
+    // Everything above covers what lands in Redis. These cover the return leg, which
+    // is where the two tiers drift apart if a hit is allowed to restart the clock.
+    // Observed through a re-warm, because that republishes each L1 entry with its
+    // remaining life — so the TTL that lands back in Redis is the expiry L1 was
+    // actually holding, which nothing else exposes.
+
+    /// <summary>Seed the shared cache the way a peer pod would, with a chosen lifetime.</summary>
+    private static async Task PeerWroteAsync(RedisConnection redis, string key, TimeSpan? ttl)
+    {
+        var db = redis.GetDatabase();
+        Assert.NotNull(db);
+        await db!.StringSetAsync(redis.Key("cache:test:" + key), "from-a-peer", ttl);
+    }
+
+    /// <summary>The lifetime L1 was holding, read back by emptying Redis and re-warming.</summary>
+    private static async Task<TimeSpan?> L1LifetimeViaWarmAsync(
+        RedisConnection redis, ProbeCache<string> cache, string key)
+    {
+        var db = redis.GetDatabase();
+        Assert.NotNull(db);
+        await db!.KeyDeleteAsync(redis.Key("cache:test:" + key));
+
+        cache.WarmSharedCache();
+        await Task.Delay(300); // the writes are fire-and-forget
+
+        return await TtlOfAsync(redis, key);
+    }
+
+    [Fact]
+    public async Task AnL2HitDoesNotRestartTheClockInL1()
+    {
+        // A peer wrote this with a minute left — a DNS answer bounded by its own record
+        // TTL, say. Caching it locally for a fresh full period would let our copy
+        // outlive the entry it was read from, and every subsequent hit would widen the
+        // gap.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+
+        var ours = TimeSpan.FromMinutes(30);
+        var cache = new ProbeCache<string>(ours, L2(redis, ours));
+        await PeerWroteAsync(redis, "k", TimeSpan.FromMinutes(1));
+
+        Assert.Equal("from-a-peer", await cache.GetOrCreateAsync("k", () => Task.FromResult("network")));
+
+        var held = await L1LifetimeViaWarmAsync(redis, cache, "k");
+
+        Assert.NotNull(held);
+        Assert.True(held!.Value <= TimeSpan.FromMinutes(1),
+            $"L1 held the hit for {held} against a minute left on the shared key");
+        Assert.True(held.Value > TimeSpan.Zero, "the entry expired immediately");
+    }
+
+    [Fact]
+    public async Task AnL2HitIsStillHeldToOurOwnTtl()
+    {
+        // The other direction: a peer running a longer CacheTtlHours must not extend
+        // ours. The shared key's life bounds us; it does not license us.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+
+        var ours = TimeSpan.FromMinutes(5);
+        var cache = new ProbeCache<string>(ours, L2(redis, ours));
+        await PeerWroteAsync(redis, "k", TimeSpan.FromDays(7));
+
+        Assert.Equal("from-a-peer", await cache.GetOrCreateAsync("k", () => Task.FromResult("network")));
+
+        var held = await L1LifetimeViaWarmAsync(redis, cache, "k");
+
+        Assert.NotNull(held);
+        Assert.True(held!.Value <= ours, $"a peer's seven-day key stretched our own TTL to {held}");
+    }
+
+    [Fact]
+    public async Task ASharedKeyWithNoExpiryLeavesOurOwnTtlGoverning()
+    {
+        // Nothing this class writes is ever without an expiry, so this is a key from
+        // somewhere else. "No expiry" is not a licence to cache forever — our TTL
+        // governs, exactly as it did before the remaining life was read at all.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+
+        var ours = TimeSpan.FromMinutes(5);
+        var cache = new ProbeCache<string>(ours, L2(redis, ours));
+        await PeerWroteAsync(redis, "k", ttl: null);
+
+        Assert.Equal("from-a-peer", await cache.GetOrCreateAsync("k", () => Task.FromResult("network")));
+
+        var held = await L1LifetimeViaWarmAsync(redis, cache, "k");
+
+        Assert.NotNull(held);
+        AssertNear(ours, held!.Value);
+    }
+
+    [Fact]
+    public async Task WithNoConfiguredTtlAnL2HitTakesTheSharedKeysRemainingLife()
+    {
+        // CacheTtlHours=0 means L1 does not expire — but an entry read from a tier that
+        // *does* expire is not ours to keep forever. Preferring "never" over a real
+        // bound is the drift this prevents, and the shared key is the only bound there
+        // is here.
+        if (!await ReadyAsync()) return;
+        using var redis = Fresh();
+
+        var cache = new ProbeCache<string>(ttl: null, L2(redis, null));
+        await PeerWroteAsync(redis, "k", TimeSpan.FromMinutes(10));
+
+        Assert.Equal("from-a-peer", await cache.GetOrCreateAsync("k", () => Task.FromResult("network")));
+
+        var held = await L1LifetimeViaWarmAsync(redis, cache, "k");
+
+        Assert.NotNull(held);
+        Assert.True(held!.Value <= TimeSpan.FromMinutes(10),
+            $"L1 held the hit for {held} against ten minutes left on the shared key");
+    }
+
     [Fact]
     public async Task TheCoordinationKeysAreLeftPersistentSoNothingCanEvictThem()
     {

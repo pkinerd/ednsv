@@ -430,6 +430,12 @@ public class SmtpBannerRdnsMatchCheck : ICheck
                 foreach (var ip in ips)
                 {
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
+                    if (DnsResolverService.PtrLookupDidFail(ptrs))
+                    {
+                        // No answer, so no comparison — not a mismatch.
+                        result.Details.Add($"{mxHost} ({ip}): reverse lookup failed — banner not compared");
+                        continue;
+                    }
                     if (!ptrs.Any())
                     {
                         result.Details.Add($"{mxHost} ({ip}): No PTR record to compare with banner '{bannerHost}'");

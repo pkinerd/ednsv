@@ -124,7 +124,8 @@ var dnsTuning = new DnsTuning
     // 0 = off, which is the default: every DNS entry gets the full cache TTL, as
     // before. Above zero and answers are bounded by their own record TTLs with this
     // as the floor. See DnsTuning.CacheMinTtlSeconds.
-    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0)
+    CacheMinTtlSeconds      = builder.Configuration.GetValue("DnsCacheMinTtlSeconds",       0.0),
+    CacheNegativeTtlCapSeconds = builder.Configuration.GetValue("DnsNegativeTtlCapSeconds", 600.0)
 };
 DnsResolverService.SetMaxRetries(dnsTuning.MaxRetries);
 var smtpTimeoutSeconds     = builder.Configuration.GetValue("Smtp:TimeoutSeconds",     10.0);
@@ -677,6 +678,10 @@ if (!anyAuthEnabled && !IsLoopbackOnlyBinding(builder))
         "No authentication method is enabled but the server is network-exposed. Enable auth or bind to localhost only.");
 }
 
+// First thing in the log, so "which build is this pod running?" is answerable from
+// `kubectl logs` without reaching the UI or the API.
+app.Logger.LogInformation("ednsv {Provenance}.", BuildInfo.Provenance);
+
 if (!anyAuthEnabled)
     app.Logger.LogWarning("Authentication is DISABLED (EDNSV_AUTH_TOKEN_HASH=none, no external IdP configured) and the server is bound to localhost only. All endpoints are open to local callers.");
 else
@@ -1188,7 +1193,15 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),
         perDomainDkimSelectors = cfg.DkimSelectors,
-        knownDomains     = cfg.KnownDomains
+        knownDomains     = cfg.KnownDomains,
+        // Which build is answering. See BuildInfo: without it, "is the fix deployed?"
+        // cannot be answered from outside, and a rollout that never happened looks
+        // exactly like a fix that did not work.
+        version          = BuildInfo.Version,
+        commit           = BuildInfo.Commit,
+        shortCommit      = BuildInfo.ShortCommit,
+        branch           = BuildInfo.Branch,
+        pullRequest      = BuildInfo.PullRequest
     });
 })
 .WithName("GetDefaults")

@@ -1,5 +1,9 @@
 # Caching Architecture
 
+> For a per-check view — what each of the 87 checks queries, which caches its results
+> land in, and how long each kind of answer is kept — see
+> [cache-behaviour-map.md](cache-behaviour-map.md).
+
 EDNSV uses a multi-tier caching system to minimize redundant network requests across checks and across multiple domain validations. This document covers the caching layers, in-flight deduplication, disk persistence, the recheck bypass mechanism, and how transient failures are handled differently from definitive ones.
 
 ## Cache Tiers
@@ -71,13 +75,13 @@ flowchart TD
     MEMCACHE -->|miss| INFLIGHT{"In-flight<br/>ConcurrentDictionary&lt;Lazy&lt;Task&gt;&gt;<br/>GetOrAdd(key)"}
     INFLIGHT -->|existing Lazy| AWAIT["Await existing Task<br/><i>(dedup join)</i>"]
     INFLIGHT -->|new Lazy| L2{"Shared L2 configured,<br/>and not a recheck?"}
-    L2 -->|hit| L2HIT["SetMemoryOnly: L1 only<br/><i>a peer already persisted it —<br/>never queue it for our disk</i>"]
+    L2 -->|hit| L2HIT["SetMemoryOnly: L1 only,<br/>bounded by the key's remaining life<br/><i>a peer already persisted it —<br/>never queue it for our disk</i>"]
     L2HIT --> CLEANUP
     L2 -->|"miss / no L2 / recheck"| FACTORY["Run factory function<br/><i>(network)</i>"]
     FACTORY --> PERSIST{"shouldPersist(result)?"}
     PERSIST -->|true / null| TTL["entryTtl(result)<br/><i>null → the cache-wide TTL</i>"]
     TTL --> SET["Set: L1 + write bag,<br/>write-through to L2<br/><i>one TTL for all three</i>"]
-    PERSIST -->|false| MEMONLY["SetMemoryOnly: L1 only<br/><i>transient errors are never persisted</i>"]
+    PERSIST -->|false| MEMONLY["SetMemoryOnly: L1 only, 30s<br/><i>transient errors are never persisted,<br/>and never outlive the validation</i>"]
     SET --> CLEANUP["Remove from in-flight dict"]
     MEMONLY --> CLEANUP
     CLEANUP --> RETURN
@@ -106,26 +110,48 @@ When multiple checks request the same DNS record simultaneously, only **one** ne
 
 `GetOrCreateAsync` accepts an optional `shouldPersist: Func<TValue, bool>` predicate that decides whether the result is added to the **write bag**. The predicate does **not** control in-memory caching — every successful factory result is written to MemoryCache so duplicate calls within the same process are still deduped:
 
-| `shouldPersist` returns | L1 (MemoryCache) | Write bag (disk) | Shared Redis L2 |
-|-------------------------|------------------|------------------|-----------------|
-| `true` (or predicate is null) | written via `Set()` | queued | written through |
-| `false` | written via `SetMemoryOnly()` | **skipped** | **skipped** |
+| `shouldPersist` returns | L1 (MemoryCache) | Write bag (disk) | Shared Redis L2 | Key index (re-warm) |
+|-------------------------|------------------|------------------|-----------------|---------------------|
+| `true` (or predicate is null) | written via `Set()` | queued | written through | tracked |
+| `false` | written via `SetMemoryOnly(shareable: false)` | **skipped** | **skipped** | **skipped** |
 
 The predicate gates the shared L2 as well as the disk bag — a transient error must not
 be published to peers any more than it should reach disk.
 
-This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls for the rest of the current process. Service-level predicates:
+**That includes the re-warm**, which is the third way into the shared cache and the
+easiest to overlook. `WarmSharedCache` republishes everything the key index names and
+cannot tell a timeout from a real answer, so the index has to be gated alongside the
+write-through. Tracking rejected values there meant one deliberately withheld from peers
+reached them anyway the first time Redis was emptied — the long way round, but the same
+destination. L2 hits and disk imports stay in the index: they are already published by
+definition, and a re-warm is the only thing that will put them back.
+
+This is how transient failures are kept out of the on-disk cache while still avoiding repeated network calls **within the validation that hit them**. A rejected value expires on `ProbeCachePolicy.TransientLifetime` (30s), not the cache-wide TTL.
+
+That distinction was missing and the consequence was severe. "For the rest of the current process" is one run for the CLI and *days* for the web service, so a rejected value was held for the whole `CacheTtlHours` — a single timed-out reverse lookup was returned as an empty list, rendered as "No PTR record — many receivers reject mail from IPs without reverse DNS", and pinned against a well-configured IP for two hours. Record-TTL gating made it far likelier to be hit rather than causing it: an answer bounded to 60s refetches 120× as often, and each refetch is another chance to acquire a two-hour falsehood. The in-flight map already collapses concurrent duplicates, so the window only ever needed to span one validation.
+
+Service-level predicates:
 
 | Service / cache | Persist when |
 |-----------------|--------------|
-| `DnsResolverService._queryCache` | `response != EmptyResponse.Instance` (skip timeouts/SocketExceptions/DNS errors) |
-| `DnsResolverService._serverQueryCache` | same — skip `EmptyResponse` |
-| `DnsResolverService._ptrCache` | reverse-lookup actually succeeded |
+| `DnsResolverService._queryCache` | `IsAnswer(response)` — `NoError` or `NXDomain` only |
+| `DnsResolverService._serverQueryCache` | same — `IsAnswer` |
+| `DnsResolverService._ptrCache` | the lookup returned an answer (see *Failure is not absence*) |
 | `SmtpProbeService._probeCache` | `result.Connected` OR error is not `"Connection timed out"` (cache definitive failures, skip transient timeouts) |
 | `SmtpProbeService._portCache` | port was open OR at least one attempt got a definitive refusal |
 | `HttpProbeService._getCache` / `_getWithHeadersCache` | `result.Success || result.StatusCode > 0` (any HTTP status counts as definitive; only network-level failures with status 0 are skipped) |
 
 Predicates that aren't supplied (`AXFR`, and the RCPT/relay caches, which are an `ExpiringMap`) follow the same intent in their own code: only definitive results are stored.
+
+#### Failure is not absence
+
+**Only `NoError` and `NXDomain` are answers.** Both are things the zone told us: NODATA and NXDOMAIN say a name or type does not exist, they carry an SOA giving the negative lifetime, and caching them is the point. `SERVFAIL`, `REFUSED`, `FormErr` and `NotImp` say the resolver could not answer — a property of the attempt, not of the zone.
+
+The predicates used to reject only `EmptyResponse.Instance`, the sentinel substituted when a query *threw*. Every client here runs with `ThrowDnsErrors = false`, so a SERVFAIL never throws: it arrived as an ordinary response object and was cached and persisted as though the zone had answered. The table above already claimed "skip … DNS errors"; the code only skipped *transport* errors, and this closes that gap rather than changing the intent.
+
+It compounded with record-TTL gating. A SERVFAIL carries no answers *and* no SOA, so it publishes no TTL — and once "no published TTL" came to mean "inherit `CacheTtlHours`", one failed lookup was recorded for hours, on disk and shared with every peer, indistinguishable from "this does not exist".
+
+`ResolvePtrAsync` needs the same distinction on the way *out*, not just in the cache. It returns a list of names, and a failure and a genuinely absent PTR were both the empty list — so a timeout was reported as "No PTR record — many receivers reject mail from IPs without reverse DNS", a confident finding about an IP with perfectly good reverse DNS. It now returns a distinguished instance, recognised by reference via `DnsResolverService.PtrLookupDidFail`, and the checks report those as "reverse lookup failed — not checked" rather than counting them as findings. A sentinel rather than a wrapper type because the value is persisted as a `List<string>` on disk, and a failure is never persisted anyway — it only has to survive a cache *hit*, which a reference does.
 
 ### `onHit` Callback
 
@@ -133,7 +159,9 @@ Predicates that aren't supplied (`AXFR`, and the RCPT/relay caches, which are an
 
 ### Write Bag
 
-A separate `ConcurrentDictionary<string, BagEntry<TValue>>` holds values **queued for the next flush**. `Set()` writes to both MemoryCache and the bag; `SetMemoryOnly()` writes only to MemoryCache.
+A separate `ConcurrentDictionary<string, BagEntry<TValue>>` holds values **queued for the next flush**. `Set()` writes to MemoryCache, the bag and the shared L2 — all three tiers a freshly fetched value belongs in, with one lifetime; `SetMemoryOnly()` writes only to MemoryCache.
+
+The L2 write-through belongs in `Set()` rather than at the call sites. While it lived beside the one call inside `GetOrCreateAsync`, every other caller wrote to L1 and disk but never to Redis — the speculative DNS path among them, so a pod's DKIM-selector and SRV probes stayed invisible to its peers and each pod re-probed the same absent names.
 
 What the bag *excludes* is the point of its design. Three kinds of value are cached but never queued:
 
@@ -206,9 +234,48 @@ One self-describing record per line, so all cache types share a file:
 
 By default every cached DNS answer gets the full `CacheTtlHours`, regardless of what the zone published — so a domain rotating records every thirty seconds is served from cache for hours.
 
-Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR caches instead bound each entry by `clamp(minimum record TTL, DnsCacheMinTtlSeconds, CacheTtlHours)`. The floor stops short-TTL domains forcing a refetch on nearly every validation; the cap must remain the ceiling, because the sweep deletes a record file at `fileTime + CacheTtlHours` and a longer-lived entry could be swept while still considered live.
+Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR caches instead bound each entry by `clamp(published TTL, DnsCacheMinTtlSeconds, CacheTtlHours)`. The floor stops short-TTL domains forcing a refetch on nearly every validation; the cap must remain the ceiling, because the sweep deletes a record file at `fileTime + CacheTtlHours` and a longer-lived entry could be swept while still considered live.
 
-An **empty answer section** falls back to the floor. That is not an edge case to shrug at: NXDOMAIN and NODATA are real responses, they are cached, and their answer sections are always empty. The minimum comes from `InitialTimeToLive`, not `TimeToLive` — the latter counts down while DnsClient holds the record, which would shorten every entry by however long the response sat around.
+**Two sections can publish that TTL, and both are read.** A positive answer carries its own record TTLs — the minimum across them, taken from `InitialTimeToLive` rather than `TimeToLive`, since the latter counts down while DnsClient holds the record and would shorten every entry by however long the response sat around. A **negative** answer — NXDOMAIN or NODATA — carries an SOA in the authority section instead, and RFC 2308 §5 puts the lifetime of "this does not exist" at `min(SOA.MINIMUM, TTL of the SOA record)`.
+
+Reading only the answer section made every negative response look TTL-less, and negative responses are the *bulk* of what a validation issues: 21 blocklist zones per MX IP that answer "not listed", 39 DKIM selectors that do not exist, plus the SPF, DMARC, ARC and mail-survey subdomain probes. Validating a clean domain is the worst case, because nothing is listed and nothing exists.
+
+**A response that published no TTL at all inherits `CacheTtlHours`** — the floor bounds TTLs we received, and is not a stand-in for one. This matters more than it sounds: while the floor *was* the fallback, a `DnsCacheMinTtlSeconds=60` against a domain like cnn.com stamped 60 seconds on most of the cache and dropped hundreds of Redis keys within the first couple of minutes, with the floor setting silently deciding the lifetime of entries no zone had spoken about.
+
+#### Negative answers get a second, much tighter ceiling
+
+`DnsNegativeTtlCapSeconds` (default **600**) caps negative answers alone:
+
+```
+positive:  clamp(min record TTL,      DnsCacheMinTtlSeconds, CacheTtlHours)
+negative:  clamp(SOA negative TTL,    DnsCacheMinTtlSeconds, min(CacheTtlHours, DnsNegativeTtlCapSeconds))
+failure:   30s, L1 only                                       (ProbeCachePolicy.TransientLifetime)
+```
+
+**It is a TTL for a positive non-result, not for errors.** The lookup succeeded; the
+answer is that something does not exist — an absent DKIM selector, an IP with no PTR, a
+"not listed" blocklist reply. That is a result the zone published, with an SOA saying how
+long to believe it, and it is cached and persisted exactly like a record. Timeouts and
+SERVFAIL are *failures*, a different bucket entirely.
+
+The asymmetry is about blast radius. A stale positive answer reports a record that has
+since changed; a stale negative answer reports that something **does not exist**, which
+is what becomes `No PTR record — many receivers reject mail`. A resolver under load can
+return a spurious NXDOMAIN, and zones publish generous minimums — `cnn.com`'s reverse
+zones publish 86400 — so honouring it verbatim meant one bad reply was believed for the
+full `CacheTtlHours`, written to disk, and shared with every pod.
+
+Unlike the floor it is **independent of the gating**: it applies whether or not
+`DnsCacheMinTtlSeconds` is set, because it is a ceiling and the damage it bounds does not
+depend on the gating being on — and gating ships off, so this is the default path.
+`CacheTtlHours` remains the outer ceiling either way. A negative answer that published no
+SOA takes the cap rather than inheriting `CacheTtlHours`: the code only reaches that
+branch once the reply is confirmed an *answer* with an empty answer section, so it is
+still a negative, and the cap is the safer reading.
+
+Rechecks bypass it as they bypass any cached read. See
+[cache-behaviour-map.md](cache-behaviour-map.md) for the full edge-case table and how
+this lands across every check family.
 
 **It ships off** (`DnsCacheMinTtlSeconds=0`). This release is "stop rewriting everything, and 2 hours instead of 24"; gating is a second, separately observable change to enable once the effect of the shorter cap has been seen on its own.
 
@@ -293,6 +360,25 @@ Live files per instance are `CacheTtlHours / FlushIntervalSeconds + 1` — **13 
 
 When `Ednsv.Web` runs with `Redis:ConnectionString` configured, `ProbeCache<T>` gains an optional shared **L2** behind the per-pod L1 `MemoryCache`: on an L1 miss it reads `{InstanceName}:cache:{type}:{key}` from Redis, and successful results (those passing `shouldPersist`) are write-through to both L1 and the L2. It is best-effort — any Redis error transparently falls through to the network — and unused in the default single-instance mode. See [horizontal-scaling.md](horizontal-scaling.md) → *Probe cache (L1 + Redis L2)*.
 
+#### Lifetimes across the two tiers
+
+**Nothing crossing between L1 and the L2 may extend its own life.** Four paths cross, and each carries the lifetime with it:
+
+| Path | Lifetime applied |
+|---|---|
+| Fresh result → L1 + L2 | the entry's own TTL (record-TTL gated for DNS), one number for both |
+| Disk record → L1 + L2 (`Import`) | the record's **remaining** life, capped at what a fresh write would get |
+| L1 → L2 (`WarmSharedCache`) | each entry's **remaining** life, `SET NX` |
+| L2 → L1 (a hit) | the **sooner** of the shared key's remaining life and a full `CacheTtlHours` |
+
+That last row is read with `StringGetWithExpiry` rather than a plain `GET` — one round trip either way. Without it a hit restarted the clock: a DNS answer bounded to sixty seconds by its record TTL and read from Redis at fifty-nine seconds old was then served from L1 for the full `CacheTtlHours`. The key index recorded that expiry too, so an emptied-Redis re-warm republished the entry with more life than it had ever been given, and the two tiers drifted further apart on every hit.
+
+**The cap in the other direction is for restarts and config changes.** Every value written to the L2 carries a lifetime, so what comes back is always a real bound — but it is the *writer's* bound, and Redis outlives a pod. Keys written under a longer `CacheTtlHours` survive the deploy that lowered it, and a rolling change has peers on both settings at once. The cap is what keeps `CacheTtlHours` meaning the same thing on every path in the process.
+
+It bounds how long a value is **held**, not how stale it may get. When the L1 copy expires we take an L1 miss, re-read the L2, find the same key still alive and cache it again — total age stays governed by the shared key's own lifetime, which is the shared tier's contract to keep.
+
+Under `CacheTtlHours=0` the shared key's lifetime governs a hit alone: memory not expiring is a statement about values *this* instance fetched, not a licence to keep a borrowed one forever.
+
 #### Recovering an emptied L2
 
 A Redis restart without persistence, a `FLUSHALL`, or a failover to an empty replica leaves the shared cache cold — and **it does not refill on its own in any useful timeframe**. Every instance is still serving happily from its own L1 and disk tier and has no reason to refetch anything, so the L2 stays degraded until entries age out of L1 naturally. That silently breaks the recovery the recommended deployment leans on: a rescheduled pod with a pod-local cache directory is supposed to come back warm *from the L2*.
@@ -355,6 +441,20 @@ lowercased domain, plus its own `WriteBag`.
 Only `_probeCache`, `_queryCache`, `_serverQueryCache`, `_ptrCache`, `_getCache` and
 `_getWithHeadersCache` have a Redis L2; `_portCache` and the `ExpiringMap` caches are L1
 and disk only, so they are never shared between instances.
+
+#### The speculative query path
+
+`QuerySpeculativeAsync` (DKIM selectors, SRV, speculative TXT) shares `_queryCache` and
+its `q:domain:type` keys, but cannot go through `GetOrCreateAsync`: it **must not cache
+its own timeouts**, and `GetOrCreateAsync` caches every factory result in L1 one way or
+another, which would leave a 3-second miss shadowing the longer `QueryAsync` that comes
+after it. It therefore reads with `TryGetSharedAsync` and writes with `Set` — both of
+which carry the shared tier, so the path is a full participant in the L2 despite not
+using the usual entry point. It reached the cache through L1-only calls until recently,
+which made every pod re-probe the same 39 absent selectors.
+
+Its one asymmetry with `GetOrCreateAsync` remains deliberate: there is no in-flight
+dedup, because the probes fan out across distinct keys rather than contending on one.
 
 ### ExpiringMap
 
@@ -433,7 +533,9 @@ with it. Same intent as `shouldPersist` everywhere else.
 
 ### Unreachable-server decay
 
-`DnsResolverService` tracks server failures in `_unreachableServerCounts` keyed by IP, storing both a failure count and `lastFailure` timestamp. Once a server fails `MaxRetries` (default 3) times, subsequent queries are short-circuited to `EmptyResponse.Instance` — but only while the most-recent failure is within the **5-minute decay window** (`_unreachableDecay`). After the window expires, the next call retries the server normally and the counter is cleared on the first successful response. This prevents transient outages from permanently blacklisting a recursive resolver across the lifetime of a long-running process. The decay window governs only whether the *skip* applies; the entry itself expires on `CacheTtlHours` like any other cached value, so the map tracks servers seen recently rather than every server ever queried.
+`DnsResolverService` tracks server failures in `_unreachableServerCounts` keyed by IP, storing both a failure count and `lastFailure` timestamp. Once a server fails `MaxRetries` (default 3) times, subsequent queries are short-circuited to `EmptyResponse.Instance` — but only while the most-recent failure is within the **5-minute decay window** (`_unreachableDecay`). After the window expires, the next call retries the server normally and the counter is cleared on the first successful response. This prevents transient outages from permanently blacklisting a nameserver across the lifetime of a long-running process.
+
+**It covers `QueryServerAsync` only** — the per-nameserver direct queries behind the delegation, propagation, SOA-serial and lame-delegation checks. The main recursive path (`QueryAsync`), PTR lookups, DNSBL and speculative probes have no breaker: a failure there is handled by not caching it as an answer and by the 30-second transient window, not by counting occurrences. That is deliberate for the recursive path — if the configured resolver is down, the run should report errors rather than silently skip every query — but it does mean nothing suppresses repeated attempts against a resolver that is merely slow. The decay window governs only whether the *skip* applies; the entry itself expires on `CacheTtlHours` like any other cached value, so the map tracks servers seen recently rather than every server ever queried.
 
 ## CacheManager
 

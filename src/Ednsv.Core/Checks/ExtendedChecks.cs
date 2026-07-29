@@ -1,3 +1,4 @@
+using Ednsv.Core.Services;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
@@ -689,7 +690,13 @@ public class MxReverseDnsCheck : ICheck
                 {
                     checkedIps++;
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
-                    if (!ptrs.Any())
+                    if (DnsResolverService.PtrLookupDidFail(ptrs))
+                    {
+                        // Not evidence of a missing PTR — we never got an answer.
+                        checkedIps--;
+                        result.Details.Add($"{mxHost} [{ip}]: reverse lookup failed — not checked");
+                    }
+                    else if (!ptrs.Any())
                     {
                         missingPtr++;
                         result.Errors.Add($"{mxHost} [{ip}]: No PTR record — many receivers reject mail from IPs without reverse DNS");

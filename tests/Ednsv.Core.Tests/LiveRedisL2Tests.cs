@@ -39,6 +39,93 @@ public sealed class LiveRedisL2Tests
     private static ProbeCacheL2<string> StringL2(RedisConnection redis, TimeSpan ttl) =>
         new(redis, "test", ttl, v => v, s => s);
 
+    // ── Callers that write and read outside GetOrCreateAsync ─────────────
+    //
+    // The speculative DNS path cannot use GetOrCreateAsync: it must not cache its own
+    // timeouts, and GetOrCreateAsync caches every factory result in L1 one way or
+    // another. It therefore reaches the cache through Set and TryGetSharedAsync, and
+    // both have to carry the shared tier — a write nobody can read is no use, and a
+    // read that never consults Redis makes the write pointless.
+
+    [Fact]
+    public async Task APlainSetIsWrittenThroughToTheSharedTier()
+    {
+        // The write-through used to live only inside GetOrCreateAsync, so a caller
+        // reaching Set directly populated L1 and disk and left peers to re-fetch.
+        if (!await ReadyAsync()) return;
+        using var redis = new RedisConnection(ConnString, "l2set" + Guid.NewGuid().ToString("N")[..8]);
+        var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
+
+        cache.Set("k", "fetched-here");
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+
+        Assert.Equal("fetched-here", (await l2.TryGetAsync("k"))?.Value);
+    }
+
+    [Fact]
+    public async Task APlainSetCarriesTheEntryTtlToTheSharedTier()
+    {
+        // The gated TTL has to reach Redis too, or the shared copy of a short-lived
+        // DNS answer outlives the local one it was written beside.
+        if (!await ReadyAsync()) return;
+        using var redis = new RedisConnection(ConnString, "l2ttl" + Guid.NewGuid().ToString("N")[..8]);
+        var l2 = StringL2(redis, TimeSpan.FromHours(2));
+        var cache = new ProbeCache<string>(TimeSpan.FromHours(2), l2);
+
+        cache.Set("k", "short-lived", TimeSpan.FromMinutes(5));
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+
+        var db = redis.GetDatabase();
+        var ttl = await db!.KeyTimeToLiveAsync(redis.Key("cache:test:k"));
+        Assert.NotNull(ttl);
+        Assert.InRange(ttl!.Value, TimeSpan.FromMinutes(4), TimeSpan.FromMinutes(6));
+    }
+
+    [Fact]
+    public async Task TryGetSharedFallsBackToTheSharedTierAndPopulatesL1()
+    {
+        // The read half. A peer published this; we hold nothing locally.
+        if (!await ReadyAsync()) return;
+        using var redis = new RedisConnection(ConnString, "l2read" + Guid.NewGuid().ToString("N")[..8]);
+        var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
+
+        l2.Set("k", "from-peer");
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+        Assert.False(cache.TryGet("k", out _), "nothing should be in L1 yet");
+
+        Assert.Equal("from-peer", await cache.TryGetSharedAsync("k"));
+
+        // ...and the hit is now local, so the next read costs no round trip.
+        Assert.True(cache.TryGet("k", out var local));
+        Assert.Equal("from-peer", local);
+        Assert.Empty(cache.Export()); // a peer already persisted it — not ours to write
+    }
+
+    [Fact]
+    public async Task TryGetSharedMissesBothTiersUnderARecheck()
+    {
+        // A recheck must reach the network. Satisfying it from a peer's copy returns
+        // the very value the recheck exists to replace.
+        if (!await ReadyAsync()) return;
+        using var redis = new RedisConnection(ConnString, "l2rc" + Guid.NewGuid().ToString("N")[..8]);
+        var l2 = StringL2(redis, TimeSpan.FromMinutes(5));
+        var cache = new ProbeCache<string>(TimeSpan.FromMinutes(5), l2);
+
+        cache.Set("k", "stale");
+        for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
+
+        RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.Dns;
+        try
+        {
+            Assert.Null(await cache.TryGetSharedAsync("k", RecheckHelper.CacheDep.Dns));
+            // ...while an unrelated recheck still reads normally.
+            Assert.Equal("stale", await cache.TryGetSharedAsync("k", RecheckHelper.CacheDep.Smtp));
+        }
+        finally { RecheckHelper.CurrentRecheckDeps.Value = RecheckHelper.CacheDep.None; }
+    }
+
     [Fact]
     public async Task AnL2HitIsCachedInMemoryButNotQueuedForPersistence()
     {
@@ -80,7 +167,7 @@ public sealed class LiveRedisL2Tests
         cache.Import("k", "from-disk", DateTime.UtcNow.AddMinutes(4));
 
         for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
-        Assert.Equal("from-disk", await l2.TryGetAsync("k"));
+        Assert.Equal("from-disk", (await l2.TryGetAsync("k"))?.Value);
         Assert.Empty(cache.Export()); // still never queued back to our own disk
     }
 
@@ -113,7 +200,7 @@ public sealed class LiveRedisL2Tests
             "L1 already holds it, so the import itself is a no-op");
 
         for (var i = 0; i < 50 && await l2.TryGetAsync("k") == null; i++) await Task.Delay(20);
-        Assert.Equal("from-disk", await l2.TryGetAsync("k"));
+        Assert.Equal("from-disk", (await l2.TryGetAsync("k"))?.Value);
     }
 
     [Fact]
@@ -134,7 +221,7 @@ public sealed class LiveRedisL2Tests
             .Import("k", "older-copy-from-our-disk", DateTime.UtcNow.AddMinutes(4));
         await Task.Delay(200); // the write is fire-and-forget; give it every chance
 
-        Assert.Equal("published-by-a-peer", await l2.TryGetAsync("k"));
+        Assert.Equal("published-by-a-peer", (await l2.TryGetAsync("k"))?.Value);
     }
 
     [Fact]

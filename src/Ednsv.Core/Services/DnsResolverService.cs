@@ -37,12 +37,29 @@ public sealed record DnsTuning
     /// the full cache TTL — the behaviour before this existed.
     ///
     /// <para>Set it above zero and a cached answer lives for
-    /// <c>clamp(minimum record TTL, this floor, the cache TTL)</c>. The floor is what
-    /// stops a domain with 30-second records forcing a refetch on essentially every
-    /// validation; the cache TTL remains the ceiling, which also keeps an entry from
-    /// outliving the record file it was written into.</para>
+    /// <c>clamp(published TTL, this floor, the cache TTL)</c> — the minimum record TTL
+    /// for a positive answer, the RFC 2308 negative TTL for an NXDOMAIN or NODATA. The
+    /// floor is what stops a domain with 30-second records forcing a refetch on
+    /// essentially every validation; the cache TTL remains the ceiling, which also keeps
+    /// an entry from outliving the record file it was written into.</para>
+    ///
+    /// <para><b>A floor, not a default.</b> It bounds TTLs that came back from the wire;
+    /// a response that published none inherits the cache TTL instead. See
+    /// <see cref="DnsCacheTtl.For"/> for why that distinction is load-bearing.</para>
     /// </summary>
     public double CacheMinTtlSeconds { get; init; } = 0;
+
+    /// <summary>
+    /// Ceiling on how long a <b>negative</b> answer (NXDOMAIN / NODATA) may be cached,
+    /// in seconds. Default 600. <c>0</c> removes it, leaving negatives bounded only by
+    /// the cache TTL like anything else.
+    ///
+    /// <para>Deliberately far below <c>CacheTtlHours</c>, and deliberately independent
+    /// of <see cref="CacheMinTtlSeconds"/>: a stale "exists" goes out of date, a stale
+    /// "does not exist" produces a false finding, and the second is worth far less
+    /// tolerance than the first. See <see cref="DnsCacheTtl.ForNegative"/>.</para>
+    /// </summary>
+    public double CacheNegativeTtlCapSeconds { get; init; } = 600;
 }
 
 public class DnsResolverService
@@ -88,6 +105,10 @@ public class DnsResolverService
     /// <summary>Floor for record-TTL gating. Zero disables the gating entirely —
     /// see <see cref="DnsTuning.CacheMinTtlSeconds"/>.</summary>
     private readonly TimeSpan _dnsMinTtl;
+
+    /// <summary>Ceiling on negative answers — see
+    /// <see cref="DnsTuning.CacheNegativeTtlCapSeconds"/>. Null when disabled.</summary>
+    private readonly TimeSpan? _dnsNegativeCap;
 
     // Unified caches — single source of truth (MemoryCache) with export log
     private readonly ProbeCache<IDnsQueryResponse> _queryCache;
@@ -218,6 +239,8 @@ public class DnsResolverService
         // In-memory caches with optional TTL, optionally backed by a shared Redis L2.
         _cacheTtl = cacheTtl;
         _dnsMinTtl = t.CacheMinTtlSeconds > 0 ? TimeSpan.FromSeconds(t.CacheMinTtlSeconds) : TimeSpan.Zero;
+        _dnsNegativeCap = t.CacheNegativeTtlCapSeconds > 0
+            ? TimeSpan.FromSeconds(t.CacheNegativeTtlCapSeconds) : null;
         _unreachableBag = new WriteBag<int>(cacheTtl, persistToDisk);
         _axfrBag = new WriteBag<bool>(cacheTtl, persistToDisk);
         _unreachableServerCounts = new ExpiringMap<string, (int count, DateTime lastFailure)>(cacheTtl);
@@ -249,23 +272,12 @@ public class DnsResolverService
         _serverQueryCache = new ProbeCache<IDnsQueryResponse>(cacheTtl, DnsL2("dns-srv"), persistToDisk, warmSharedCache);
     }
 
+    /// <summary>Read a cached standard query by its parts. The only survivor of a set
+    /// of six such helpers; the other five had no callers and each wrote or read a
+    /// cache tier incompletely, which is exactly how a future caller would have
+    /// reintroduced an un-gated write.</summary>
     private bool TryGetQueryCache((string domain, QueryType type) key, out IDnsQueryResponse value)
         => _queryCache.TryGet($"q:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.Dns);
-
-    private void SetQueryCache((string domain, QueryType type) key, IDnsQueryResponse value)
-        => _queryCache.Set($"q:{key.domain}:{key.type}", value);
-
-    private bool TryGetPtrCache(string ip, out List<string> value)
-        => _ptrCache.TryGet($"ptr:{ip}", out value, RecheckHelper.CacheDep.Ptr);
-
-    private void SetPtrCache(string ip, List<string> value)
-        => _ptrCache.Set($"ptr:{ip}", value);
-
-    private bool TryGetServerQueryCache((string server, string domain, QueryType type) key, out IDnsQueryResponse value)
-        => _serverQueryCache.TryGet($"sq:{key.server}:{key.domain}:{key.type}", out value, RecheckHelper.CacheDep.ServerDns);
-
-    private void SetServerQueryCache((string server, string domain, QueryType type) key, IDnsQueryResponse value)
-        => _serverQueryCache.Set($"sq:{key.server}:{key.domain}:{key.type}", value);
 
     private void RefillTokens()
     {
@@ -396,7 +408,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -425,7 +437,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.Dns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -439,8 +451,12 @@ public class DnsResolverService
     public async Task<IDnsQueryResponse> QuerySpeculativeAsync(string domain, QueryType type)
     {
         var cacheKey = $"q:{domain.ToLowerInvariant()}:{type}";
-        // Check cache — if a standard query already populated it, use that
-        if (_queryCache.TryGet(cacheKey, out var cached, RecheckHelper.CacheDep.Dns))
+        // L1, then the shared tier — if a standard query or a peer already populated
+        // it, use that. A plain TryGet here left this path blind to the L2, which for
+        // the DKIM selector sweep is most of what it asks for: every pod re-probed the
+        // same 39 absent names because no pod could see another's answer.
+        var cached = await _queryCache.TryGetSharedAsync(cacheKey, RecheckHelper.CacheDep.Dns);
+        if (cached != null)
         {
             Interlocked.Increment(ref _cacheHits);
             Trace?.Invoke($"[DNS] CACHE HIT {type} {domain}");
@@ -452,9 +468,13 @@ public class DnsResolverService
         {
             var result = await RateLimitedAsync(() => _speculativeClient.QueryAsync(domain, type), $"SPEC {type} {domain}");
             Interlocked.Increment(ref _responsesReceived);
-            // Cache successful responses — but timeouts return EmptyResponse which
-            // we intentionally cache (short TTL will expire it, or standard query overwrites)
-            _queryCache.Set(cacheKey, result);
+            // Record-TTL gated like every other write to this cache. It writes straight
+            // to the cache rather than through GetOrCreateAsync, so the TTL has to be
+            // passed explicitly — omitting it gave the 39 DKIM selector probes and the
+            // SRV lookups the full CacheTtlHours while every gated path around them was
+            // honouring what the zone published. Set writes through to the L2 too, so a
+            // selector this pod found absent is a selector its peers need not re-probe.
+            _queryCache.Set(cacheKey, result, DnsEntryTtl(result));
             return result;
         }
         catch
@@ -515,7 +535,7 @@ public class DnsResolverService
                 return EmptyResponse.Instance;
             }
         }, RecheckHelper.CacheDep.ServerDns,
-        shouldPersist: response => response != EmptyResponse.Instance,
+        shouldPersist: IsAnswer,
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: DnsEntryTtl);
     }
@@ -535,7 +555,6 @@ public class DnsResolverService
     public async Task<List<string>> ResolvePtrAsync(string ip)
     {
         var cacheKey = $"ptr:{ip}";
-        bool succeeded = false;
         // The cached value is the name list, not the response, so the TTL has to be
         // carried out of the factory rather than read back off the value.
         TimeSpan? recordTtl = null;
@@ -547,17 +566,17 @@ public class DnsResolverService
                 var parsedIp = IPAddress.Parse(ip);
                 var result = await RateLimitedAsync(() => _client.QueryReverseAsync(parsedIp), $"PTR {ip}");
                 Interlocked.Increment(ref _responsesReceived);
-                succeeded = true;
-                recordTtl = DnsEntryTtl(result.Answers);
+                if (!IsAnswer(result)) return PtrLookupFailed;
+                recordTtl = DnsEntryTtl(result);
                 return result.Answers.PtrRecords().Select(p => p.PtrDomainName.Value.TrimEnd('.')).ToList();
             }
             catch
             {
                 Interlocked.Increment(ref _responsesReceived);
-                return new List<string>();
+                return PtrLookupFailed;
             }
         }, RecheckHelper.CacheDep.Ptr,
-        shouldPersist: _ => succeeded,
+        shouldPersist: names => !PtrLookupDidFail(names),
         onHit: () => Interlocked.Increment(ref _cacheHits),
         entryTtl: _ => recordTtl);
     }
@@ -821,12 +840,88 @@ public class DnsResolverService
     // ── Record-TTL gating ────────────────────────────────────────────────
     //
     // See DnsCacheTtl for the policy itself. Off unless CacheMinTtlSeconds is set,
-    // in which case an answer lives for clamp(min record TTL, floor, cache TTL).
+    // in which case an answer lives for clamp(published TTL, floor, cache TTL).
+    //
+    // Two sections can publish that TTL, and both must be read. A positive answer
+    // carries its own record TTLs. A negative one — NXDOMAIN or NODATA — carries an
+    // SOA in the authority section instead, which is where RFC 2308 puts the lifetime
+    // of "this does not exist". Reading only the answers made every negative response
+    // look TTL-less, and negative responses are the bulk of what a validation issues:
+    // blocklist misses, absent DKIM selectors, probed subdomains that do not exist.
+    //
+    // A response publishing neither yields null, which leaves the cache-wide TTL
+    // governing. The floor raises TTLs we were given; it is not a stand-in for one.
 
-    private TimeSpan? DnsEntryTtl(IDnsQueryResponse response) => DnsEntryTtl(response.Answers);
+    /// <summary>
+    /// The list <see cref="ResolvePtrAsync"/> returns when the lookup could not be
+    /// completed, as opposed to completing and finding no PTR record. Same idea as
+    /// <see cref="EmptyResponse"/>: a distinguished instance, recognised by reference.
+    ///
+    /// <para>The two were previously the same empty list, and the conflation reached
+    /// users as fact — a timed-out reverse lookup was reported as "No PTR record —
+    /// many receivers reject mail from IPs without reverse DNS", a confident and
+    /// actionable finding about an IP that has perfectly good reverse DNS.</para>
+    ///
+    /// <para>A sentinel rather than a wrapper type because the value is persisted: the
+    /// <c>ptr</c> cache records a <c>List&lt;string&gt;</c> on disk, and a failure is
+    /// never persisted anyway, so nothing needs the distinction to survive a restart.
+    /// It does survive a cache <i>hit</i>, which is what matters — the reference is what
+    /// L1 holds.</para>
+    /// </summary>
+    private static readonly List<string> PtrLookupFailed = new();
 
-    private TimeSpan? DnsEntryTtl(IEnumerable<DnsResourceRecord> answers)
-        => DnsCacheTtl.For(DnsCacheTtl.MinRecordTtl(answers), _dnsMinTtl, _cacheTtl);
+    /// <summary>Whether a list returned by <see cref="ResolvePtrAsync"/> means "the
+    /// lookup failed" rather than "no PTR record exists".</summary>
+    public static bool PtrLookupDidFail(List<string> names) => ReferenceEquals(names, PtrLookupFailed);
+
+    /// <summary>
+    /// Whether a response is an <i>answer</i> — something the zone actually told us —
+    /// rather than a failure to obtain one.
+    ///
+    /// <para>Only <c>NoError</c> and <c>NXDomain</c> qualify. Both are real answers:
+    /// NODATA and NXDOMAIN say a name or type does not exist, they carry an SOA giving
+    /// the negative lifetime, and caching them is the point. Everything else —
+    /// SERVFAIL, REFUSED, FormErr, NotImp — says the resolver could not answer, which
+    /// is a property of this attempt rather than of the zone.</para>
+    ///
+    /// <para><b>Why this was needed.</b> The persistence predicates rejected only
+    /// <see cref="EmptyResponse"/>, the sentinel substituted when a query <i>threw</i>.
+    /// Every client here runs with <c>ThrowDnsErrors = false</c>, so a SERVFAIL never
+    /// throws: it arrives as an ordinary response object, passed the predicate, and was
+    /// cached and persisted as though the zone had answered. It also carries no answers
+    /// and no SOA, so with record-TTL gating on it published no TTL either and took the
+    /// full <c>CacheTtlHours</c> — one failed lookup recorded for hours, on disk and
+    /// shared with every peer, and indistinguishable from "this does not exist".</para>
+    /// </summary>
+    private static bool IsAnswer(IDnsQueryResponse response)
+    {
+        if (ReferenceEquals(response, EmptyResponse.Instance)) return false;
+
+        try
+        {
+            var code = response.Header.ResponseCode;
+            return code is DnsHeaderResponseCode.NoError or DnsHeaderResponseCode.NotExistentDomain;
+        }
+        catch
+        {
+            // No header to read — a deserialised or synthetic response. Fall back to
+            // the flag every implementation here does set.
+            return !response.HasError;
+        }
+    }
+
+    private TimeSpan? DnsEntryTtl(IDnsQueryResponse response)
+    {
+        // A positive answer is governed by its own record TTLs. Reaching the authority
+        // section at all means the answer section was empty, which — the caller having
+        // already established this is an answer rather than a failure — makes it a
+        // negative answer, and those carry their own, much tighter ceiling.
+        var positive = DnsCacheTtl.MinRecordTtl(response.Answers);
+        return positive is not null
+            ? DnsCacheTtl.For(positive, _dnsMinTtl, _cacheTtl)
+            : DnsCacheTtl.ForNegative(DnsCacheTtl.NegativeTtl(response.Authorities),
+                _dnsMinTtl, _cacheTtl, _dnsNegativeCap);
+    }
 
     private static JsonNode? DnsToNode(IDnsQueryResponse response)
     {

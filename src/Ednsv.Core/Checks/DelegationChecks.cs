@@ -1,3 +1,4 @@
+using Ednsv.Core.Services;
 using System.Net;
 using DnsClient;
 using DnsClient.Protocol;
@@ -116,7 +117,8 @@ public class AuthoritativeNsCheck : ICheck
                 foreach (var ip in allIps)
                 {
                     var ptrs = await ctx.Dns.ResolvePtrAsync(ip);
-                    var ptrStr = ptrs.Any() ? string.Join(", ", ptrs) : "No PTR";
+                    var ptrStr = ptrs.Any() ? string.Join(", ", ptrs)
+                        : DnsResolverService.PtrLookupDidFail(ptrs) ? "lookup failed" : "No PTR";
                     result.Details.Add($"NS: {nsHost} -> {ip} (PTR: {ptrStr})");
                 }
                 if (!allIps.Any())
