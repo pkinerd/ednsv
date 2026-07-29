@@ -49,6 +49,7 @@ Start with the architecture overview, then dive into the area you need:
 | [Validation pipeline](docs/validation-pipeline.md) | How a validation runs end-to-end: foundation → concurrent → aggregation phases, timeouts, tracing |
 | [Check framework](docs/check-framework.md) | The `ICheck` model, check categories, severities, and `ValidationOptions` |
 | [Caching architecture](docs/caching-architecture.md) | In-memory + disk cache, dependency-based invalidation, decay, and recheck |
+| [Cache behaviour map](docs/cache-behaviour-map.md) | Positive / negative / failure results across every check family and record type, and what each costs when it is wrong |
 | [Service layer](docs/service-layer.md) | DNS/SMTP/HTTP probe services, rate limiting, config, auth, and startup wiring |
 | [Deployment & API](docs/deployment.md) | CLI options, the REST API (all endpoints), the web UI, Docker, and CI/CD |
 | [Configuration](docs/configuration.md) | Environment variables, runtime config, probe tuning, and the editable probe data lists |

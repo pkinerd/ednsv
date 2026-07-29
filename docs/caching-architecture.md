@@ -1,5 +1,9 @@
 # Caching Architecture
 
+> Looking for "how long will this odd answer stick around?" — see
+> [cache-behaviour-map.md](cache-behaviour-map.md), which maps positive / negative /
+> failure results onto every check family and record type.
+
 EDNSV uses a multi-tier caching system to minimize redundant network requests across checks and across multiple domain validations. This document covers the caching layers, in-flight deduplication, disk persistence, the recheck bypass mechanism, and how transient failures are handled differently from definitive ones.
 
 ## Cache Tiers
@@ -237,6 +241,41 @@ Set `DnsCacheMinTtlSeconds` above zero and the query, server-query and PTR cache
 Reading only the answer section made every negative response look TTL-less, and negative responses are the *bulk* of what a validation issues: 21 blocklist zones per MX IP that answer "not listed", 39 DKIM selectors that do not exist, plus the SPF, DMARC, ARC and mail-survey subdomain probes. Validating a clean domain is the worst case, because nothing is listed and nothing exists.
 
 **A response that published no TTL at all inherits `CacheTtlHours`** — the floor bounds TTLs we received, and is not a stand-in for one. This matters more than it sounds: while the floor *was* the fallback, a `DnsCacheMinTtlSeconds=60` against a domain like cnn.com stamped 60 seconds on most of the cache and dropped hundreds of Redis keys within the first couple of minutes, with the floor setting silently deciding the lifetime of entries no zone had spoken about.
+
+#### Negative answers get a second, much tighter ceiling
+
+`DnsNegativeTtlCapSeconds` (default **600**) caps negative answers alone:
+
+```
+positive:  clamp(min record TTL,      DnsCacheMinTtlSeconds, CacheTtlHours)
+negative:  clamp(SOA negative TTL,    DnsCacheMinTtlSeconds, min(CacheTtlHours, DnsNegativeTtlCapSeconds))
+failure:   30s, L1 only                                       (ProbeCachePolicy.TransientLifetime)
+```
+
+**It is a TTL for a positive non-result, not for errors.** The lookup succeeded; the
+answer is that something does not exist — an absent DKIM selector, an IP with no PTR, a
+"not listed" blocklist reply. That is a result the zone published, with an SOA saying how
+long to believe it, and it is cached and persisted exactly like a record. Timeouts and
+SERVFAIL are *failures*, a different bucket entirely.
+
+The asymmetry is about blast radius. A stale positive answer reports a record that has
+since changed; a stale negative answer reports that something **does not exist**, which
+is what becomes `No PTR record — many receivers reject mail`. A resolver under load can
+return a spurious NXDOMAIN, and zones publish generous minimums — `cnn.com`'s reverse
+zones publish 86400 — so honouring it verbatim meant one bad reply was believed for the
+full `CacheTtlHours`, written to disk, and shared with every pod.
+
+Unlike the floor it is **independent of the gating**: it applies whether or not
+`DnsCacheMinTtlSeconds` is set, because it is a ceiling and the damage it bounds does not
+depend on the gating being on — and gating ships off, so this is the default path.
+`CacheTtlHours` remains the outer ceiling either way. A negative answer that published no
+SOA takes the cap rather than inheriting `CacheTtlHours`: the code only reaches that
+branch once the reply is confirmed an *answer* with an empty answer section, so it is
+still a negative, and the cap is the safer reading.
+
+Rechecks bypass it as they bypass any cached read. See
+[cache-behaviour-map.md](cache-behaviour-map.md) for the full edge-case table and how
+this lands across every check family.
 
 **It ships off** (`DnsCacheMinTtlSeconds=0`). This release is "stop rewriting everything, and 2 hours instead of 24"; gating is a second, separately observable change to enable once the effect of the shorter cap has been seen on its own.
 

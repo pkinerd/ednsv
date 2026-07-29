@@ -127,7 +127,7 @@ fixed — their whole point is a short skip-if-slow ceiling.
 | `_unreachableServerCounts` + `_unreachableBag` | `ExpiringMap` + `WriteBag<int>` | server-IP, value `(count, lastFailure)` |
 | `_serverClients` | `ExpiringMap` | server IP → `LookupClient`; a pool, not results |
 
-`shouldPersist` predicates keep `EmptyResponse.Instance` (timeouts, network errors, DNS errors) out of the disk write bag while still caching them in MemoryCache for the rest of the current process.
+`shouldPersist` predicates keep **failures** — timeouts, network errors, and error RCODEs such as SERVFAIL or REFUSED — out of the disk write bag, the Redis L2 and the shared-cache key index, while still holding them in MemoryCache for 30s (`ProbeCachePolicy.TransientLifetime`) so one validation does not re-ask what just failed. Only `NoError` and `NXDomain` count as answers; see [cache-behaviour-map.md](cache-behaviour-map.md) for how positive, negative and failed results differ.
 
 The three `ProbeCache` instances also carry a shared Redis L2 when one is configured. The
 `ExpiringMap` caches do not: they are L1 and disk only. They expire on `CacheTtlHours`
