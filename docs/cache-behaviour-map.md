@@ -6,136 +6,668 @@ flushing, the recheck bypass; this maps it onto the checks.
 
 ---
 
-## 1. The whole picture
+## 1. Every check, top to bottom
 
-Left to right: the 87 checks, grouped by what they probe → the record or protocol they
-use → how the reply is classified → which cache holds it → how long, and how far it
-travels.
+Each check, the record types or protocol it uses, the cache that holds the result, how
+that result is classified, and the lifetime and reach that follow. Same shape as the DNS
+flow in §2, drawn out for all 87 checks.
+
+Edge labels are the record types a check reaches through that cache — including ones it
+gets indirectly through `CheckContext` rather than querying itself.
+
+### Record lookups — 48 checks
 
 ```mermaid
-flowchart LR
-    subgraph CHK["Checks — 87 across 27 categories"]
+flowchart TD
+    subgraph GNA["A"]
         direction TB
-        K1["<b>Record lookups</b> · 48<br/>A · AAAA · CNAME · MX · TXT<br/>SPF · DMARC · DKIM · CAA · SRV<br/>DNSSEC · DANE · TTL · Wildcard<br/>IPv6 · TLSRPT · Autodiscover"]
-        K2["<b>Delegation</b> · 13<br/>NS · SOA · Delegation"]
-        K3["<b>Reverse</b> · 3<br/>PTR · FCrDNS"]
-        K4["<b>Blocklists</b> · 4<br/>DNSBL · DomainBL"]
-        K5["<b>Mail servers</b> · 13<br/>SMTP"]
-        K6["<b>Recipients</b> · 2<br/>Postmaster · Abuse"]
-        K7["<b>Web endpoints</b> · 3<br/>MTA-STS · BIMI<br/>security.txt"]
-        K8["<b>Zone transfer</b> · 1<br/>ZoneTransfer"]
+        NARecords["A Records"]
     end
-
-    subgraph PROBE["What is asked"]
+    subgraph GNAAAA["AAAA"]
         direction TB
-        P1["DNS query<br/><i>recursive resolver</i>"]
-        P2["DNS query<br/><i>each authoritative NS</i>"]
-        P3["DNS reverse query<br/><i>in-addr/ip6.arpa</i>"]
-        P4["SMTP conversation"]
-        P5["TCP connect"]
-        P6["RCPT TO / relay test"]
-        P7["HTTPS GET"]
-        P8["AXFR attempt"]
+        NAAAARecords["AAAA Records"]
     end
-
-    subgraph RES["How the reply is classified"]
+    subgraph GNCNAME["CNAME"]
         direction TB
-        R1["<b>Positive</b><br/>records returned"]
-        R2["<b>Negative</b><br/>NXDOMAIN / NODATA"]
-        R3["<b>Failure</b><br/>timeout · SERVFAIL<br/>REFUSED · socket error"]
-        R4["<b>Definitive</b><br/>connected, or refused<br/>for a stated reason"]
-        R5["<b>Transient</b><br/>connection timed out"]
-        R6["<b>Definitive</b><br/>any HTTP status"]
-        R7["<b>Transient</b><br/>status 0 — never reached"]
+        NCNAMEChain["CNAME Chain"]
     end
-
-    subgraph CACHE["Cache"]
+    subgraph GNMX["MX"]
         direction TB
-        M1["_queryCache"]
-        M2["_serverQueryCache"]
-        M3["_ptrCache"]
-        M4["_probeCache"]
-        M5["_portCache"]
-        M6["_rcptCache · _relayCache"]
-        M7["_getCache<br/>_getWithHeadersCache"]
-        M8["_axfrCache"]
+        NMXBackupSecurityParity["MX Backup Security Parity"]
+        NMXCNAMECheck["MX CNAME Check"]
+        NMXPriorityDistribution["MX Priority Distribution"]
+        NMXPrivateIPDetection["MX Private IP Detection"]
+        NMXRecords["MX Records"]
+        NMXtoIPDetection["MX-to-IP Detection"]
+        NMailSubdomainSurvey["Mail Subdomain Survey"]
+        NNullMXDuplicates["Null MX / Duplicates"]
     end
-
-    subgraph LIFE["Lifetime and reach"]
+    subgraph GNTXT["TXT"]
         direction TB
-        T1["record TTL, clamped<br/><b>L1 + disk + Redis</b>"]
-        T2["SOA negative TTL, clamped<br/>and capped at 600s<br/><b>L1 + disk + Redis</b>"]
-        T3["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
-        T4["CacheTtlHours<br/><b>L1 + disk</b>, never Redis"]
-        T5["30s<br/><b>L1 only</b>"]
+        NAllTXTRecords["All TXT Records"]
+        NDuplicateConflictingTXTRecor["Duplicate/Conflicting TXT Records"]
+        NEmailProviderVerificationTXT["Email Provider Verification TXT"]
     end
-
-    K1 --> P1 & P4 & P7
-    K2 --> P1 & P2
-    K3 --> P3
-    K4 --> P1
-    K5 --> P1 & P4 & P5
-    K6 --> P6
-    K7 --> P1 & P7
-    K8 --> P2 & P8
-
-    P1 --> R1 & R2 & R3
-    P2 --> R1 & R2 & R3
-    P3 --> R1 & R2 & R3
-    P4 --> R4 & R5
-    P5 --> R4 & R5
-    P6 --> R4 & R5
-    P7 --> R6 & R7
-    P8 --> R4 & R5
-
-    R1 --> M1 & M2 & M3
-    R2 --> M1 & M2 & M3
-    R3 --> M1 & M2 & M3
-    R4 --> M4 & M5 & M6 & M8
-    R5 --> M4 & M5 & M6 & M8
-    R6 --> M7
-    R7 --> M7
-
-    M1 --> T1 & T2 & T5
-    M2 --> T1 & T2 & T5
-    M3 --> T1 & T2 & T5
-    M4 --> T3 & T5
-    M7 --> T3 & T5
-    M5 --> T4 & T5
-    M6 --> T4 & T5
-    M8 --> T4 & T5
-
-    style R1 fill:#e6f4ea,stroke:#34a853
-    style R2 fill:#fef7e0,stroke:#f9ab00
-    style R3 fill:#fce8e6,stroke:#ea4335
-    style R4 fill:#e6f4ea,stroke:#34a853
-    style R5 fill:#fce8e6,stroke:#ea4335
-    style R6 fill:#e6f4ea,stroke:#34a853
-    style R7 fill:#fce8e6,stroke:#ea4335
-    style T5 fill:#fce8e6,stroke:#ea4335
-    style T2 fill:#fef7e0,stroke:#f9ab00
+    subgraph GNSPF["SPF"]
+        direction TB
+        NMXHostsCoveredbySPF["MX Hosts Covered by SPF"]
+        NSPFallinIncludes["SPF +all in Includes"]
+        NSPFIPOverlapDetection["SPF IP Overlap Detection"]
+        NSPFIncludeDepth["SPF Include Depth"]
+        NSPFLookupCount["SPF Lookup Count"]
+        NSPFMacros["SPF Macros"]
+        NSPFRecord["SPF Record"]
+        NSPFRecordSize["SPF Record Size"]
+        NSPFRecursiveExpansion["SPF Recursive Expansion"]
+        NSubdomainSPFCoverage["Subdomain SPF Coverage"]
+    end
+    subgraph GNDMARC["DMARC"]
+        direction TB
+        NDMARCExternalReportAuth["DMARC External Report Auth"]
+        NDMARCInheritance["DMARC Inheritance"]
+        NDMARCPercentagepctAnalysis["DMARC Percentage (pct) Analysis"]
+        NDMARCRecord["DMARC Record"]
+        NDMARCReportTargetMX["DMARC Report Target MX"]
+        NDMARCReportURIValidation["DMARC Report URI Validation"]
+        NDMARCSubdomainPolicyAnalysis["DMARC Subdomain Policy Analysis"]
+        NSPFDMARCCombined["SPF+DMARC Combined"]
+        NSubdomainDMARCOverride["Subdomain DMARC Override"]
+    end
+    subgraph GNDKIM["DKIM"]
+        direction TB
+        NARCSelectorRecords["ARC Selector Records"]
+        NDKIMSelectors["DKIM Selectors"]
+    end
+    subgraph GNCAA["CAA"]
+        direction TB
+        NCAARecords["CAA Records"]
+        NCertificateTransparency["Certificate Transparency"]
+    end
+    subgraph GNSRV["SRV"]
+        direction TB
+        NMailServiceSRVRecords["Mail Service SRV Records"]
+    end
+    subgraph GNDNSSEC["DNSSEC"]
+        direction TB
+        NDNSSEC["DNSSEC"]
+        NNSECNSEC3ZoneWalk["NSEC/NSEC3 Zone Walk"]
+    end
+    subgraph GNDANE["DANE"]
+        direction TB
+        NDANETLSACertMatch["DANE TLSA Cert Match"]
+        NDANETLSA["DANE/TLSA"]
+    end
+    subgraph GNTTL["TTL"]
+        direction TB
+        NTTLSanity["TTL Sanity"]
+    end
+    subgraph GNWildcard["Wildcard"]
+        direction TB
+        NWildcardDNS["Wildcard DNS"]
+    end
+    subgraph GNIPv6["IPv6"]
+        direction TB
+        NIPv6Readiness["IPv6 Readiness"]
+        NSMTPIPv6Connectivity["SMTP IPv6 Connectivity"]
+    end
+    subgraph GNTLSRPT["TLSRPT"]
+        direction TB
+        NTLSReportingTLSRPT["TLS Reporting (TLS-RPT)"]
+    end
+    subgraph GNAutodiscover["Autodiscover"]
+        direction TB
+        NAutodiscover["Autodiscover"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NptrCache[["_ptrCache<br/><i>ptr:ip</i>"]]
+    NprobeCache[["_probeCache<br/><i>smtp:host:port</i>"]]
+    NportCache[["_portCache<br/><i>port:host:port</i>"]]
+    NgetCache[["_getCache<br/><i>url</i>"]]
+    NaxfrCache[["_axfrCache<br/><i>ip|domain</i>"]]
+    NARecords -->|"A"| NqueryCache
+    NAAAARecords -->|"AAAA"| NqueryCache
+    NAutodiscover -->|"A, CNAME, SRV"| NqueryCache
+    NCAARecords -->|"CAA"| NqueryCache
+    NCertificateTransparency --> NgetCache
+    NCNAMEChain -->|"CNAME"| NqueryCache
+    NDANETLSACertMatch --> NprobeCache
+    NDANETLSACertMatch -->|"MX, TLSA"| NqueryCache
+    NDANETLSA -->|"DS, MX, TLSA"| NqueryCache
+    NARCSelectorRecords -->|"TXT"| NqueryCache
+    NDKIMSelectors --> NaxfrCache
+    NDKIMSelectors -->|"A, AAAA, CNAME, NS, TXT"| NqueryCache
+    NDMARCExternalReportAuth -->|"TXT"| NqueryCache
+    NDMARCInheritance -->|"TXT"| NqueryCache
+    NDMARCPercentagepctAnalysis -->|"TXT"| NqueryCache
+    NDMARCRecord -->|"TXT"| NqueryCache
+    NDMARCReportTargetMX -->|"MX, TXT"| NqueryCache
+    NDMARCReportURIValidation -->|"A, MX, TXT"| NqueryCache
+    NDMARCSubdomainPolicyAnalysis -->|"TXT"| NqueryCache
+    NSPFDMARCCombined -->|"TXT"| NqueryCache
+    NSubdomainDMARCOverride -->|"TXT"| NqueryCache
+    NDNSSEC -->|"DNSKEY, DS, RRSIG"| NqueryCache
+    NNSECNSEC3ZoneWalk -->|"A, DS, NSEC3PARAM"| NqueryCache
+    NIPv6Readiness -->|"AAAA, MX"| NqueryCache
+    NSMTPIPv6Connectivity --> NportCache
+    NSMTPIPv6Connectivity -->|"AAAA, MX"| NqueryCache
+    NMXBackupSecurityParity --> NprobeCache
+    NMXBackupSecurityParity -->|"MX"| NqueryCache
+    NMXCNAMECheck -->|"CNAME, MX"| NqueryCache
+    NMXPriorityDistribution -->|"MX"| NqueryCache
+    NMXPrivateIPDetection -->|"A, AAAA"| NqueryCache
+    NMXRecords --> NprobeCache
+    NMXRecords -->|"PTR"| NptrCache
+    NMXRecords -->|"A, AAAA, MX, PTR"| NqueryCache
+    NMXtoIPDetection -->|"MX"| NqueryCache
+    NMailSubdomainSurvey -->|"A, CNAME"| NqueryCache
+    NNullMXDuplicates -->|"MX"| NqueryCache
+    NMXHostsCoveredbySPF -->|"A, AAAA, MX, TXT"| NqueryCache
+    NSPFallinIncludes -->|"TXT"| NqueryCache
+    NSPFIPOverlapDetection -->|"TXT"| NqueryCache
+    NSPFIncludeDepth -->|"TXT"| NqueryCache
+    NSPFLookupCount -->|"TXT"| NqueryCache
+    NSPFMacros -->|"TXT"| NqueryCache
+    NSPFRecord -->|"TXT"| NqueryCache
+    NSPFRecordSize -->|"TXT"| NqueryCache
+    NSPFRecursiveExpansion -->|"A, AAAA, MX, TXT"| NqueryCache
+    NSubdomainSPFCoverage -->|"A, MX, TXT"| NqueryCache
+    NMailServiceSRVRecords -->|"SRV"| NqueryCache
+    NTLSReportingTLSRPT -->|"MX, TXT"| NqueryCache
+    NTTLSanity -->|"MX, TXT"| NqueryCache
+    NAllTXTRecords -->|"TXT"| NqueryCache
+    NDuplicateConflictingTXTRecor -->|"TXT"| NqueryCache
+    NEmailProviderVerificationTXT -->|"TXT"| NqueryCache
+    NWildcardDNS -->|"A, MX, TXT"| NqueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    BD(["<b>definitive</b>"])
+    BT(["<b>transient</b>"])
+    LBD["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
+    LBT["30s<br/><b>L1 only</b>"]
+    BD --> LBD
+    BT --> LBT
+    LD(["<b>definitive</b>"])
+    LT(["<b>transient</b>"])
+    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LLT["30s<br/><b>L1 only</b>"]
+    LD --> LLD
+    LT --> LLT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NptrCache --> RP
+    NptrCache --> RN
+    NptrCache --> RF
+    NprobeCache --> BD
+    NprobeCache --> BT
+    NportCache --> LD
+    NportCache --> LT
+    NgetCache --> BD
+    NgetCache --> BT
+    NaxfrCache --> LD
+    NaxfrCache --> LT
+    style BD fill:#e6f4ea,stroke:#34a853
+    style BT fill:#fce8e6,stroke:#ea4335
+    style LBT fill:#fce8e6,stroke:#ea4335
+    style LD fill:#e6f4ea,stroke:#34a853
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LLT fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style LT fill:#fce8e6,stroke:#ea4335
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
 ```
 
-A few record-lookup checks reach past DNS — Certificate Transparency fetches the CT
-logs over HTTPS, and the DANE and IPv6 checks open an SMTP conversation to inspect the
-certificate — which is why that group has edges to more than one probe.
+Recheck flags for this group: `Dns`, `Dns, Http`, `Dns, Smtp`, `Dns, Smtp, Ptr`.
 
-Three things to read off it:
 
-- **Every probe family has a transient class**, and it always lands in the same place —
-  30 seconds, L1 only, never disk, never Redis, never republished on a re-warm.
-- **Only DNS has a *negative* class.** SMTP, HTTP and AXFR are binary: it worked or it
-  did not. DNS alone can answer "that does not exist" as a fact worth keeping, which is
-  why it gets its own ceiling.
-- **Four caches never reach Redis.** `_portCache`, `_rcptCache`, `_relayCache` and
-  `_axfrCache` are L1 and disk only, so those verdicts do not cross between pods.
+### Delegation and authority — 13 checks
+
+```mermaid
+flowchart TD
+    subgraph GNNS["NS"]
+        direction TB
+        NDNSPropagationConsistency["DNS Propagation Consistency"]
+        NDuplicateNSIPs["Duplicate NS IPs"]
+        NNSLameDelegation["NS Lame Delegation"]
+        NNSMinimumCount["NS Minimum Count"]
+        NNSNetworkDiversity["NS Network Diversity"]
+        NNSRecords["NS Records"]
+        NOpenRecursiveResolverDetecti["Open Recursive Resolver Detection"]
+    end
+    subgraph GNSOA["SOA"]
+        direction TB
+        NSOARecord["SOA Record"]
+        NSOASerialConsistency["SOA Serial Consistency"]
+    end
+    subgraph GNDelegation["Delegation"]
+        direction TB
+        NAuthoritativeNS["Authoritative NS"]
+        NDelegationChain["Delegation Chain"]
+        NDelegationConsistency["Delegation Consistency"]
+        NNSGlueRecords["NS Glue Records"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NserverQueryCache[["_serverQueryCache<br/><i>sq:server:domain:type</i>"]]
+    NptrCache[["_ptrCache<br/><i>ptr:ip</i>"]]
+    NgetCache[["_getCache<br/><i>url</i>"]]
+    NAuthoritativeNS -->|"PTR"| NptrCache
+    NAuthoritativeNS -->|"A, AAAA, NS, PTR"| NqueryCache
+    NDelegationChain -->|"CNAME, NS"| NqueryCache
+    NDelegationConsistency -->|"A, NS"| NqueryCache
+    NDelegationConsistency -->|"A, NS"| NserverQueryCache
+    NNSGlueRecords -->|"A, NS"| NqueryCache
+    NNSGlueRecords -->|"A, NS"| NserverQueryCache
+    NDNSPropagationConsistency --> NgetCache
+    NDNSPropagationConsistency -->|"A, MX"| NqueryCache
+    NDNSPropagationConsistency -->|"A, MX"| NserverQueryCache
+    NDuplicateNSIPs -->|"A, AAAA"| NqueryCache
+    NNSLameDelegation -->|"A, AAAA, NS, SOA"| NqueryCache
+    NNSLameDelegation -->|"A, AAAA, NS, SOA"| NserverQueryCache
+    NNSMinimumCount -->|"NS"| NqueryCache
+    NNSNetworkDiversity -->|"A, AAAA"| NqueryCache
+    NNSRecords -->|"NS"| NqueryCache
+    NOpenRecursiveResolverDetecti -->|"A, AAAA, NS"| NqueryCache
+    NOpenRecursiveResolverDetecti -->|"A, AAAA, NS"| NserverQueryCache
+    NSOARecord -->|"SOA"| NqueryCache
+    NSOASerialConsistency -->|"A, AAAA, NS, SOA"| NqueryCache
+    NSOASerialConsistency -->|"A, AAAA, NS, SOA"| NserverQueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    BD(["<b>definitive</b>"])
+    BT(["<b>transient</b>"])
+    LBD["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
+    LBT["30s<br/><b>L1 only</b>"]
+    BD --> LBD
+    BT --> LBT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NserverQueryCache --> RP
+    NserverQueryCache --> RN
+    NserverQueryCache --> RF
+    NptrCache --> RP
+    NptrCache --> RN
+    NptrCache --> RF
+    NgetCache --> BD
+    NgetCache --> BT
+    style BD fill:#e6f4ea,stroke:#34a853
+    style BT fill:#fce8e6,stroke:#ea4335
+    style LBT fill:#fce8e6,stroke:#ea4335
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns, ServerDns`, `Dns, ServerDns, Ptr`.
+
+
+### Reverse DNS — 3 checks
+
+```mermaid
+flowchart TD
+    subgraph GNPTR["PTR"]
+        direction TB
+        NMXReverseDNSPTR["MX Reverse DNS (PTR)"]
+        NReverseDNSPTR["Reverse DNS (PTR)"]
+    end
+    subgraph GNFCrDNS["FCrDNS"]
+        direction TB
+        NForwardConfirmedrDNSFCrDNS["Forward-Confirmed rDNS (FCrDNS)"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NptrCache[["_ptrCache<br/><i>ptr:ip</i>"]]
+    NForwardConfirmedrDNSFCrDNS -->|"PTR"| NptrCache
+    NForwardConfirmedrDNSFCrDNS -->|"A, AAAA, PTR"| NqueryCache
+    NMXReverseDNSPTR -->|"PTR"| NptrCache
+    NMXReverseDNSPTR -->|"A, AAAA, MX, PTR"| NqueryCache
+    NReverseDNSPTR -->|"PTR"| NptrCache
+    NReverseDNSPTR -->|"A, PTR"| NqueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NptrCache --> RP
+    NptrCache --> RN
+    NptrCache --> RF
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns, Ptr`.
+
+
+### Blocklists — 4 checks
+
+```mermaid
+flowchart TD
+    subgraph GNDNSBL["DNSBL"]
+        direction TB
+        NExtendedIPBlocklistCheck["Extended IP Blocklist Check"]
+        NIPBlocklistCheckDNSBL["IP Blocklist Check (DNSBL)"]
+    end
+    subgraph GNDomainBL["DomainBL"]
+        direction TB
+        NDomainBlocklistCheck["Domain Blocklist Check"]
+        NMXHostnameBlocklistRHSBL["MX Hostname Blocklist (RHSBL)"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NExtendedIPBlocklistCheck -->|"A, AAAA"| NqueryCache
+    NIPBlocklistCheckDNSBL -->|"A, AAAA, MX"| NqueryCache
+    NDomainBlocklistCheck -->|"A"| NqueryCache
+    NMXHostnameBlocklistRHSBL -->|"A, MX"| NqueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns`.
+
+
+### Mail servers — 13 checks
+
+```mermaid
+flowchart TD
+    subgraph GNSMTP["SMTP"]
+        direction TB
+        NCatchAllDetection["Catch-All Detection"]
+        NEHLOCapabilities["EHLO Capabilities"]
+        NOpenRelayTest["Open Relay Test"]
+        NSMTPBannerValidation["SMTP Banner Validation"]
+        NSMTPBannervsReverseDNS["SMTP Banner vs Reverse DNS"]
+        NSMTPMaxMessageSize["SMTP Max Message Size"]
+        NSMTPREQUIRETLSRFC8689["SMTP REQUIRETLS (RFC 8689)"]
+        NSMTPTLSCertificate["SMTP TLS Certificate"]
+        NSMTPTLSCertificateChain["SMTP TLS Certificate Chain"]
+        NSMTPTLSVersion["SMTP TLS Version"]
+        NSMTPTransactionTiming["SMTP Transaction Timing"]
+        NSTARTTLSEnforcement["STARTTLS Enforcement"]
+        NSubmissionPorts["Submission Ports"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NptrCache[["_ptrCache<br/><i>ptr:ip</i>"]]
+    NprobeCache[["_probeCache<br/><i>smtp:host:port</i>"]]
+    NportCache[["_portCache<br/><i>port:host:port</i>"]]
+    NrcptCache[["_rcptCache<br/><i>host|email</i>"]]
+    NrelayCache[["_relayCache<br/><i>relay:host|domain</i>"]]
+    NCatchAllDetection -->|"MX"| NqueryCache
+    NCatchAllDetection --> NrcptCache
+    NEHLOCapabilities --> NprobeCache
+    NEHLOCapabilities -->|"MX"| NqueryCache
+    NOpenRelayTest -->|"MX"| NqueryCache
+    NOpenRelayTest --> NrelayCache
+    NSMTPBannerValidation --> NprobeCache
+    NSMTPBannerValidation -->|"MX"| NqueryCache
+    NSMTPBannervsReverseDNS --> NprobeCache
+    NSMTPBannervsReverseDNS -->|"PTR"| NptrCache
+    NSMTPBannervsReverseDNS -->|"A, AAAA, MX, PTR"| NqueryCache
+    NSMTPMaxMessageSize --> NprobeCache
+    NSMTPMaxMessageSize -->|"MX"| NqueryCache
+    NSMTPREQUIRETLSRFC8689 --> NprobeCache
+    NSMTPREQUIRETLSRFC8689 -->|"MX"| NqueryCache
+    NSMTPTLSCertificate --> NprobeCache
+    NSMTPTLSCertificate -->|"MX"| NqueryCache
+    NSMTPTLSCertificateChain --> NprobeCache
+    NSMTPTLSCertificateChain -->|"MX"| NqueryCache
+    NSMTPTLSVersion --> NprobeCache
+    NSMTPTLSVersion -->|"MX"| NqueryCache
+    NSMTPTransactionTiming --> NprobeCache
+    NSMTPTransactionTiming -->|"MX"| NqueryCache
+    NSTARTTLSEnforcement --> NprobeCache
+    NSTARTTLSEnforcement -->|"MX"| NqueryCache
+    NSubmissionPorts --> NportCache
+    NSubmissionPorts --> NprobeCache
+    NSubmissionPorts -->|"MX"| NqueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    BD(["<b>definitive</b>"])
+    BT(["<b>transient</b>"])
+    LBD["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
+    LBT["30s<br/><b>L1 only</b>"]
+    BD --> LBD
+    BT --> LBT
+    LD(["<b>definitive</b>"])
+    LT(["<b>transient</b>"])
+    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LLT["30s<br/><b>L1 only</b>"]
+    LD --> LLD
+    LT --> LLT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NptrCache --> RP
+    NptrCache --> RN
+    NptrCache --> RF
+    NprobeCache --> BD
+    NprobeCache --> BT
+    NportCache --> LD
+    NportCache --> LT
+    NrcptCache --> LD
+    NrcptCache --> LT
+    NrelayCache --> LD
+    NrelayCache --> LT
+    style BD fill:#e6f4ea,stroke:#34a853
+    style BT fill:#fce8e6,stroke:#ea4335
+    style LBT fill:#fce8e6,stroke:#ea4335
+    style LD fill:#e6f4ea,stroke:#34a853
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LLT fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style LT fill:#fce8e6,stroke:#ea4335
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns, Smtp, Port`.
+
+
+### Recipients — 2 checks
+
+```mermaid
+flowchart TD
+    subgraph GNPostmaster["Postmaster"]
+        direction TB
+        NPostmasterAddress["Postmaster Address"]
+    end
+    subgraph GNAbuse["Abuse"]
+        direction TB
+        NAbuseAddress["Abuse Address"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NrcptCache[["_rcptCache<br/><i>host|email</i>"]]
+    NAbuseAddress -->|"MX"| NqueryCache
+    NAbuseAddress --> NrcptCache
+    NPostmasterAddress -->|"MX"| NqueryCache
+    NPostmasterAddress --> NrcptCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    LD(["<b>definitive</b>"])
+    LT(["<b>transient</b>"])
+    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LLT["30s<br/><b>L1 only</b>"]
+    LD --> LLD
+    LT --> LLT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NrcptCache --> LD
+    NrcptCache --> LT
+    style LD fill:#e6f4ea,stroke:#34a853
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LLT fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style LT fill:#fce8e6,stroke:#ea4335
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Rcpt`.
+
+
+### Web endpoints — 3 checks
+
+```mermaid
+flowchart TD
+    subgraph GNMTASTS["MTASTS"]
+        direction TB
+        NMTASTS["MTA-STS"]
+    end
+    subgraph GNBIMI["BIMI"]
+        direction TB
+        NBIMI["BIMI"]
+    end
+    subgraph GNSecurityTxt["SecurityTxt"]
+        direction TB
+        NsecuritytxtRFC9116["security.txt (RFC 9116)"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NgetCache[["_getCache<br/><i>url</i>"]]
+    NBIMI --> NgetCache
+    NBIMI -->|"TXT"| NqueryCache
+    NMTASTS --> NgetCache
+    NMTASTS -->|"MX, TLSA, TXT"| NqueryCache
+    NsecuritytxtRFC9116 --> NgetCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    BD(["<b>definitive</b>"])
+    BT(["<b>transient</b>"])
+    LBD["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
+    LBT["30s<br/><b>L1 only</b>"]
+    BD --> LBD
+    BT --> LBT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NgetCache --> BD
+    NgetCache --> BT
+    style BD fill:#e6f4ea,stroke:#34a853
+    style BT fill:#fce8e6,stroke:#ea4335
+    style LBT fill:#fce8e6,stroke:#ea4335
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns, Http`, `Http`.
+
+
+### Zone transfer — 1 checks
+
+```mermaid
+flowchart TD
+    subgraph GNZoneTransfer["ZoneTransfer"]
+        direction TB
+        NAXFRExposure["AXFR Exposure"]
+    end
+    NqueryCache[["_queryCache<br/><i>q:domain:type</i>"]]
+    NaxfrCache[["_axfrCache<br/><i>ip|domain</i>"]]
+    NAXFRExposure --> NaxfrCache
+    NAXFRExposure -->|"A, AAAA, NS"| NqueryCache
+    RP(["<b>positive</b><br/>records returned"])
+    RN(["<b>negative</b><br/>NXDOMAIN / NODATA"])
+    RF(["<b>failure</b><br/>timeout · SERVFAIL · REFUSED"])
+    LP["clamp(min record TTL,<br/>DnsCacheMinTtlSeconds, CacheTtlHours)<br/><b>L1 + disk + Redis</b>"]
+    LN["clamp(SOA negative TTL, DnsCacheMinTtlSeconds,<br/>min(CacheTtlHours, DnsNegativeTtlCapSeconds))<br/><b>L1 + disk + Redis</b>"]
+    LF["30s<br/><b>L1 only</b> — never disk, never Redis"]
+    RP --> LP
+    RN --> LN
+    RF --> LF
+    LD(["<b>definitive</b>"])
+    LT(["<b>transient</b>"])
+    LLD["CacheTtlHours<br/><b>L1 + disk</b> — never Redis"]
+    LLT["30s<br/><b>L1 only</b>"]
+    LD --> LLD
+    LT --> LLT
+    NqueryCache --> RP
+    NqueryCache --> RN
+    NqueryCache --> RF
+    NaxfrCache --> LD
+    NaxfrCache --> LT
+    style LD fill:#e6f4ea,stroke:#34a853
+    style LF fill:#fce8e6,stroke:#ea4335
+    style LLT fill:#fce8e6,stroke:#ea4335
+    style LN fill:#fef7e0,stroke:#f9ab00
+    style LT fill:#fce8e6,stroke:#ea4335
+    style RF fill:#fce8e6,stroke:#ea4335
+    style RN fill:#fef7e0,stroke:#f9ab00
+    style RP fill:#e6f4ea,stroke:#34a853
+```
+
+Recheck flags for this group: `Dns, Axfr`.
 
 ---
 
-## 2. DNS results — the three kinds
+## 2. How a DNS reply is classified
 
-DNS is where most of the work happens and where the classification matters most, so it
-is worth stating precisely.
+The three-way split above every DNS cache, stated precisely. This is where most of the
+work happens and where the classification carries the most weight.
 
 ```mermaid
 flowchart TD
@@ -248,9 +780,9 @@ correctly. Comparing the configured resolver against a public one (`dig -x <ip>`
 
 ---
 
-## 5. Every check, its record types, and where its results are cached
+## 5. The same thing as a table
 
-All 87 checks. **Record types queried** includes types reached indirectly through
+All 87 checks, for searching and diffing rather than reading. **Record types queried** includes types reached indirectly through
 `CheckContext` — a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
 though it issues no query itself. **Recheck flags** are the `CacheDep` bits a recheck of
 that category bypasses; see *Recheck System* in
