@@ -6,10 +6,136 @@ flushing, the recheck bypass; this maps it onto the checks.
 
 ---
 
-## 1. Three kinds of result
+## 1. The whole picture
 
-A DNS reply is one of three things, and they are cached on different terms. The
-distinction runs through everything below.
+Left to right: the 87 checks, grouped by what they probe → the record or protocol they
+use → how the reply is classified → which cache holds it → how long, and how far it
+travels.
+
+```mermaid
+flowchart LR
+    subgraph CHK["Checks — 87 across 27 categories"]
+        direction TB
+        K1["<b>Record lookups</b> · 48<br/>A · AAAA · CNAME · MX · TXT<br/>SPF · DMARC · DKIM · CAA · SRV<br/>DNSSEC · DANE · TTL · Wildcard<br/>IPv6 · TLSRPT · Autodiscover"]
+        K2["<b>Delegation</b> · 13<br/>NS · SOA · Delegation"]
+        K3["<b>Reverse</b> · 3<br/>PTR · FCrDNS"]
+        K4["<b>Blocklists</b> · 4<br/>DNSBL · DomainBL"]
+        K5["<b>Mail servers</b> · 13<br/>SMTP"]
+        K6["<b>Recipients</b> · 2<br/>Postmaster · Abuse"]
+        K7["<b>Web endpoints</b> · 3<br/>MTA-STS · BIMI<br/>security.txt"]
+        K8["<b>Zone transfer</b> · 1<br/>ZoneTransfer"]
+    end
+
+    subgraph PROBE["What is asked"]
+        direction TB
+        P1["DNS query<br/><i>recursive resolver</i>"]
+        P2["DNS query<br/><i>each authoritative NS</i>"]
+        P3["DNS reverse query<br/><i>in-addr/ip6.arpa</i>"]
+        P4["SMTP conversation"]
+        P5["TCP connect"]
+        P6["RCPT TO / relay test"]
+        P7["HTTPS GET"]
+        P8["AXFR attempt"]
+    end
+
+    subgraph RES["How the reply is classified"]
+        direction TB
+        R1["<b>Positive</b><br/>records returned"]
+        R2["<b>Negative</b><br/>NXDOMAIN / NODATA"]
+        R3["<b>Failure</b><br/>timeout · SERVFAIL<br/>REFUSED · socket error"]
+        R4["<b>Definitive</b><br/>connected, or refused<br/>for a stated reason"]
+        R5["<b>Transient</b><br/>connection timed out"]
+        R6["<b>Definitive</b><br/>any HTTP status"]
+        R7["<b>Transient</b><br/>status 0 — never reached"]
+    end
+
+    subgraph CACHE["Cache"]
+        direction TB
+        M1["_queryCache"]
+        M2["_serverQueryCache"]
+        M3["_ptrCache"]
+        M4["_probeCache"]
+        M5["_portCache"]
+        M6["_rcptCache · _relayCache"]
+        M7["_getCache<br/>_getWithHeadersCache"]
+        M8["_axfrCache"]
+    end
+
+    subgraph LIFE["Lifetime and reach"]
+        direction TB
+        T1["record TTL, clamped<br/><b>L1 + disk + Redis</b>"]
+        T2["SOA negative TTL, clamped<br/>and capped at 600s<br/><b>L1 + disk + Redis</b>"]
+        T3["CacheTtlHours<br/><b>L1 + disk + Redis</b>"]
+        T4["CacheTtlHours<br/><b>L1 + disk</b>, never Redis"]
+        T5["30s<br/><b>L1 only</b>"]
+    end
+
+    K1 --> P1 & P4 & P7
+    K2 --> P1 & P2
+    K3 --> P3
+    K4 --> P1
+    K5 --> P1 & P4 & P5
+    K6 --> P6
+    K7 --> P1 & P7
+    K8 --> P2 & P8
+
+    P1 --> R1 & R2 & R3
+    P2 --> R1 & R2 & R3
+    P3 --> R1 & R2 & R3
+    P4 --> R4 & R5
+    P5 --> R4 & R5
+    P6 --> R4 & R5
+    P7 --> R6 & R7
+    P8 --> R4 & R5
+
+    R1 --> M1 & M2 & M3
+    R2 --> M1 & M2 & M3
+    R3 --> M1 & M2 & M3
+    R4 --> M4 & M5 & M6 & M8
+    R5 --> M4 & M5 & M6 & M8
+    R6 --> M7
+    R7 --> M7
+
+    M1 --> T1 & T2 & T5
+    M2 --> T1 & T2 & T5
+    M3 --> T1 & T2 & T5
+    M4 --> T3 & T5
+    M7 --> T3 & T5
+    M5 --> T4 & T5
+    M6 --> T4 & T5
+    M8 --> T4 & T5
+
+    style R1 fill:#e6f4ea,stroke:#34a853
+    style R2 fill:#fef7e0,stroke:#f9ab00
+    style R3 fill:#fce8e6,stroke:#ea4335
+    style R4 fill:#e6f4ea,stroke:#34a853
+    style R5 fill:#fce8e6,stroke:#ea4335
+    style R6 fill:#e6f4ea,stroke:#34a853
+    style R7 fill:#fce8e6,stroke:#ea4335
+    style T5 fill:#fce8e6,stroke:#ea4335
+    style T2 fill:#fef7e0,stroke:#f9ab00
+```
+
+A few record-lookup checks reach past DNS — Certificate Transparency fetches the CT
+logs over HTTPS, and the DANE and IPv6 checks open an SMTP conversation to inspect the
+certificate — which is why that group has edges to more than one probe.
+
+Three things to read off it:
+
+- **Every probe family has a transient class**, and it always lands in the same place —
+  30 seconds, L1 only, never disk, never Redis, never republished on a re-warm.
+- **Only DNS has a *negative* class.** SMTP, HTTP and AXFR are binary: it worked or it
+  did not. DNS alone can answer "that does not exist" as a fact worth keeping, which is
+  why it gets its own ceiling.
+- **Four caches never reach Redis.** `_portCache`, `_rcptCache`, `_relayCache` and
+  `_axfrCache` are L1 and disk only, so those verdicts do not cross between pods.
+
+---
+
+## 2. DNS results — the three kinds
+
+DNS is where most of the work happens and where the classification matters most, so it
+is worth stating precisely.
 
 ```mermaid
 flowchart TD
@@ -58,14 +184,40 @@ no PTR, a "not listed" blocklist reply, a name that publishes no CAA.
 
 ---
 
-## 2. Lifetimes
+## 3. SMTP, HTTP and AXFR results
+
+The other probes have no equivalent of a negative answer — there is no protocol-level way
+for a mail server to publish "this port is authoritatively shut for the next hour". They
+split two ways instead: **definitive** (persisted, `CacheTtlHours`) or **transient**
+(L1 only, 30s).
+
+| Probe | Cache | Definitive — persisted | Transient — L1 only |
+|---|---|---|---|
+| SMTP handshake | `_probeCache` | connected, or failed with a stated reason | `Connection timed out` |
+| Port reachability | `_portCache` | open, or at least one attempt was refused | every attempt timed out |
+| RCPT / relay | `_rcptCache`, `_relayCache` | the server gave a verdict | no usable conversation |
+| HTTP GET | `_getCache`, `_getWithHeadersCache` | any HTTP status, 4xx and 5xx included | status 0 — the host was never reached |
+| Zone transfer | `_axfrCache` | the transfer was allowed or refused | the TCP attempt failed |
+
+Two of these are worth noting:
+
+- **An HTTP 404 is a definitive answer**, not a failure — "there is no MTA-STS policy
+  here" is a result. Only a status of 0, meaning the request never got a response at all,
+  is transient.
+- **A failed zone transfer is never recorded.** Reduced to a boolean, "the TCP attempt
+  failed" is indistinguishable from "the transfer was refused", so caching it would
+  record *not vulnerable* for a server nobody reached.
+
+---
+
+## 4. Lifetimes
 
 | Setting | Default | Applies to | Role |
 |---|---|---|---|
 | `CacheTtlHours` | `2` | everything | The outer ceiling, and the lifetime of anything without a tighter rule |
 | `DnsCacheMinTtlSeconds` | `0` (off) | DNS answers | **Floor** on published TTLs. At `0` no published TTL is read at all and every answer takes `CacheTtlHours` |
-| `DnsNegativeTtlCapSeconds` | `600` | negative answers only | **Ceiling.** Independent of the floor — it applies whether or not gating is on |
-| `ProbeCachePolicy.TransientLifetime` | `30s` | failures | Constant. Long enough to stop one validation re-asking what just failed |
+| `DnsNegativeTtlCapSeconds` | `600` | DNS negative answers only | **Ceiling.** Independent of the floor — it applies whether or not gating is on |
+| `ProbeCachePolicy.TransientLifetime` | `30s` | every probe family's transient class | Constant. Long enough to stop one validation re-asking what just failed |
 | `UnreachableDecayMinutes` | `5` | `_serverQueryCache` only | After `MaxRetries` (3) failures, that nameserver is skipped for this long |
 
 Negative answers are capped well below positive ones because the two fail differently: a
@@ -96,7 +248,7 @@ correctly. Comparing the configured resolver against a public one (`dig -x <ip>`
 
 ---
 
-## 3. Every check, its record types, and where its results are cached
+## 5. Every check, its record types, and where its results are cached
 
 All 87 checks. **Record types queried** includes types reached indirectly through
 `CheckContext` — a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
@@ -242,7 +394,7 @@ the pod — but the check output does not say which it was.
 
 ---
 
-## 4. Which tier holds what
+## 6. Which tier holds what
 
 ```mermaid
 flowchart LR
