@@ -127,59 +127,159 @@ dig -x 52.101.9.17 @1.1.1.1   # a public one
 
 ---
 
-## 3. What each check family asks for, and what it costs
+## 3. Every check, its record types, and where its results are cached
 
-87 checks across 27 categories. Grouped by the cache they land in and the record types
-they query. **"Non-result meaning"** is what a negative answer means for that family —
-i.e. what the 600s cap is protecting you from believing for too long.
-
-### DNS-record checks → `_queryCache` (L1 + disk + Redis)
-
-| Category | Checks | Record types | Non-result meaning |
-|---|---|---|---|
-| A / AAAA | 2 | `A`, `AAAA` | host does not resolve |
-| MX | 8 | `MX`, `A`, `AAAA`, `CNAME`, `PTR` | no mail exchanger |
-| SPF | 10 | `TXT`, `A` | no SPF policy |
-| DMARC | 9 | `TXT`, `A` | no DMARC policy / no subdomain override |
-| DKIM | 2 | `TXT`, `CNAME` *(speculative)* | **selector does not exist** — the bulk of all negatives |
-| TXT | 3 | `TXT` | no verification records |
-| NS / SOA / Delegation | 13 | `NS`, `SOA`, `A`, `CNAME` | no delegation, no glue |
-| DNSSEC | 2 | `DNSKEY`, `DS`, `RRSIG`, `NSEC3PARAM` | zone unsigned |
-| CAA | 2 | `CAA`, `A`, `AAAA`, `PTR` | no issuer restriction |
-| DANE | 2 | `TLSA`, `DS` | no TLSA record |
-| SRV / Autodiscover | 2 | `SRV`, `A`, `AAAA`, `CNAME` | service not advertised |
-| IPv6 / TTL / Wildcard / CNAME | 5 | `A`, `AAAA`, `MX`, `TXT`, `CNAME` | no AAAA / no wildcard |
-| DNSBL / DomainBL | 4 | `A` | **not listed** — a negative is the *good* outcome |
-
-### Reverse lookups → `_ptrCache` (L1 + disk + Redis)
-
-| Category | Checks | Record types | Non-result meaning |
-|---|---|---|---|
-| PTR | 2 | `PTR` (+ `A`/`AAAA` to confirm) | **IP has no reverse DNS** |
-| FCrDNS | 1 | `PTR`, `A`, `AAAA` | forward confirmation impossible |
-
-The PTR path is the one where a mis-cached negative is most expensive, because the
-finding it produces (`Gmail/Outlook will reject mail`) reads as urgent. It is also the
-only cache with an explicit **failure sentinel**: a lookup that could not complete
-returns a distinguished empty list, and the checks report `reverse lookup failed — not
-checked` rather than counting it. See *Failure is not absence* in
+All 87 checks. **Record types queried** includes types reached indirectly through
+`CheckContext` (a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
+though it issues no query itself). **Recheck flags** are the `CacheDep` bits that a
+recheck of this category bypasses — see *Recheck System* in
 [caching-architecture.md](caching-architecture.md).
 
-### Per-nameserver queries → `_serverQueryCache` (L1 + disk + Redis)
+Read it with §1 in mind: every one of these queries can come back positive, negative or
+failed, and the three are cached on entirely different terms. A negative on a DKIM
+selector or a blocklist is the *expected* result, not an error.
 
-| Category | Checks | Record types | Extra mechanism |
+| Category | Check | Record types queried | Caches used | Recheck flags |
+|---|---|---|---|---|
+| A | A Records | `A` | `_queryCache` | `Dns` |
+| AAAA | AAAA Records | `AAAA` | `_queryCache` | `Dns` |
+| Abuse | Abuse Address | `MX` | `_queryCache`, `_rcptCache` | `Rcpt` |
+| Autodiscover | Autodiscover | `A`, `CNAME`, `SRV` | `_queryCache` | `Dns, Http` |
+| BIMI | BIMI | `TXT` | `_getCache`, `_queryCache` | `Dns, Http` |
+| CAA | CAA Records | `CAA` | `_queryCache` | `Dns` |
+|  | Certificate Transparency | — | `_getCache` | `Dns` |
+| CNAME | CNAME Chain | `CNAME` | `_queryCache` | `Dns` |
+| DANE | DANE TLSA Cert Match | `MX`, `TLSA` | `_probeCache`, `_queryCache` | `Dns, Smtp` |
+|  | DANE/TLSA | `DS`, `MX`, `TLSA` | `_queryCache` | `Dns, Smtp` |
+| DKIM | ARC Selector Records | `TXT` | `_queryCache` | `Dns` |
+|  | DKIM Selectors | `A`, `AAAA`, `CNAME`, `NS`, `TXT` | `_axfrCache`, `_queryCache` | `Dns` |
+| DMARC | DMARC External Report Auth | `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Inheritance | `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Percentage (pct) Analysis | `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Record | `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Report Target MX | `MX`, `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Report URI Validation | `A`, `MX`, `TXT` | `_queryCache` | `Dns` |
+|  | DMARC Subdomain Policy Analysis | `TXT` | `_queryCache` | `Dns` |
+|  | SPF+DMARC Combined | `TXT` | `_queryCache` | `Dns` |
+|  | Subdomain DMARC Override | `TXT` | `_queryCache` | `Dns` |
+| DNSBL | Extended IP Blocklist Check | `A`, `AAAA` | `_queryCache` | `Dns` |
+|  | IP Blocklist Check (DNSBL) | `A`, `AAAA`, `MX` | `_queryCache` | `Dns` |
+| DNSSEC | DNSSEC | `DNSKEY`, `DS`, `RRSIG` | `_queryCache` | `Dns` |
+|  | NSEC/NSEC3 Zone Walk | `A`, `DS`, `NSEC3PARAM` | `_queryCache` | `Dns` |
+| Delegation | Authoritative NS | `A`, `AAAA`, `NS`, `PTR` | `_ptrCache`, `_queryCache` | `Dns, ServerDns, Ptr` |
+|  | Delegation Chain | `CNAME`, `NS` | `_queryCache` | `Dns, ServerDns, Ptr` |
+|  | Delegation Consistency | `A`, `NS` | `_queryCache`, `_serverQueryCache` | `Dns, ServerDns, Ptr` |
+|  | NS Glue Records | `A`, `NS` | `_queryCache`, `_serverQueryCache` | `Dns, ServerDns, Ptr` |
+| DomainBL | Domain Blocklist Check | `A` | `_queryCache` | `Dns` |
+|  | MX Hostname Blocklist (RHSBL) | `A`, `MX` | `_queryCache` | `Dns` |
+| FCrDNS | Forward-Confirmed rDNS (FCrDNS) | `A`, `AAAA`, `PTR` | `_ptrCache`, `_queryCache` | `Dns, Ptr` |
+| IPv6 | IPv6 Readiness | `AAAA`, `MX` | `_queryCache` | `Dns, Smtp` |
+|  | SMTP IPv6 Connectivity | `AAAA`, `MX` | `_portCache`, `_queryCache` | `Dns, Smtp` |
+| MTASTS | MTA-STS | `MX`, `TLSA`, `TXT` | `_getCache`, `_queryCache` | `Dns, Http` |
+| MX | MX Backup Security Parity | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Ptr` |
+|  | MX CNAME Check | `CNAME`, `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | MX Priority Distribution | `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | MX Private IP Detection | `A`, `AAAA` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | MX Records | `A`, `AAAA`, `MX`, `PTR` | `_probeCache`, `_ptrCache`, `_queryCache` | `Dns, Smtp, Ptr` |
+|  | MX-to-IP Detection | `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | Mail Subdomain Survey | `A`, `CNAME` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | Null MX / Duplicates | `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
+| NS | DNS Propagation Consistency | `A`, `MX` | `_getCache`, `_queryCache`, `_serverQueryCache` | `Dns, ServerDns` |
+|  | Duplicate NS IPs | `A`, `AAAA` | `_queryCache` | `Dns, ServerDns` |
+|  | NS Lame Delegation | `A`, `AAAA`, `NS`, `SOA` | `_queryCache`, `_serverQueryCache` | `Dns, ServerDns` |
+|  | NS Minimum Count | `NS` | `_queryCache` | `Dns, ServerDns` |
+|  | NS Network Diversity | `A`, `AAAA` | `_queryCache` | `Dns, ServerDns` |
+|  | NS Records | `NS` | `_queryCache` | `Dns, ServerDns` |
+|  | Open Recursive Resolver Detection | `A`, `AAAA`, `NS` | `_queryCache`, `_serverQueryCache` | `Dns, ServerDns` |
+| PTR | MX Reverse DNS (PTR) | `A`, `AAAA`, `MX`, `PTR` | `_ptrCache`, `_queryCache` | `Dns, Ptr` |
+|  | Reverse DNS (PTR) | `A`, `PTR` | `_ptrCache`, `_queryCache` | `Dns, Ptr` |
+| Postmaster | Postmaster Address | `MX` | `_queryCache`, `_rcptCache` | `Rcpt` |
+| SMTP | Catch-All Detection | `MX` | `_queryCache`, `_rcptCache` | `Dns, Smtp, Port` |
+|  | EHLO Capabilities | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | Open Relay Test | `MX` | `_queryCache`, `_relayCache` | `Dns, Smtp, Port` |
+|  | SMTP Banner Validation | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP Banner vs Reverse DNS | `A`, `AAAA`, `MX`, `PTR` | `_probeCache`, `_ptrCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP Max Message Size | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP REQUIRETLS (RFC 8689) | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP TLS Certificate | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP TLS Certificate Chain | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP TLS Version | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | SMTP Transaction Timing | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | STARTTLS Enforcement | `MX` | `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+|  | Submission Ports | `MX` | `_portCache`, `_probeCache`, `_queryCache` | `Dns, Smtp, Port` |
+| SOA | SOA Record | `SOA` | `_queryCache` | `Dns, ServerDns` |
+|  | SOA Serial Consistency | `A`, `AAAA`, `NS`, `SOA` | `_queryCache`, `_serverQueryCache` | `Dns, ServerDns` |
+| SPF | MX Hosts Covered by SPF | `A`, `AAAA`, `MX`, `TXT` | `_queryCache` | `Dns` |
+|  | SPF +all in Includes | `TXT` | `_queryCache` | `Dns` |
+|  | SPF IP Overlap Detection | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Include Depth | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Lookup Count | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Macros | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Record | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Record Size | `TXT` | `_queryCache` | `Dns` |
+|  | SPF Recursive Expansion | `A`, `AAAA`, `MX`, `TXT` | `_queryCache` | `Dns` |
+|  | Subdomain SPF Coverage | `A`, `MX`, `TXT` | `_queryCache` | `Dns` |
+| SRV | Mail Service SRV Records | `SRV` | `_queryCache` | `Dns` |
+| SecurityTxt | security.txt (RFC 9116) | — | `_getCache` | `Http` |
+| TLSRPT | TLS Reporting (TLS-RPT) | `MX`, `TXT` | `_queryCache` | `Dns` |
+| TTL | TTL Sanity | `MX`, `TXT` | `_queryCache` | `Dns` |
+| TXT | All TXT Records | `TXT` | `_queryCache` | `Dns` |
+|  | Duplicate/Conflicting TXT Records | `TXT` | `_queryCache` | `Dns` |
+|  | Email Provider Verification TXT | `TXT` | `_queryCache` | `Dns` |
+| Wildcard | Wildcard DNS | `A`, `MX`, `TXT` | `_queryCache` | `Dns` |
+| ZoneTransfer | AXFR Exposure | `A`, `AAAA`, `NS` | `_axfrCache`, `_queryCache` | `Dns, Axfr` |
+
+### Reading the cache column
+
+| Cache | Holds | L1 | Disk | Redis | Notes |
+|---|---|---|---|---|---|
+| `_queryCache` | Standard DNS answers, keyed `q:domain:type` | yes | yes | yes | The busiest cache. Shared by `QueryAsync`, `QueryDnsblAsync` and `QuerySpeculativeAsync` |
+| `_ptrCache` | Reverse lookups, keyed `ptr:ip` | yes | yes | yes | The only cache with an explicit **failure sentinel** — see below |
+| `_serverQueryCache` | Per-nameserver answers, keyed `sq:server:domain:type` | yes | yes | yes | The only path with the **unreachable-server breaker** (3 failures / 5 min) |
+| `_probeCache` | SMTP handshakes, keyed `smtp:host:port` | yes | yes | yes | |
+| `_portCache` | Port reachability, keyed `port:host:port` | yes | yes | **no** | A `ProbeCacheValue<bool>`; never shared between pods |
+| `_rcptCache` | RCPT verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
+| `_relayCache` | Open-relay verdicts | yes | yes | **no** | `ExpiringMap` + `WriteBag` |
+| `_getCache` / `_getWithHeadersCache` | HTTP GETs, keyed by URL | yes | yes | yes | Any HTTP status is definitive; only a status-0 network failure is transient |
+| `_axfrCache` | Zone-transfer verdicts | yes | yes | **no** | The transfer *response* is cached in memory only — a whole zone is far too large to persist |
+
+**Rechecks reach all of them.** `ProbeCache.TryGet`, `ProbeCacheValue.TryGet` and
+`ExpiringMap.TryGetValue` each take the `CacheDep` flag and return a miss for the types
+the current validation is rechecking, and `GetOrCreateAsync` skips the L2 read as well.
+
+### Where a non-result is the expected answer
+
+For most checks a negative answer means something is missing. For three families it is
+routine, and they are the bulk of all negatives a validation produces:
+
+| Family | Query | A negative means | Volume per validation |
 |---|---|---|---|
-| NS / Delegation / Propagation | ~7 | `SOA`, `A`, `MX`, `NS` | **Unreachable-server breaker** — 3 failures within 5 minutes short-circuits that nameserver. The *only* place occurrence-counting exists. |
+| DKIM / ARC selectors | `TXT`, `CNAME` at `<selector>._domainkey.<domain>` | that selector is not published | up to **39** selectors + 7 ARC |
+| DNSBL / DomainBL | `A` at `<reversed-ip>.<zone>` | **not listed** — the good outcome | 21 zones × each MX IP |
+| Subdomain probes | `TXT`/`A` at SPF, DMARC, mail-survey, SRV names | no record at that subdomain | 19 + 10 + 9 + 5 |
 
-### Not DNS at all
+Validating a *clean* domain is therefore the heaviest negative-caching case: nothing is
+listed and nothing exists, so nearly every answer is a negative one. That is why
+`DnsNegativeTtlCapSeconds` governs far more entries than its name suggests.
 
-| Category | Checks | Cache | Notes |
-|---|---|---|---|
-| SMTP | 13 | `_probeCache`, `_portCache`, `_rcptCache`, `_relayCache` | Port probes are an `ExpiringMap`/value cache: **L1 + disk, never Redis** |
-| MTA-STS / TLSRPT / BIMI / security.txt | 4 | `_getCache`, `_getWithHeadersCache` | HTTP; any status code counts as definitive, only status-0 network failures are transient |
-| ZoneTransfer | 1 | `_axfrCache` | `ExpiringMap`, verdict persisted, response never |
+### The PTR exception
 
----
+`_ptrCache` is the one place where a failure and a negative are distinguishable to
+callers, because the value is a `List<string>` and both would otherwise be the empty
+list. A lookup that could not complete returns a distinguished instance, tested with
+`DnsResolverService.PtrLookupDidFail`, and the six consumers report `reverse lookup
+failed — not checked` instead of counting it as a finding:
+
+| Check | On a genuine negative | On a failure |
+|---|---|---|
+| Reverse DNS (PTR) | ⚠ `<ip>: No PTR record` | detail: `reverse lookup failed — not checked` |
+| MX Reverse DNS (PTR) | ✗ `No PTR record — many receivers reject mail…` | detail, and the IP drops out of the total |
+| Forward-Confirmed rDNS | ✗ `No PTR record — Gmail requires FCrDNS…` | detail, and the IP drops out of the total |
+| SMTP Banner vs Reverse DNS | detail: `No PTR record to compare with banner` | detail, and it is not counted as a mismatch |
+| Authoritative NS, MX Records | `No PTR` / `none` in the detail line | `lookup failed` in the detail line |
+
+Everywhere else the two are still separated in the *cache* — a failure gets 30s and never
+leaves the pod — but the check output cannot tell you which it was.
 
 ## 4. Which tier holds what
 
