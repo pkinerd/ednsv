@@ -10,53 +10,79 @@ using Ednsv.Core.Models;
 using Ednsv.Core.Services;
 using Spectre.Console;
 
-var domainArg = new Argument<string[]>("domain", "One or more domain names to validate (e.g., example.com example.org)")
+// System.CommandLine 2.0 note: an option's name is its only constructor string that
+// isn't an alias — descriptions must be set via the initializer. The old
+// `new Option<T>("--name", "description")` shape still compiles against 2.0, but the
+// second argument is taken as an *alias*, so each description would silently become a
+// switch the parser accepts and the help text would be empty.
+var domainArg = new Argument<string[]>("domain")
 {
+    Description = "One or more domain names to validate (e.g., example.com example.org)",
     Arity = ArgumentArity.ZeroOrMore
 };
-var domainsFileOption = new Option<string?>("--domains-file", "Read domains from a file. Plain text: one domain per line. CSV: uses 'domain' or 'fqdn' column; extra columns are included in the index/summary. A numeric 'total messages' (or 'messages'/'total') column is used for impact-based sorting");
-domainsFileOption.AddAlias("-F");
-var formatOption = new Option<string>("--format", () => "text", "Output format: text, json, html, markdown");
-formatOption.AddAlias("-f");
-var outputOption = new Option<string?>("--output", "Write output to file instead of stdout");
-outputOption.AddAlias("-o");
-var outputDirOption = new Option<string?>("--output-dir", "Write per-domain reports to separate files in this directory, plus an index and cross-domain issues file");
-outputDirOption.AddAlias("-D");
-var axfrOption = new Option<bool>("--axfr", "Enable zone transfer (AXFR) testing");
-var catchAllOption = new Option<bool>("--catch-all", "Enable catch-all detection (sends probe to random address)");
-var openRelayOption = new Option<bool>("--open-relay", "Enable open relay testing (probes MX servers for relay misconfiguration)");
-var openResolverOption = new Option<bool>("--open-resolver", "Enable open recursive resolver detection (probes NS servers with external domain)");
-var openResolverDomainOption = new Option<string?>("--resolver-test-domain", "Domain to use for open resolver test (default: www.google.com)");
-var dkimSelectorsOption = new Option<string[]>(
-    "--dkim-selectors",
-    "DKIM selectors to probe instead of defaults (comma-separated or repeated; combined with any discovered via AXFR)")
+var domainsFileOption = new Option<string?>("--domains-file", "-F")
 {
+    Description = "Read domains from a file. Plain text: one domain per line. CSV: uses 'domain' or 'fqdn' column; extra columns are included in the index/summary. A numeric 'total messages' (or 'messages'/'total') column is used for impact-based sorting"
+};
+var formatOption = new Option<string>("--format", "-f")
+{
+    Description = "Output format: text, json, html, markdown",
+    DefaultValueFactory = _ => "text"
+};
+var outputOption = new Option<string?>("--output", "-o")
+{
+    Description = "Write output to file instead of stdout"
+};
+var outputDirOption = new Option<string?>("--output-dir", "-D")
+{
+    Description = "Write per-domain reports to separate files in this directory, plus an index and cross-domain issues file"
+};
+var axfrOption = new Option<bool>("--axfr") { Description = "Enable zone transfer (AXFR) testing" };
+var catchAllOption = new Option<bool>("--catch-all") { Description = "Enable catch-all detection (sends probe to random address)" };
+var openRelayOption = new Option<bool>("--open-relay") { Description = "Enable open relay testing (probes MX servers for relay misconfiguration)" };
+var openResolverOption = new Option<bool>("--open-resolver") { Description = "Enable open recursive resolver detection (probes NS servers with external domain)" };
+var openResolverDomainOption = new Option<string?>("--resolver-test-domain") { Description = "Domain to use for open resolver test (default: www.google.com)" };
+var dkimSelectorsOption = new Option<string[]>("--dkim-selectors")
+{
+    Description = "DKIM selectors to probe instead of defaults (comma-separated or repeated; combined with any discovered via AXFR)",
     AllowMultipleArgumentsPerToken = true
 };
-var dnsServerOption = new Option<string?>("--dns-server", "DNS server(s) for lookups (IP address, comma-separated for multiple; default: Google Public DNS). Multiple servers are load-balanced via round-robin");
-dnsServerOption.AddAlias("-s");
-var privateDnsblOption = new Option<bool>("--private-dnsbl", "Include blocklists that require a private/registered DNS resolver (Spamhaus, Barracuda, SURBL, URIBL). Off by default as they return false positives via public resolvers");
-var cacheOption = new Option<string?>("--cache", "Persist probe cache to a directory between runs. Optionally specify a directory path (default: .ednsv-cache/ in current directory)");
-cacheOption.Arity = ArgumentArity.ZeroOrOne;
-cacheOption.AddAlias("-c");
-var cacheTtlOption = new Option<int>("--cache-ttl", () => 24, "Cache time-to-live in hours (default: 24)");
-var retryOption = new Option<bool>("--retry", "Double retry counts for more persistent probing (useful for unreliable networks)");
-var retryErrorsOption = new Option<bool>("--retry-errors", "When using --cache, retry checks that previously resulted in errors or warnings while keeping successful cached results");
-var recheckOption = new Option<string?>("--recheck", "Revalidate checks that previously reported issues at the specified severity or above (warning, error, critical). Only clears stale cached probes — fresh results from earlier in the same run are preserved.");
-var listChecksOption = new Option<bool>("--list-checks", "Show detailed descriptions of all checks performed");
-var verboseOption = new Option<bool>("--verbose", "Show why each check category matters alongside results");
-var traceOption = new Option<bool>("--trace", "Show detailed trace output for DNS queries, SMTP probes, and check timing");
-var maskTraceOption = new Option<bool>("--mask-trace", () => true, "Mask hostnames, IPs, and email addresses in log output (default: on)");
-var noMaskTraceOption = new Option<bool>("--no-mask-trace", "Disable masking of private details in log output");
-var maskSaltOption = new Option<string?>("--mask-salt", "Static salt for consistent hashes across runs (base64, hex, or passphrase)");
-var liveIndexOption = new Option<bool>("--live-index", "Rewrite the index and issues files after each domain completes (use with --output-dir)");
+var dnsServerOption = new Option<string?>("--dns-server", "-s")
+{
+    Description = "DNS server(s) for lookups (IP address, comma-separated for multiple; default: Google Public DNS). Multiple servers are load-balanced via round-robin"
+};
+var privateDnsblOption = new Option<bool>("--private-dnsbl") { Description = "Include blocklists that require a private/registered DNS resolver (Spamhaus, Barracuda, SURBL, URIBL). Off by default as they return false positives via public resolvers" };
+var cacheOption = new Option<string?>("--cache", "-c")
+{
+    Description = "Persist probe cache to a directory between runs. Optionally specify a directory path (default: .ednsv-cache/ in current directory)",
+    Arity = ArgumentArity.ZeroOrOne
+};
+var cacheTtlOption = new Option<int>("--cache-ttl")
+{
+    Description = "Cache time-to-live in hours (default: 24)",
+    DefaultValueFactory = _ => 24
+};
+var retryOption = new Option<bool>("--retry") { Description = "Double retry counts for more persistent probing (useful for unreliable networks)" };
+var retryErrorsOption = new Option<bool>("--retry-errors") { Description = "When using --cache, retry checks that previously resulted in errors or warnings while keeping successful cached results" };
+var recheckOption = new Option<string?>("--recheck") { Description = "Revalidate checks that previously reported issues at the specified severity or above (warning, error, critical). Only clears stale cached probes — fresh results from earlier in the same run are preserved." };
+var listChecksOption = new Option<bool>("--list-checks") { Description = "Show detailed descriptions of all checks performed" };
+var verboseOption = new Option<bool>("--verbose") { Description = "Show why each check category matters alongside results" };
+var traceOption = new Option<bool>("--trace") { Description = "Show detailed trace output for DNS queries, SMTP probes, and check timing" };
+var maskTraceOption = new Option<bool>("--mask-trace")
+{
+    Description = "Mask hostnames, IPs, and email addresses in log output (default: on)",
+    DefaultValueFactory = _ => true
+};
+var noMaskTraceOption = new Option<bool>("--no-mask-trace") { Description = "Disable masking of private details in log output" };
+var maskSaltOption = new Option<string?>("--mask-salt") { Description = "Static salt for consistent hashes across runs (base64, hex, or passphrase)" };
+var liveIndexOption = new Option<bool>("--live-index") { Description = "Rewrite the index and issues files after each domain completes (use with --output-dir)" };
 // Network-category opt-out flags (default ON; pass to disable in restricted environments)
-var noSmtpOption = new Option<bool>("--no-smtp", "Skip all SMTP probes (port 25/465/587). Use in environments where outbound SMTP is blocked. Affected categories: SMTP, DANE, MX STARTTLS, Postmaster/Abuse, Submission ports, IPv6 SMTP");
-var noHttpOption = new Option<bool>("--no-http", "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked");
-var noDnsblOption = new Option<bool>("--no-dnsbl", "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver");
-var noDirectDnsOption = new Option<bool>("--no-direct-dns", "Skip checks that bypass the configured resolver to query specific authoritative nameservers or public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. Use in environments where outbound raw UDP/TCP 53 to internet IPs is blocked");
-var dohOption = new Option<bool>("--doh", "Run the propagation check against Google + Cloudflare's JSON DNS-over-HTTPS endpoints instead of raw UDP/53. Routes through HTTPS_PROXY when set. Other direct-DNS checks have no DoH equivalent");
-var restrictedNetworkOption = new Option<bool>("--restricted-network", "Convenience preset: equivalent to --no-smtp --no-http --no-dnsbl --no-direct-dns. Run only DNS-based checks against your configured resolver");
+var noSmtpOption = new Option<bool>("--no-smtp") { Description = "Skip all SMTP probes (port 25/465/587). Use in environments where outbound SMTP is blocked. Affected categories: SMTP, DANE, MX STARTTLS, Postmaster/Abuse, Submission ports, IPv6 SMTP" };
+var noHttpOption = new Option<bool>("--no-http") { Description = "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked" };
+var noDnsblOption = new Option<bool>("--no-dnsbl") { Description = "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver" };
+var noDirectDnsOption = new Option<bool>("--no-direct-dns") { Description = "Skip checks that bypass the configured resolver to query specific authoritative nameservers or public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. Use in environments where outbound raw UDP/TCP 53 to internet IPs is blocked" };
+var dohOption = new Option<bool>("--doh") { Description = "Run the propagation check against Google + Cloudflare's JSON DNS-over-HTTPS endpoints instead of raw UDP/53. Routes through HTTPS_PROXY when set. Other direct-DNS checks have no DoH equivalent" };
+var restrictedNetworkOption = new Option<bool>("--restricted-network") { Description = "Convenience preset: equivalent to --no-smtp --no-http --no-dnsbl --no-direct-dns. Run only DNS-based checks against your configured resolver" };
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
 {
     domainArg,
@@ -92,8 +118,20 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     restrictedNetworkOption
 };
 
-rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, bool catchAll, bool openRelay, string[] dkimSelectors, bool listChecks, bool verbose) =>
+// The action receives the ParseResult directly, so every option is read the same way
+// below. The old SetHandler bound only its first eight options as lambda parameters and
+// the rest had to be fished back out of a second, redundant parse of args.
+rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
+    var domainArgs = parseResult.GetValue(domainArg) ?? [];
+    var format = parseResult.GetValue(formatOption) ?? "text";
+    var axfr = parseResult.GetValue(axfrOption);
+    var catchAll = parseResult.GetValue(catchAllOption);
+    var openRelay = parseResult.GetValue(openRelayOption);
+    var dkimSelectors = parseResult.GetValue(dkimSelectorsOption);
+    var listChecks = parseResult.GetValue(listChecksOption);
+    var verbose = parseResult.GetValue(verboseOption);
+
     if (listChecks)
     {
         Console.WriteLine(CheckDescriptions.GetDetailedListing());
@@ -110,8 +148,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
     }
 
     // Collect domains from --domains-file (plain text or CSV)
-    var parseResult = rootCommand.Parse(args);
-    var domainsFilePath = parseResult.GetValueForOption(domainsFileOption);
+    var domainsFilePath = parseResult.GetValue(domainsFileOption);
     Dictionary<string, DomainMeta>? domainMeta = null;
     List<string>? csvExtraColumns = null;
     string? csvVolumeColumn = null;
@@ -179,11 +216,10 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         }
     }
 
-    // Resolve options that exceed SetHandler's 8-param limit
-    var enableOpenResolver = parseResult.GetValueForOption(openResolverOption);
-    var resolverTestDomain = parseResult.GetValueForOption(openResolverDomainOption);
-    var enablePrivateDnsbl = parseResult.GetValueForOption(privateDnsblOption);
-    var dnsServerRaw = parseResult.GetValueForOption(dnsServerOption);
+    var enableOpenResolver = parseResult.GetValue(openResolverOption);
+    var resolverTestDomain = parseResult.GetValue(openResolverDomainOption);
+    var enablePrivateDnsbl = parseResult.GetValue(privateDnsblOption);
+    var dnsServerRaw = parseResult.GetValue(dnsServerOption);
 
     // Parse custom DNS server(s)
     List<IPAddress>? dnsServers = null;
@@ -203,12 +239,12 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
     }
 
     // Network-category toggles: default ON, opt-out via --no-* flags or --restricted-network preset
-    var restricted = parseResult.GetValueForOption(restrictedNetworkOption);
-    var noSmtp = restricted || parseResult.GetValueForOption(noSmtpOption);
-    var noHttp = restricted || parseResult.GetValueForOption(noHttpOption);
-    var noDnsbl = restricted || parseResult.GetValueForOption(noDnsblOption);
-    var noDirectDns = restricted || parseResult.GetValueForOption(noDirectDnsOption);
-    var doh = parseResult.GetValueForOption(dohOption);
+    var restricted = parseResult.GetValue(restrictedNetworkOption);
+    var noSmtp = restricted || parseResult.GetValue(noSmtpOption);
+    var noHttp = restricted || parseResult.GetValue(noHttpOption);
+    var noDnsbl = restricted || parseResult.GetValue(noDnsblOption);
+    var noDirectDns = restricted || parseResult.GetValue(noDirectDnsOption);
+    var doh = parseResult.GetValue(dohOption);
     if (restricted)
         Console.Error.WriteLine("[--restricted-network] SMTP, HTTP/HTTPS, DNSBL, and direct-DNS checks are disabled.");
 
@@ -229,30 +265,30 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
     };
 
     // --trace: detailed timing diagnostics
-    var enableTrace = parseResult.GetValueForOption(traceOption);
-    var enableMaskTrace = !parseResult.GetValueForOption(noMaskTraceOption); // default ON
-    var maskSalt = parseResult.GetValueForOption(maskSaltOption);
+    var enableTrace = parseResult.GetValue(traceOption);
+    var enableMaskTrace = !parseResult.GetValue(noMaskTraceOption); // default ON
+    var maskSalt = parseResult.GetValue(maskSaltOption);
     var traceMasker = enableMaskTrace
         ? (!string.IsNullOrEmpty(maskSalt) ? new TraceMasker(maskSalt) : new TraceMasker())
         : null;
 
     // --retry: double all retry counts
-    var enableRetry = parseResult.GetValueForOption(retryOption);
+    var enableRetry = parseResult.GetValue(retryOption);
     if (enableRetry)
         DnsResolverService.DoubleRetries();
 
     // --cache: resolve cache directory path
-    var cacheRaw = parseResult.GetValueForOption(cacheOption);
-    var cacheTtlHours = parseResult.GetValueForOption(cacheTtlOption);
+    var cacheRaw = parseResult.GetValue(cacheOption);
+    var cacheTtlHours = parseResult.GetValue(cacheTtlOption);
     // --cache with no value defaults to ".ednsv-cache"; --cache <path> uses the given path
     // The option is string? — null means not specified, empty means specified without value
     string? cachePath = null;
-    if (parseResult.FindResultFor(cacheOption) is not null)
+    if (parseResult.GetResult(cacheOption) is not null)
         cachePath = string.IsNullOrEmpty(cacheRaw) ? ".ednsv-cache" : cacheRaw;
-    var retryErrors = parseResult.GetValueForOption(retryErrorsOption);
+    var retryErrors = parseResult.GetValue(retryErrorsOption);
 
     // --recheck: parse severity threshold
-    var recheckRaw = parseResult.GetValueForOption(recheckOption);
+    var recheckRaw = parseResult.GetValue(recheckOption);
     CheckSeverity? recheckSeverity = null;
     if (recheckRaw != null)
     {
@@ -281,8 +317,8 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
         Console.OutputEncoding = Encoding.UTF8;
 
     // Resolve -o / --output and -D / --output-dir
-    var outputPath = parseResult.GetValueForOption(outputOption);
-    var outputDir = parseResult.GetValueForOption(outputDirOption);
+    var outputPath = parseResult.GetValue(outputOption);
+    var outputDir = parseResult.GetValue(outputDirOption);
 
     if (!string.IsNullOrEmpty(outputPath) && !string.IsNullOrEmpty(outputDir))
     {
@@ -299,7 +335,7 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
             return;
         }
 
-        var liveIndex = parseResult.GetValueForOption(liveIndexOption);
+        var liveIndex = parseResult.GetValue(liveIndexOption);
         Directory.CreateDirectory(outputDir);
         await RunOutputDirAsync(domains, options, fmt, outputDir, verbose, liveIndex, dnsServers, domainMeta, csvExtraColumns, csvVolumeColumn, cachePath, cacheTtlHours, retryErrors, recheckSeverity, enableTrace, traceMasker);
         return;
@@ -349,9 +385,9 @@ rootCommand.SetHandler(async (string[] domainArgs, string format, bool axfr, boo
             Console.Error.WriteLine($"Report written to {outputPath}");
         }
     }
-}, domainArg, formatOption, axfrOption, catchAllOption, openRelayOption, dkimSelectorsOption, listChecksOption, verboseOption);
+});
 
-return await rootCommand.InvokeAsync(args);
+return await rootCommand.Parse(args).InvokeAsync();
 
 /// <summary>
 /// Parses a CSV file, returning the list of domains plus per-domain metadata.
