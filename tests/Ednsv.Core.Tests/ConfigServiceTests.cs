@@ -136,7 +136,7 @@ public sealed class ConfigServiceTests : IDisposable
         File.WriteAllText(Path.Combine(_dir, "config.json"), Corrupt);
         new ConfigService(_dir).LoadOrSeed(Seed());
 
-        Assert.Single(new ConfigService(_dir).ListRevisions().Where(r => r.IsCorrupt));
+        Assert.Single(new ConfigService(_dir).ListRevisions(), r => r.IsCorrupt);
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public sealed class ConfigServiceTests : IDisposable
         Assert.Contains("example.com", cfg.KnownDomains);
         Assert.Single(warnings);
         // Still preserved even though there was nothing to restore.
-        Assert.Single(svc.ListRevisions().Where(r => r.IsCorrupt));
+        Assert.Single(svc.ListRevisions(), r => r.IsCorrupt);
     }
 
     [Fact]

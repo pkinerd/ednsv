@@ -87,7 +87,10 @@ sealed class RedisJobStore
         {
             var val = db.StringGet(_redis.Key($"job:{jobId}"));
             if (val.IsNullOrEmpty) return null;
-            return JsonSerializer.Deserialize<JobState>(val!, Json);
+            // Cast rather than relying on the implicit conversion: RedisValue converts
+            // implicitly to both string and a byte span in StackExchange.Redis 3.x, which
+            // leaves the Deserialize overload ambiguous. String is what was resolved before.
+            return JsonSerializer.Deserialize<JobState>((string)val!, Json);
         }
         catch { return null; }
     }
