@@ -9,7 +9,7 @@ fi
 # Signal async execution so session startup isn't blocked
 echo '{"async": true, "asyncTimeout": 300000}'
 
-if dotnet --version 2>/dev/null | grep -q '^8\.'; then
+if dotnet --version 2>/dev/null | grep -q '^10\.'; then
   echo ".NET SDK already installed: $(dotnet --version)"
   exit 0
 fi
@@ -26,6 +26,6 @@ if proxy:
 
 # Allow partial failures (e.g. egress-blocked PPAs); install will fail clearly if dotnet is unreachable
 DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dotnet-sdk-8.0
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq dotnet-sdk-10.0
 
 echo ".NET SDK installed: $(dotnet --version)"
