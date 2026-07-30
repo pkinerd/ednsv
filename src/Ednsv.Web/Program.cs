@@ -14,7 +14,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Options;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -473,6 +473,10 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
 });
 
 // ── OpenAPI / Swagger ────────────────────────────────────────────────────
+// AddEndpointsApiExplorer stays. It is redundant for ASP.NET Core's own AddOpenApi
+// from .NET 9 on, but Swashbuckle's generator is built on ApiExplorer and this is what
+// registers it — without it SwaggerGenerator has no constructible dependency and the
+// container fails validation at startup, taking every endpoint down with it.
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -495,16 +499,14 @@ builder.Services.AddSwaggerGen(c =>
             + "OAuth2 access token (e.g. Entra ID client credentials) when "
             + "Auth:JwtBearer is enabled."
     });
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    // Microsoft.OpenApi 2.x (which Swashbuckle 10 requires) removed the Reference
+    // property from OpenApiSecurityScheme; a reference to a named scheme is now its own
+    // type. The requirement must keep pointing at the "Bearer" definition above —
+    // inlining a fresh scheme here instead compiles but silently stops Swagger UI from
+    // attaching the Authorization header, so every "Try it out" returns 401.
+    c.AddSecurityRequirement(document => new OpenApiSecurityRequirement
     {
-        [new OpenApiSecurityScheme
-        {
-            Reference = new OpenApiReference
-            {
-                Type = ReferenceType.SecurityScheme,
-                Id = "Bearer"
-            }
-        }] = Array.Empty<string>()
+        [new OpenApiSecuritySchemeReference("Bearer", document)] = new List<string>()
     });
 });
 
