@@ -248,7 +248,8 @@ public class ProbeCache<TValue> where TValue : class
     /// <summary>
     /// Key → absolute expiry for everything in L1, so the shared cache can be
     /// republished from memory after it has been emptied. <see cref="MemoryCache"/>
-    /// cannot be enumerated on .NET 8, hence the parallel index.
+    /// exposes a <c>Keys</c> property from .NET 9 on, but a republish needs each entry's
+    /// remaining life and not just its key, so the parallel index still earns its place.
     ///
     /// <para>Null unless there is a shared tier to warm <i>and</i> something that will
     /// warm it, so a single-instance deployment pays nothing for it at all. The second

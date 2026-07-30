@@ -1,6 +1,6 @@
 # ednsv
 
-**EDNSV (Email DNS Validator)** is a comprehensive DNS and email-infrastructure validation tool built on **.NET 8.0**. It runs **87 automated checks** against a domain to assess mail deliverability, security posture, and DNS hygiene, covering everything from A/MX/NS records to SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI, DANE, DNSSEC, blocklists, and live SMTP/HTTP probing.
+**EDNSV (Email DNS Validator)** is a comprehensive DNS and email-infrastructure validation tool built on **.NET 10.0**. It runs **87 automated checks** against a domain to assess mail deliverability, security posture, and DNS hygiene, covering everything from A/MX/NS records to SPF, DKIM, DMARC, MTA-STS, TLS-RPT, BIMI, DANE, DNSSEC, blocklists, and live SMTP/HTTP probing.
 
 It can be used two ways:
 
@@ -9,7 +9,7 @@ It can be used two ways:
 
 ## Quick start
 
-Requires the .NET 8.0 SDK.
+Requires the .NET 10.0 SDK.
 
 ```bash
 # Validate a single domain (CLI)
