@@ -238,7 +238,7 @@ public class SmtpProbeService
                                         .Cast<X509Certificate2>()
                                         .Where(c => c.Thumbprint != leafThumbprint &&
                                                     !string.Equals(c.Subject, c.Issuer, StringComparison.OrdinalIgnoreCase))
-                                        .Select(c => new X509Certificate2(c.RawData))
+                                        .Select(c => X509CertificateLoader.LoadCertificate(c.RawData))
                                         .ToList();
                                 }
                                 return true;
@@ -589,7 +589,7 @@ public class SmtpProbeService
         X509Certificate2? cert = null;
         if (e.CertRawBase64 != null)
         {
-            try { cert = new X509Certificate2(Convert.FromBase64String(e.CertRawBase64)); }
+            try { cert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(e.CertRawBase64)); }
             catch { /* ignore corrupt cached cert data */ }
         }
         List<X509Certificate2>? intermediates = null;
@@ -598,7 +598,7 @@ public class SmtpProbeService
             intermediates = new List<X509Certificate2>();
             foreach (var b64 in e.CertChainIntermediatesBase64)
             {
-                try { intermediates.Add(new X509Certificate2(Convert.FromBase64String(b64))); }
+                try { intermediates.Add(X509CertificateLoader.LoadCertificate(Convert.FromBase64String(b64))); }
                 catch { /* ignore corrupt cached cert data */ }
             }
         }

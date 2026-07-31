@@ -1,6 +1,6 @@
 # System Architecture Overview
 
-EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 87 automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 8.0 and can be run as a CLI tool or a web service.
+EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 87 automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 10.0 and can be run as a CLI tool or a web service.
 
 ## High-Level Architecture
 
@@ -161,16 +161,17 @@ ednsv.sln
 
 | Layer | Technology |
 |-------|-----------|
-| Runtime | .NET 8.0 |
-| DNS queries | [DnsClient](https://www.nuget.org/packages/DnsClient) 1.7.0 |
-| CLI parsing | [System.CommandLine](https://www.nuget.org/packages/System.CommandLine) 2.0.0-beta4 |
-| CLI rich output | [Spectre.Console](https://www.nuget.org/packages/Spectre.Console) 0.48.0 |
+| Runtime | .NET 10.0 (LTS) |
+| DNS queries | [DnsClient](https://www.nuget.org/packages/DnsClient) 1.8.0 |
+| CLI parsing | [System.CommandLine](https://www.nuget.org/packages/System.CommandLine) 2.0.10 |
+| CLI rich output | [Spectre.Console](https://www.nuget.org/packages/Spectre.Console) 0.57.2 |
 | Web framework | ASP.NET Core (built-in) |
-| API docs | [Swashbuckle.AspNetCore](https://www.nuget.org/packages/Swashbuckle.AspNetCore) 6.6.2 (Swagger UI) |
-| External auth | Microsoft.AspNetCore.Authentication.OpenIdConnect / .JwtBearer 8.0.29 |
-| In-memory cache | Microsoft.Extensions.Caching.Memory 8.0.1 |
-| Serialization | System.Text.Json 10.0.5 |
-| Testing | xUnit 2.4.2, Microsoft.AspNetCore.Mvc.Testing 8.0.29, coverlet (code coverage) |
+| API docs | [Swashbuckle.AspNetCore](https://www.nuget.org/packages/Swashbuckle.AspNetCore) 10.2.3 (Swagger UI) |
+| External auth | Microsoft.AspNetCore.Authentication.OpenIdConnect / .JwtBearer 10.0.10 |
+| Shared cache | [StackExchange.Redis](https://www.nuget.org/packages/StackExchange.Redis) 3.0.17 |
+| In-memory cache | Microsoft.Extensions.Caching.Memory 10.0.10 |
+| Serialization | System.Text.Json (shared framework) |
+| Testing | xUnit 2.9.3, Microsoft.AspNetCore.Mvc.Testing 10.0.10, coverlet (code coverage) |
 
 ## Key Design Decisions
 

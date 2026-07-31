@@ -764,8 +764,11 @@ public class BimiCheck : ICheck
             }
 
             var pemBlock = pemContent.Substring(certStart, certEnd - certStart + "-----END CERTIFICATE-----".Length);
-            var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
-                System.Text.Encoding.ASCII.GetBytes(pemBlock));
+            // CreateFromPem rather than X509CertificateLoader: the loader reads DER only,
+            // whereas this block is PEM text. The X509Certificate2(byte[]) constructor that
+            // used to sniff between the two is obsolete from .NET 9.
+            var cert = System.Security.Cryptography.X509Certificates.X509Certificate2
+                .CreateFromPem(pemBlock);
 
             result.Details.Add($"VMC Subject: {cert.Subject}");
             result.Details.Add($"VMC Issuer: {cert.Issuer}");

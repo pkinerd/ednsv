@@ -284,7 +284,7 @@ Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
 
 ## Docker
 
-The web service ships as a container. The multi-stage [`Dockerfile`](../Dockerfile) restores and publishes `Ednsv.Web` on the .NET 8 SDK image, then runs it on the ASP.NET runtime image.
+The web service ships as a container. The multi-stage [`Dockerfile`](../Dockerfile) restores and publishes `Ednsv.Web` on the .NET 10 SDK image, then runs it on the ASP.NET runtime image.
 
 ```bash
 # Build locally

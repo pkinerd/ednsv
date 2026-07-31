@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-ARG DOTNET_VERSION=8.0
+ARG DOTNET_VERSION=10.0
 
 FROM mcr.microsoft.com/dotnet/sdk:${DOTNET_VERSION} AS build
 WORKDIR /src
@@ -13,6 +13,9 @@ ARG SOURCE_COMMIT=""
 ARG SOURCE_BRANCH=""
 ARG SOURCE_PR=""
 
+# global.json comes first so the container honours the same SDK pin as CI and dev
+# boxes rather than silently building on whatever band the base image happens to ship.
+COPY global.json ./
 COPY src/Ednsv.Core/Ednsv.Core.csproj src/Ednsv.Core/
 COPY src/Ednsv.Web/Ednsv.Web.csproj src/Ednsv.Web/
 RUN dotnet restore src/Ednsv.Web/Ednsv.Web.csproj

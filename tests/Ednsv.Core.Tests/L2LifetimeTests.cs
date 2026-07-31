@@ -1,4 +1,5 @@
 using Ednsv.Core.Services;
+using StackExchange.Redis;
 
 namespace Ednsv.Core.Tests;
 
@@ -156,7 +157,11 @@ public sealed class L2LifetimeTests
     {
         var db = redis.GetDatabase();
         Assert.NotNull(db);
-        await db!.StringSetAsync(redis.Key("cache:test:" + key), "from-a-peer", ttl);
+        // `when:` named rather than positional: StackExchange.Redis 3.x added a
+        // StringSet overload taking its own Expiration type, and a bare three-argument
+        // call now binds to that one, which has no conversion from TimeSpan?.
+        // When.Always is what the old overload defaulted to, so behaviour is unchanged.
+        await db!.StringSetAsync(redis.Key("cache:test:" + key), "from-a-peer", ttl, when: When.Always);
     }
 
     /// <summary>The lifetime L1 was holding, read back by emptying Redis and re-warming.</summary>

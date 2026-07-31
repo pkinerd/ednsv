@@ -1,16 +1,19 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!-- System.Text.Json is deliberately absent: it ships in the net10.0 shared
+       framework. Referencing it explicitly (as this project did on net8.0, to pull a
+       newer serializer than that framework carried) now only risks pinning an older
+       out-of-band copy than the runtime's own. -->
   <ItemGroup>
-    <PackageReference Include="DnsClient" Version="1.7.0" />
-    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
-    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
-    <PackageReference Include="System.Text.Json" Version="10.0.5" />
+    <PackageReference Include="DnsClient" Version="1.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.10" />
+    <PackageReference Include="StackExchange.Redis" Version="3.0.17" />
   </ItemGroup>
 
 
