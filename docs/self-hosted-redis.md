@@ -83,7 +83,7 @@ coordination key, because it never evicts anything.
 | Key | TTL | Written | Read | Size | Count |
 |---|---|---|---|---|---|
 | `{instance}:cache:{type}:{key}` | `CacheTtlHours`, or the 24h L2 floor when that is `0` | on each fetched result | on every L1 miss | ~0.5 KB | thousands |
-| `{instance}:job:{id}` | minutes | ~87× per validation | on each status poll | a few KB | tens |
+| `{instance}:job:{id}` | minutes | once per finished check (~88× per validation) | on each status poll | the results so far: up to the full report, typically tens of KB | tens |
 | `{instance}:config:head` | **none** | on a config change | every freshness check (memoised ~1s) | ~36 B | 1 |
 | `{instance}:users:head` | **none** | on a user change | every auth freshness check | ~36 B | 1 |
 | `{instance}:cache-epoch` | **none** | at startup, and on a re-warm | once per `SharedCacheWatchSeconds` | ~36 B | 1 |

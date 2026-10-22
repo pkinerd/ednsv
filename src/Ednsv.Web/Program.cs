@@ -990,13 +990,18 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
 .WithName("StartValidation")
 .WithTags("Validation");
 
-// GET /api/status/{jobId}
+// GET /api/status/{jobId}?since=N
 // Returns the current status and results (if complete) for a validation job.
-app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
+// While running, `checks` holds finished checks' results in completion order and
+// `running` the checks still in flight with how long each has taken so far.
+// `since` is the `checksCursor` from the previous poll: only checks finished after
+// it are returned, so a live view polling every second is not re-sent every result.
+app.MapGet("/api/status/{jobId}", (string jobId, int? since, ValidationTracker tracker) =>
 {
     if (!tracker.TryGetState(jobId, out var s) || s == null)
         return Results.NotFound(new { error = "Job not found" });
 
+    var now = DateTime.UtcNow;
     return Results.Ok(new
     {
         jobId,
@@ -1004,6 +1009,13 @@ app.MapGet("/api/status/{jobId}", (string jobId, ValidationTracker tracker) =>
         status = s.Status,
         currentCheck = s.CurrentCheck,
         completedChecks = s.CompletedChecks,
+        totalChecks = s.TotalChecks,
+        running = s.Running?
+            .Select(r => new { name = r.Name, elapsed = Math.Max(0, (now - r.StartedAt).TotalSeconds) })
+            .OrderByDescending(r => r.elapsed)
+            .ToList(),
+        checks = s.Checks?.Skip(Math.Max(0, since ?? 0)).ToList(),
+        checksCursor = s.Checks?.Count,
         results = new
         {
             pass = s.Pass,
@@ -1737,7 +1749,26 @@ class ValidationJob
     public ValidationReport? Report { get => _report; set => _report = value; }
     public string? Error { get => _error; set => _error = value; }
     public int CompletedChecks;
+    public int TotalChecks;
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+
+    // Checks in flight, with the time each first started. A timed-out check keeps
+    // its entry (and its original start) through the deferred retry, so its clock
+    // shows the whole time it has taken to resolve, not just the second attempt.
+    public readonly ConcurrentDictionary<string, DateTime> Running = new();
+    private readonly List<JobFinishedCheck> _finished = new();
+    private readonly object _finishedLock = new();
+    // Concurrent checks finish on parallel threads. Snapshot and save under one lock
+    // so Redis receives snapshots in the order they were taken: fire-and-forget writes
+    // issued out of order would let an older snapshot overwrite a newer one.
+    public readonly object SaveLock = new();
+
+    public void AddFinished(string name, IReadOnlyList<CheckResult> results)
+    {
+        lock (_finishedLock)
+            _finished.Add(new JobFinishedCheck(name, results.FirstOrDefault()?.DurationMs, results.ToList()));
+        Running.TryRemove(name, out _);
+    }
     // References to services for live stats (read-only, shared singletons)
     public DnsResolverService? Dns { get; set; }
     public SmtpProbeService? Smtp { get; set; }
@@ -1755,6 +1786,11 @@ class ValidationJob
     public int WarningCount;
     public int ErrorCount;
     public int CriticalCount;
+
+    private List<JobFinishedCheck> FinishedSnapshot()
+    {
+        lock (_finishedLock) return _finished.ToList();
+    }
 
     public void SnapshotBaselines()
     {
@@ -1802,6 +1838,11 @@ class ValidationJob
             Status = Status.ToString().ToLowerInvariant(),
             CurrentCheck = CurrentCheck,
             CompletedChecks = CompletedChecks,
+            TotalChecks = TotalChecks,
+            Running = Status == JobStatus.Running
+                ? Running.Select(kv => new JobRunningCheck(kv.Key, kv.Value)).ToList()
+                : null,
+            Checks = Status == JobStatus.Running ? FinishedSnapshot() : null,
             Pass = PassCount,
             Info = InfoCount,
             Warning = WarningCount,
@@ -1914,20 +1955,33 @@ class ValidationTracker : IDisposable
                     }
                 }
 
-                validator.OnCheckStarted += name => job.CurrentCheck = name;
-                validator.OnCheckCompleted += (_, result) =>
+                job.TotalChecks = validator.CheckCount;
+                validator.OnCheckStarted += name =>
                 {
+                    job.CurrentCheck = name;
+                    job.Running.TryAdd(name, DateTime.UtcNow);
+                };
+                // OnCheckFinished rather than OnCheckCompleted: the latter holds every
+                // concurrent result back until the whole phase is done, which left the
+                // UI showing nothing for tens of seconds while slow checks ran.
+                validator.OnCheckFinished += (name, results, _) =>
+                {
+                    job.AddFinished(name, results);
                     Interlocked.Increment(ref job.CompletedChecks);
-                    switch (result.Severity)
+                    foreach (var result in results)
                     {
-                        case CheckSeverity.Pass: Interlocked.Increment(ref job.PassCount); break;
-                        case CheckSeverity.Info: Interlocked.Increment(ref job.InfoCount); break;
-                        case CheckSeverity.Warning: Interlocked.Increment(ref job.WarningCount); break;
-                        case CheckSeverity.Error: Interlocked.Increment(ref job.ErrorCount); break;
-                        case CheckSeverity.Critical: Interlocked.Increment(ref job.CriticalCount); break;
+                        switch (result.Severity)
+                        {
+                            case CheckSeverity.Pass: Interlocked.Increment(ref job.PassCount); break;
+                            case CheckSeverity.Info: Interlocked.Increment(ref job.InfoCount); break;
+                            case CheckSeverity.Warning: Interlocked.Increment(ref job.WarningCount); break;
+                            case CheckSeverity.Error: Interlocked.Increment(ref job.ErrorCount); break;
+                            case CheckSeverity.Critical: Interlocked.Increment(ref job.CriticalCount); break;
+                        }
                     }
                     // Mirror progress to Redis so remote pods see fresh status.
-                    _jobStore?.Save(job.ToState(jobId), terminal: false);
+                    if (_jobStore != null)
+                        lock (job.SaveLock) _jobStore.Save(job.ToState(jobId), terminal: false);
                 };
 
                 var report = await validator.ValidateAsync(domain, options);

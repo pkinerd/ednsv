@@ -1,6 +1,6 @@
 # Working in this repository
 
-EDNSV (Email DNS Validator) runs 87 checks against a domain to assess mail
+EDNSV (Email DNS Validator) runs 88 checks against a domain to assess mail
 deliverability, security posture and DNS hygiene. It ships as a CLI
 (`Ednsv.Cli`) and a web service (`Ednsv.Web`) over a shared engine
 (`Ednsv.Core`).

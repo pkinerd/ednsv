@@ -47,6 +47,7 @@ classDiagram
         +List~string~ Details
         +List~string~ Warnings
         +List~string~ Errors
+        +double? DurationMs
         +AdjustForUnreachableHosts(total, unreachable)
     }
 
@@ -246,6 +247,7 @@ Each check file in `src/Ednsv.Core/Checks/` contains multiple related checks:
 | `DmarcChecks.cs` | DMARC | DmarcRecordCheck, DmarcPctAnalysisCheck, DmarcInheritanceCheck, DmarcReportUriValidationCheck, and more |
 | `ExtendedChecks.cs` | CAA, DANE, SecurityTxt | CaaRecordCheck, DaneCheck, DaneTlsaCertMatchCheck, SecurityTxtCheck, ProviderVerificationTxtCheck, CertificateTransparencyCheck |
 | `HighValueChecks.cs` | MTA-STS, TLS-RPT, BIMI, DNSSEC, ZoneTransfer | MtaStsCheck, TlsRptCheck, BimiCheck, DnssecCheck, NsecZoneWalkCheck, ZoneTransferCheck |
+| `MailProviderChecks.cs` | MX | MailProviderDetectionCheck — names the receiving tier (mailbox host, filtering gateway such as Proofpoint/Mimecast, forwarder) and infers the likely mailbox provider behind it from SPF, DKIM CNAMEs, autodiscover and verification TXT. Info only; the provider table is `MailProviderCatalog` |
 | `MiscChecks.cs` | Wildcard, TTL, TXT, SRV, Autodiscover | WildcardDnsCheck, TtlSanityCheck, DuplicateTxtRecordCheck, AllTxtRecordsCheck, SrvRecordsCheck, AutodiscoverCheck |
 | `MxChecks.cs` | MX | MxRecordsCheck, MxIpDetectionCheck, MxPrivateIpCheck, MxCnameCheck, NullMxCheck, MxPriorityDistributionCheck, MxBackupSecurityCheck |
 | `NsChecks.cs` | NS | NsRecordsCheck, NsMinimumCountCheck, NsLameDelegationCheck, NsNetworkDiversityCheck, DuplicateNsIpCheck, OpenRecursiveResolverCheck |
@@ -267,7 +269,7 @@ These **write** to CheckContext shared state. They run in a fixed order because 
 5. **SpfRecordCheck** — parses SPF TXT record, populates `SpfRecord`
 6. **DmarcRecordCheck** — parses DMARC record, populates `DmarcRecord`
 
-### Concurrent Checks (81, parallel)
+### Concurrent Checks (82, parallel)
 
 These **read** from CheckContext shared state. They are independent of each other and run with `MaxDegreeOfParallelism = 12`. Examples:
 

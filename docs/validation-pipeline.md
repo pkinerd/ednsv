@@ -34,7 +34,7 @@ flowchart TD
 
     subgraph CONCURRENT["Phase 3: Concurrent Checks (Parallel, max 12)"]
         direction TB
-        C1["81 checks run in parallel"]
+        C1["82 checks run in parallel"]
         C1 --> C2{"Completed<br/>within 45s?"}
         C2 -->|Yes| C3["Collect results"]
         C2 -->|No| C4["Add to deferred retry list"]
@@ -107,12 +107,21 @@ Foundation checks also set **lookup failure flags** (`MxLookupFailed`, `NsLookup
 
 ### Phase 3: Concurrent Checks
 
-81 checks run in parallel using `Parallel.ForEachAsync` with `MaxDegreeOfParallelism = 12`. All concurrent checks are **read-only** on the shared state populated by foundation checks.
+82 checks run in parallel using `Parallel.ForEachAsync` with `MaxDegreeOfParallelism = 12`. All concurrent checks are **read-only** on the shared state populated by foundation checks.
 
 Each check is wrapped in a `CancellationTokenSource(45s)`; the token is passed into `ICheck.RunAsync(domain, context, ct)`. When the timeout fires, the running task observes the token and tears down its DNS/SMTP/HTTP awaits instead of being orphaned. The validator distinguishes:
 
 - `OperationCanceledException` while `cts.IsCancellationRequested` → **timeout** → check queued for the deferred retry phase
 - Any other exception → CheckResult with `Severity.Error` and the exception message
+
+Results reach callers through two events. `OnCheckCompleted` delivers one result at a
+time in check-list order, so concurrent results are held until the whole phase is done —
+which is what the CLI wants, printing them grouped by category. `OnCheckFinished` delivers
+a check's results the moment it finishes, from the thread that ran it, which is what the
+web service uses to stream results to the UI while slower checks are still running. A
+timed-out attempt raises neither; the check finishes when its deferred retry settles. Both
+deliver results already stamped with `DurationMs`: the check's run time, with both attempts
+summed for a retried check.
 
 This replaced the older `Task.WhenAny(checkTask, Task.Delay(45s))` pattern, which kept the timed-out task running in the background and held its DNS/TCP slot until natural completion. Results are collected into a `ConcurrentBag` and then reordered to match the original check registration order for consistent output.
 
@@ -168,7 +177,7 @@ sequenceDiagram
     end
 
     Note over DV: Phase 3: Concurrent (max 12 parallel)
-    par 81 concurrent checks
+    par 82 concurrent checks
         DV->>CTX: Read shared state
         CTX->>DNS: DNS queries (cached)
         CTX->>SMTP: SMTP data (from cache)
