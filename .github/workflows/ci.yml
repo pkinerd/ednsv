@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ['*']
+    # '**', not '*': in a branch filter '*' stops at '/', so every branch named like
+    # feature/x or claude/x was silently excluded — no push run, and none of the
+    # branch-<name> images the docker job below documents for "any branch".
+    branches: ['**']
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
@@ -402,6 +405,13 @@ jobs:
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@v5
+        # sha-<short> from the PR head, for the reason the build args below use
+        # head.sha: by default this action takes github.sha, which on pull_request
+        # events is the ephemeral merge commit. PR #31's image was tagged sha-a2a4bdb
+        # while its head was fe15866 — the one immutable tag naming a commit that
+        # exists on no branch. Also sets the image's revision label from the head.
+        env:
+          DOCKER_METADATA_PR_HEAD_SHA: 'true'
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |

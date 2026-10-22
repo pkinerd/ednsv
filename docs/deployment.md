@@ -378,7 +378,7 @@ resolver**. A locked-down deployment can allow just 53 to its resolver plus 443 
 **Jobs**:
 1. **Build & Unit Tests** — `dotnet restore` → `dotnet build --configuration Release` → `dotnet test` (Ednsv.Core.Tests + Ednsv.Web.Tests). Gates the integration and docker jobs.
 2. **Integration Tests** — validate real domains (google.com, gmail.com, cnn.com, example.com) with JSON output parsing; cache cold/warm speedup, recheck-with-clear, and multi-domain cache-reuse verification.
-3. **Docker** — build the Web image and push to GHCR (`latest` on default branch, `latest-any` per build; fork PRs build without pushing).
+3. **Docker** — build the Web image and push to GHCR: `latest` on the default branch, `branch-<name>` on a branch push (slashes become dashes), `pr-<number>` on a PR, `sha-<short>` always (the PR's head commit on PR builds, never the ephemeral merge commit), `latest-any` per build. Runs alongside the integration tests rather than after them, so an image is pushed even if they fail. Fork PRs build without pushing.
 4. **Build log archival** — logs pushed to a `build-logs` orphan branch.
 
 ## Build Commands
