@@ -2,14 +2,14 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #201 (attempt 1) |
-| **Run ID** | 30092538580 |
+| **Run** | #251 (attempt 1) |
+| **Run ID** | 39706767357 |
 | **Result** | pass |
 | **Build & Unit Tests** | success |
 | **Integration Tests** | success |
 | **Docker** | success |
-| **Commit** | 374f865d9d38820f5cad275fa9cd55a64196b54a |
-| **Ref** | refs/heads/main |
+| **Commit** | 9f6857831191e0c9318b8b6433e86f9a6c6655f8 |
+| **Ref** | refs/heads/claude/public-resolver-option |
 | **Event** | push |
 | **Actor** | pkinerd |
 
@@ -26,13 +26,8 @@ test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
 test-reports/google.com.json
-test-reports/integration-cache/dns-queries.json
-test-reports/integration-cache/dns-server-queries.json
-test-reports/integration-cache/domain-results.json
-test-reports/integration-cache/http-get-headers.json
-test-reports/integration-cache/http-get.json
-test-reports/integration-cache/ptr-lookups.json
-test-reports/integration-cache/rcpt-probes.json
-test-reports/integration-cache/smtp-probes.json
+test-reports/integration-cache/runnervmxehtw/cache.20261022T014111094Z.e99a633a.jsonl
+test-reports/integration-cache/runnervmxehtw/cache.20261022T014123112Z.0712a76e.jsonl
+test-reports/integration-cache/runnervmxehtw/cache.20261022T014139750Z.f1c5a34c.jsonl
 test-reports/multi-domain.txt
 ```
