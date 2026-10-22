@@ -281,10 +281,8 @@ public class DomainValidator
         // ── Fire-and-forget HTTP prefetch — runs in background, doesn't block ──
         // These prime the HTTP cache for checks that will need them later.
         // They run alongside prefetch + foundation + concurrent checks.
-        // MTA-STS is email-critical (3 retries); security.txt and CT are info-only (1 retry).
-        _ = Task.Run(() => _http.GetAsync($"https://mta-sts.{domain}/.well-known/mta-sts.txt"));
-        _ = Task.Run(() => _http.GetAsync($"https://{domain}/.well-known/security.txt", maxRetries: 1));
-        _ = Task.Run(() => _http.GetAsync($"{Checks.ProbeList.CrtShBase(context.Options.CrtShBaseUrl)}?q={Uri.EscapeDataString(domain)}&output=json", maxRetries: 1));
+        foreach (var (url, maxRetries) in HttpPrefetchRequests(domain, context.Options))
+            _ = Task.Run(() => _http.GetAsync(url, maxRetries));
 
         TraceLog($"[PHASE] PREFETCH START for {domain}");
         var prefetchSw = Stopwatch.StartNew();
@@ -464,6 +462,25 @@ public class DomainValidator
         TraceContext.Sink = null;
 
         return report;
+    }
+
+    /// <summary>
+    /// What the HTTP prefetch fetches: the MTA-STS policy (email-critical, default
+    /// retries), security.txt and the Certificate Transparency search (info-only, one
+    /// retry). Nothing when HTTP probes are off. These were once fired unconditionally,
+    /// so <c>--no-http</c> and <c>--restricted-network</c> — documented as leaving only
+    /// DNS to the configured resolver — still sent HTTPS to the domain and to crt.sh on
+    /// every run, for results the skipped checks would never read.
+    /// </summary>
+    public static IReadOnlyList<(string Url, int? MaxRetries)> HttpPrefetchRequests(string domain, ValidationOptions options)
+    {
+        if (!options.EnableHttpProbes) return Array.Empty<(string, int?)>();
+        return new (string, int?)[]
+        {
+            ($"https://mta-sts.{domain}/.well-known/mta-sts.txt", null),
+            ($"https://{domain}/.well-known/security.txt", 1),
+            ($"{ProbeList.CrtShBase(options.CrtShBaseUrl)}?q={Uri.EscapeDataString(domain)}&output=json", 1),
+        };
     }
 
     private void TraceLog(string message)
