@@ -23,24 +23,25 @@ public sealed class AppConfig
     public bool EnableDnsbl { get; set; } = true;
 
     /// <summary>
-    /// Allow direct UDP/TCP 53 queries to specific authoritative nameservers and
-    /// public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) — used by propagation,
+    /// Allow direct UDP/TCP 53 queries to authoritative nameservers — used by the
     /// lame-delegation, SOA-serial, glue-record, parent-delegation, AXFR and
-    /// open-recursive-resolver checks. Disable in environments where outbound
-    /// raw DNS is blocked but a local recursive resolver is permitted; checks
-    /// that depend on direct DNS are reported as skipped.
+    /// open-recursive-resolver checks. Disable in environments where outbound DNS
+    /// to arbitrary servers is blocked but a local recursive resolver is permitted;
+    /// those checks are reported as skipped. The public resolvers are
+    /// <see cref="EnablePublicResolvers"/>, which follows this unless set.
     /// </summary>
     [JsonPropertyName("enableDirectDns")]
     public bool EnableDirectDns { get; set; } = true;
 
     /// <summary>
-    /// Narrows <see cref="EnableDirectDns"/> to the authoritative nameservers: when
-    /// false the public resolvers are not queried directly. See
-    /// <see cref="Checks.ValidationOptions.EnablePublicResolvers"/>. Defaults true, so a
-    /// config.json written before this existed keeps its behaviour.
+    /// Direct queries to the public resolvers, independent of <see cref="EnableDirectDns"/>
+    /// (which covers the authoritative nameservers). See
+    /// <see cref="Checks.ValidationOptions.EnablePublicResolvers"/>. Null — which is what a
+    /// config.json written before the split holds — follows <see cref="EnableDirectDns"/>,
+    /// so such a config keeps its behaviour.
     /// </summary>
     [JsonPropertyName("enablePublicResolvers")]
-    public bool EnablePublicResolvers { get; set; } = true;
+    public bool? EnablePublicResolvers { get; set; }
 
     /// <summary>
     /// Enable DNS-over-HTTPS for the public-resolver propagation check

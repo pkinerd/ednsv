@@ -296,8 +296,8 @@ Optional features controlled per-validation:
 | `EnableSmtpProbes` | true | Run SMTP/STARTTLS probes; skipped checks emit `Info` via `SkippedResult` |
 | `EnableHttpProbes` | true | Run HTTP/HTTPS probes (MTA-STS, BIMI, security.txt, CT, autodiscover) |
 | `EnableDnsbl` | true | Issue DNS-based blocklist queries |
-| `EnableDirectDns` | true | Allow direct-to-authoritative / public-resolver queries (propagation, lame delegation, glue, AXFR, etc.) |
-| `EnablePublicResolvers` | true | Narrows `EnableDirectDns`: false skips only the public resolvers (the UDP propagation check), keeping the authoritative-nameserver checks |
+| `EnableDirectDns` | true | Allow direct-to-authoritative-nameserver queries (lame delegation, SOA serial, glue, AXFR, etc.) |
+| `EnablePublicResolvers` | null (follows `EnableDirectDns`) | Direct queries to the public resolvers (the UDP propagation check); independent of `EnableDirectDns` once set. Read via `PublicResolversEnabled` |
 | `EnableDoh` | false | Use DNS-over-HTTPS for the propagation check (routes via `HTTPS_PROXY`) |
 
 `ValidationOptions` also carries the operator-editable **probe data lists**

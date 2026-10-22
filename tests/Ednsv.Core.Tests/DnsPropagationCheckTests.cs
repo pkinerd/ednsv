@@ -42,8 +42,8 @@ public sealed class DnsPropagationCheckTests
 
         Assert.Equal(CheckSeverity.Warning, r.Severity);
         Assert.Equal("No public resolver reachable over UDP/53 — propagation not checked", r.Summary);
-        Assert.Contains("Refusing (127.0.0.1): no response", r.Details);
-        Assert.Contains("Blackhole (192.0.2.1): no response", r.Details);
+        Assert.All(r.Details, d => Assert.Contains("no response — timed out or unreachable", d));
+        Assert.Equal(2, r.Details.Count);
         // One short-capped round in parallel: a few seconds. The old sequential path
         // spent ~45s on each query to the blackhole alone.
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(20), $"took {sw.Elapsed.TotalSeconds:F1}s");
@@ -61,15 +61,29 @@ public sealed class DnsPropagationCheckTests
     }
 
     [Fact]
-    public async Task DirectDnsOff_StillSkipsRegardlessOfTheNewFlag()
+    public async Task DirectDnsOff_AndPublicResolversUnset_StillSkips()
     {
-        // The new flag narrows the old one. A caller that only knows EnableDirectDns —
-        // an older client, a config written before the split — must keep skipping.
+        // Unset follows EnableDirectDns: an older client or config that turned direct
+        // DNS off meant "no direct DNS at all" and must keep getting exactly that.
         var options = Unreachable();
         options.EnableDirectDns = false;
         var r = Assert.Single(await new DnsPropagationCheck().RunAsync("example.com", Context(options)));
 
-        Assert.StartsWith("Skipped: direct DNS to public resolvers disabled", r.Summary);
+        Assert.StartsWith("Skipped: public resolvers", r.Summary);
+    }
+
+    [Fact]
+    public async Task AuthoritativeOff_PublicOn_RunsThePropagationCheck()
+    {
+        // The network the split exists for: 8.8.8.8 and friends reachable, a zone's own
+        // nameservers not. Turning the authoritative checks off must not take this
+        // check with it. (Here neither resolver answers, so it warns — but it ran.)
+        var options = Unreachable();
+        options.EnableDirectDns = false;
+        options.EnablePublicResolvers = true;
+        var r = Assert.Single(await new DnsPropagationCheck().RunAsync("example.com", Context(options)));
+
+        Assert.Equal("No public resolver reachable over UDP/53 — propagation not checked", r.Summary);
     }
 }
 
@@ -156,6 +170,8 @@ public sealed class DnsPropagationAnswerTests
 
         var r = await RunAsync(dns, "mx.example.com");
 
+        // Reachable-but-failing is a different fix from a dropped packet, so say which.
+        Assert.Contains(r.Details, d => d.Contains("answered ServerFailure (reachable, but no answer)", StringComparison.Ordinal));
         Assert.Equal(CheckSeverity.Warning, r.Severity);
         Assert.Equal("DNS answers consistent across the reachable resolvers (UDP/53)", r.Summary);
         Assert.Contains(r.Warnings, w => w.StartsWith("Only 1/2 public resolvers responded", StringComparison.Ordinal));

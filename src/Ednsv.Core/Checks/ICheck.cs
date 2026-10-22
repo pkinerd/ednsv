@@ -157,26 +157,31 @@ public class ValidationOptions
     public bool EnableDnsbl { get; set; } = true;
 
     /// <summary>
-    /// Allow checks to talk directly to specific authoritative nameservers and
-    /// public resolvers (propagation, lame delegation, SOA-serial consistency,
-    /// glue records, parent-side delegation, open-recursive-resolver, AXFR).
-    /// When false, those checks are skipped and the regular configured resolver
-    /// is the only DNS path used.
+    /// Allow checks to talk directly to authoritative nameservers (lame delegation,
+    /// SOA-serial consistency, glue records, parent-side delegation, open recursive
+    /// resolver, AXFR). When false those checks are skipped and the configured resolver
+    /// is the only DNS path they use. The public resolvers have their own switch,
+    /// <see cref="EnablePublicResolvers"/>, which follows this one unless set.
     /// </summary>
     public bool EnableDirectDns { get; set; } = true;
 
     /// <summary>
-    /// Narrows <see cref="EnableDirectDns"/>: when false, the public resolvers
-    /// (8.8.8.8 / 1.1.1.1 / 9.9.9.9, i.e. <see cref="PropagationResolvers"/>) are not
-    /// queried directly, while the authoritative-nameserver checks still run. Many
-    /// networks allow outbound DNS to a zone's own nameservers but block the well-known
-    /// public resolvers to keep clients on the internal one; without this split the only
-    /// way to stop the propagation check timing out there was to give up every
-    /// direct-DNS check. A narrowing flag rather than an independent one, so a caller
-    /// that already turns <see cref="EnableDirectDns"/> off keeps skipping everything.
-    /// The DoH path (<see cref="EnableDoh"/>) is HTTPS and unaffected.
+    /// Direct queries to the public resolvers (<see cref="PropagationResolvers"/>,
+    /// 8.8.8.8 / 1.1.1.1 / 9.9.9.9 by default) — only the propagation check makes them.
+    /// Independent of <see cref="EnableDirectDns"/>, which now covers the authoritative
+    /// nameservers: networks differ in which they allow. Some reach the public resolvers
+    /// but not arbitrary nameservers; others the reverse, keeping clients off the public
+    /// resolvers. Null means "follow <see cref="EnableDirectDns"/>", which is what every
+    /// caller and stored config written before the split gets — so one that turned
+    /// direct DNS off keeps skipping the public resolvers too. Read it through
+    /// <see cref="PublicResolversEnabled"/>. The DoH path (<see cref="EnableDoh"/>) is
+    /// HTTPS and unaffected.
     /// </summary>
-    public bool EnablePublicResolvers { get; set; } = true;
+    public bool? EnablePublicResolvers { get; set; }
+
+    /// <summary>The effective public-resolver setting: explicit, else <see cref="EnableDirectDns"/>.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool PublicResolversEnabled => EnablePublicResolvers ?? EnableDirectDns;
 
     /// <summary>
     /// When true, the public-resolver propagation check (Google + Cloudflare)

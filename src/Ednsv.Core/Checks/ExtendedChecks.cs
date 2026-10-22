@@ -176,9 +176,7 @@ public class DnsPropagationCheck : ICheck
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
         var useDoh = ctx.Options.EnableDoh;
-        if (!useDoh && !ctx.Options.EnableDirectDns)
-            return CheckContext.SkippedResult(this, "Skipped: direct DNS to public resolvers disabled (and DoH off)");
-        if (!useDoh && !ctx.Options.EnablePublicResolvers)
+        if (!useDoh && !ctx.Options.PublicResolversEnabled)
             return CheckContext.SkippedResult(this, "Skipped: public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) disabled (and DoH off)");
 
         var publicResolvers = ProbeList.Labeled(ctx.Options.PropagationResolvers, ProbeDefaults.PropagationResolvers);
@@ -260,7 +258,7 @@ public class DnsPropagationCheck : ICheck
                 // "consistent" — A=[] MX=[] agreeing with A=[] MX=[] — and passed.
                 if (!DnsResolverService.IsAnswer(aResp) && !DnsResolverService.IsAnswer(mxResp))
                 {
-                    result.Details.Add($"{name} ({ip}): no response");
+                    result.Details.Add($"{name} ({ip}): {NoAnswerReason(aResp)}");
                     continue;
                 }
                 reached++;
@@ -342,6 +340,24 @@ public class DnsPropagationCheck : ICheck
     }
 
     private static readonly TimeSpan PublicResolverProbeTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>
+    /// Why a resolver gave no usable answer, as far as the response can say. A reply
+    /// with an error code means the resolver is reachable and refused or failed — a
+    /// different fix from a network that drops the packets, which reaches here as a
+    /// response with no header at all (its exception went to DNS Query Errors).
+    /// </summary>
+    private static string NoAnswerReason(IDnsQueryResponse response)
+    {
+        try
+        {
+            return $"answered {response.Header.ResponseCode} (reachable, but no answer)";
+        }
+        catch
+        {
+            return "no response — timed out or unreachable (details under DNS Query Errors)";
+        }
+    }
 
     /// <summary>
     /// DoH JSON query (Cloudflare/Google JSON variant — distinct from RFC 8484

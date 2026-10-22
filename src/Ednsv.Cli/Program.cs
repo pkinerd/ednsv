@@ -81,7 +81,8 @@ var noSmtpOption = new Option<bool>("--no-smtp") { Description = "Skip all SMTP 
 var noHttpOption = new Option<bool>("--no-http") { Description = "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked" };
 var noDnsblOption = new Option<bool>("--no-dnsbl") { Description = "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver" };
 var noDirectDnsOption = new Option<bool>("--no-direct-dns") { Description = "Skip checks that bypass the configured resolver to query specific authoritative nameservers or public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. Use in environments where outbound raw UDP/TCP 53 to internet IPs is blocked" };
-var noPublicResolversOption = new Option<bool>("--no-public-resolvers") { Description = "Don't query the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) directly, but keep the authoritative-nameserver checks. For networks that allow DNS to a zone's own nameservers but block the well-known public resolvers. Skips the propagation check unless --doh is set" };
+var noAuthoritativeDnsOption = new Option<bool>("--no-authoritative-dns") { Description = "Skip only the checks that query authoritative nameservers directly (lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver), keeping the public-resolver propagation check. For networks that reach 8.8.8.8 / 1.1.1.1 / 9.9.9.9 but not arbitrary nameservers" };
+var noPublicResolversOption = new Option<bool>("--no-public-resolvers") { Description = "Skip only the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9), i.e. the propagation check unless --doh, keeping the authoritative-nameserver checks. For networks that block the well-known public resolvers but reach a zone's own nameservers" };
 var dohOption = new Option<bool>("--doh") { Description = "Run the propagation check against Google + Cloudflare's JSON DNS-over-HTTPS endpoints instead of raw UDP/53. Routes through HTTPS_PROXY when set. Other direct-DNS checks have no DoH equivalent" };
 var restrictedNetworkOption = new Option<bool>("--restricted-network") { Description = "Convenience preset: equivalent to --no-smtp --no-http --no-dnsbl --no-direct-dns. Run only DNS-based checks against your configured resolver" };
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
@@ -115,6 +116,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     noHttpOption,
     noDnsblOption,
     noDirectDnsOption,
+    noAuthoritativeDnsOption,
     noPublicResolversOption,
     dohOption,
     restrictedNetworkOption
@@ -246,7 +248,10 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var noHttp = restricted || parseResult.GetValue(noHttpOption);
     var noDnsbl = restricted || parseResult.GetValue(noDnsblOption);
     var noDirectDns = restricted || parseResult.GetValue(noDirectDnsOption);
-    var noPublicResolvers = parseResult.GetValue(noPublicResolversOption);
+    // --no-direct-dns keeps its documented meaning — no direct DNS at all, only the
+    // configured resolver — so it turns off both; the two narrower flags pick one.
+    var noAuthoritativeDns = noDirectDns || parseResult.GetValue(noAuthoritativeDnsOption);
+    var noPublicResolvers = noDirectDns || parseResult.GetValue(noPublicResolversOption);
     var doh = parseResult.GetValue(dohOption);
     if (restricted)
         Console.Error.WriteLine("[--restricted-network] SMTP, HTTP/HTTPS, DNSBL, and direct-DNS checks are disabled.");
@@ -263,7 +268,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         EnableSmtpProbes = !noSmtp,
         EnableHttpProbes = !noHttp,
         EnableDnsbl = !noDnsbl,
-        EnableDirectDns = !noDirectDns,
+        EnableDirectDns = !noAuthoritativeDns,
         EnablePublicResolvers = !noPublicResolvers,
         EnableDoh = doh
     };

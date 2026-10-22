@@ -145,13 +145,13 @@
         <label class="cb"><input type="checkbox" id="cfgDnsbl"> Public DNSBL/RHSBL queries<span class="desc">Spamhaus, Barracuda, SpamCop, etc.</span></label>
       </div>
       <div class="field">
-        <label class="cb"><input type="checkbox" id="cfgDirectDns"> Direct DNS / external resolvers<span class="desc">Allow checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable in environments where outbound raw DNS is blocked but a local recursive resolver works — propagation, lame-delegation, SOA-serial, glue, parent-delegation, open-recursive-resolver and AXFR checks are skipped.</span></label>
-      </div>
-      <div class="field" style="margin-left:1.6rem">
-        <label class="cb"><input type="checkbox" id="cfgPublicResolvers"> &hellip;including public resolvers<span class="desc">Query the propagation resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) directly. Untick on networks that allow DNS to a domain's own nameservers but block the well-known public resolvers: the authoritative-nameserver checks keep running and only propagation is skipped (or uses DoH). Has no effect while the option above is off.</span></label>
+        <label class="cb"><input type="checkbox" id="cfgDirectDns"> Direct DNS to authoritative nameservers<span class="desc">Allow checks to query a domain's own nameservers directly. Disable where outbound DNS to arbitrary servers is blocked but a local recursive resolver works — lame-delegation, SOA-serial, glue, parent-delegation, open-recursive-resolver and AXFR checks are skipped.</span></label>
       </div>
       <div class="field">
-        <label class="cb"><input type="checkbox" id="cfgDoh"> DNS-over-HTTPS for propagation check<span class="desc">When set, the propagation check queries Google and Cloudflare's JSON DoH endpoints over HTTPS instead of raw UDP/53, so it routes through HTTPS_PROXY and works in environments without raw DNS egress. The other direct-DNS checks (lame delegation, SOA serial, glue, parent delegation, AXFR) have no DoH equivalent and remain gated by the option above.</span></label>
+        <label class="cb"><input type="checkbox" id="cfgPublicResolvers"> Public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9)<span class="desc">Query the propagation resolvers directly. Independent of the option above: some networks reach these but not arbitrary nameservers, others the reverse. Disable when they are blocked — the propagation check is then skipped, unless DoH is on.</span></label>
+      </div>
+      <div class="field">
+        <label class="cb"><input type="checkbox" id="cfgDoh"> DNS-over-HTTPS for propagation check<span class="desc">When set, the propagation check queries Google and Cloudflare's JSON DoH endpoints over HTTPS instead of raw UDP/53, so it routes through HTTPS_PROXY and works in environments without raw DNS egress. The other direct-DNS checks (lame delegation, SOA serial, glue, parent delegation, AXFR) have no DoH equivalent and remain gated by the authoritative-nameserver option.</span></label>
       </div>
     </div>
 
@@ -402,7 +402,9 @@ function fillForm(cfg) {
   $('#cfgHttp').checked = !!cfg.enableHttpProbes;
   $('#cfgDnsbl').checked = !!cfg.enableDnsbl;
   $('#cfgDirectDns').checked = cfg.enableDirectDns !== false;
-  $('#cfgPublicResolvers').checked = cfg.enablePublicResolvers !== false;
+  // Unset in a config saved before the split: it then followed direct DNS.
+  $('#cfgPublicResolvers').checked = typeof cfg.enablePublicResolvers === 'boolean'
+    ? cfg.enablePublicResolvers : cfg.enableDirectDns !== false;
   $('#cfgDoh').checked = !!cfg.enableDoh;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
   $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');

@@ -70,8 +70,9 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 | `--no-smtp` | SMTP probes (ports 25/465/587): SMTP, DANE, MX STARTTLS, Postmaster/Abuse, submission ports, IPv6 SMTP |
 | `--no-http` | HTTP/HTTPS probes: MTA-STS, security.txt, BIMI, Certificate Transparency |
 | `--no-dnsbl` | Public DNSBL/RHSBL queries |
-| `--no-direct-dns` | Direct authoritative / public-resolver queries: propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver |
-| `--no-public-resolvers` | Only the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9), i.e. the propagation check unless `--doh`; authoritative-nameserver checks keep running. For networks that allow DNS to a zone's own nameservers but block the well-known public resolvers |
+| `--no-direct-dns` | All direct DNS: both of the next two |
+| `--no-authoritative-dns` | Direct queries to authoritative nameservers: lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. For networks that reach the public resolvers but not arbitrary nameservers |
+| `--no-public-resolvers` | Direct queries to the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): the propagation check, unless `--doh`. For networks that block the well-known public resolvers but reach a zone's own nameservers |
 | `--doh` | (opt-*in*) Run the propagation check over JSON DNS-over-HTTPS instead of raw UDP/53 (routes via `HTTPS_PROXY`) |
 | `--restricted-network` | Preset for `--no-smtp --no-http --no-dnsbl --no-direct-dns` (DNS-only against the configured resolver) |
 
@@ -114,8 +115,8 @@ Environment variables or command-line configuration. See [configuration.md](conf
 | `DnsServer` | system | Custom DNS server(s), comma-separated |
 | `DkimSelectors` | (built-in seed) | Default DKIM selectors, comma-separated |
 | `EnableSmtpProbes` / `EnableHttpProbes` / `EnableDnsbl` | `true` | Server-side defaults for the validator UI; per-request body overrides |
-| `EnableDirectDns` | `true` | Allow checks to talk directly to authoritative nameservers / public resolvers |
-| `EnablePublicResolvers` | `true` | Narrows the above: when `false`, the public resolvers are not queried directly but the authoritative-nameserver checks still run |
+| `EnableDirectDns` | `true` | Allow checks to talk directly to authoritative nameservers |
+| `EnablePublicResolvers` | unset (follows `EnableDirectDns`) | Allow the propagation check to query the public resolvers directly; independent once set |
 | `EnableDoh` | `false` | Use DNS-over-HTTPS for the propagation check (routes via `HTTPS_PROXY`) |
 | `Trace` | `false` | Enable trace logging (per-check timing, cache hits, semaphore waits) |
 | `MaskTrace` | `true` | Hash domains/recipients/IPs in trace output |
@@ -366,8 +367,9 @@ DoH path and still need raw 53). See [Configuration → proxy](configuration.md#
 ### Reducing the set
 
 The network-category toggles narrow egress: `--no-smtp` drops 25/587/465; `--no-http`
-drops 443/80; `--no-public-resolvers` drops 53 to 8.8.8.8 / 1.1.1.1 / 9.9.9.9 but keeps it to
-authoritative nameservers; `--no-direct-dns` limits 53 to the configured resolver only; `--restricted`
+drops 443/80; `--no-public-resolvers` drops 53 to 8.8.8.8 / 1.1.1.1 / 9.9.9.9 and
+`--no-authoritative-dns` drops it to arbitrary nameservers, each keeping the other;
+`--no-direct-dns` (both) limits 53 to the configured resolver only; `--restricted`
 (no-smtp + no-http + no-dnsbl + no-direct-dns) leaves **only UDP/TCP 53 to the configured
 resolver**. A locked-down deployment can allow just 53 to its resolver plus 443 to
 `HTTPS_PROXY` so MTA-STS/BIMI/DoH still work.
