@@ -247,9 +247,46 @@ public class DomainValidator
         };
     }
 
+    /// <summary>
+    /// A validator over a chosen check list, so the pipeline's own behaviour — event
+    /// order, timing, retry — can be exercised with stub checks and no network.
+    /// </summary>
+    internal DomainValidator(DnsResolverService dns, SmtpProbeService smtp, HttpProbeService http,
+        IEnumerable<ICheck> foundationChecks, IEnumerable<ICheck> concurrentChecks)
+        : this(dns, smtp, http)
+    {
+        _foundationChecks = foundationChecks.ToList();
+        _concurrentChecks = concurrentChecks.ToList();
+    }
+
     public event Action<string>? OnCheckStarted;
+
+    /// <summary>
+    /// One result at a time, in check-list order. Concurrent checks are held back until
+    /// the whole concurrent phase is done so the CLI can print them grouped by category;
+    /// a live view wants <see cref="OnCheckFinished"/> instead.
+    /// </summary>
     public event Action<string, CheckResult>? OnCheckCompleted;
+
+    /// <summary>
+    /// A check's results the moment it finishes, in completion order and from whichever
+    /// thread ran it — concurrent checks raise this in parallel, so handlers must be
+    /// thread-safe. Not raised for a timed-out attempt: the check is still unresolved,
+    /// and it is raised once its deferred retry settles.
+    /// </summary>
+    public event Action<string, IReadOnlyList<CheckResult>, TimeSpan>? OnCheckFinished;
+
     public event Action<string, TimeSpan>? OnCheckTiming;
+
+    /// <summary>Checks a validation runs — the denominator for progress.</summary>
+    public int CheckCount => _foundationChecks.Count + _concurrentChecks.Count;
+
+    private void Finish(string name, List<CheckResult> results, TimeSpan elapsed)
+    {
+        var ms = Math.Round(elapsed.TotalMilliseconds);
+        foreach (var r in results) r.DurationMs = ms;
+        OnCheckFinished?.Invoke(name, results, elapsed);
+    }
 
     public async Task<ValidationReport> ValidateAsync(string domain, ValidationOptions? options = null)
     {
@@ -299,9 +336,12 @@ public class DomainValidator
         TraceLog($"[PHASE] FOUNDATION START ({_foundationChecks.Count} checks)");
         var foundationSw = Stopwatch.StartNew();
         var timedOutChecks = new List<ICheck>();
+        // First-attempt time of each timed-out check, so the retry's result reports
+        // the whole cost of resolving it rather than only the second try.
+        var firstAttempt = new Dictionary<string, TimeSpan>();
 
         foreach (var check in _foundationChecks)
-            await RunCheckAsync(check, domain, context, report, timedOutChecks);
+            await RunCheckAsync(check, domain, context, report, timedOutChecks, firstAttempt);
 
         foundationSw.Stop();
         TraceLog($"[PHASE] FOUNDATION DONE: {foundationSw.ElapsedMilliseconds}ms (mx:{context.MxHosts.Count} ns:{context.NsHosts.Count} spf:{(context.SpfRecord != null ? "yes" : "no")} dmarc:{(context.DmarcRecord != null ? "yes" : "no")})");
@@ -329,6 +369,7 @@ public class DomainValidator
                     OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
                     var sevs = results.Count == 0 ? "" : string.Join(",", results.Select(r => r.Severity.ToString()));
                     TraceLog($"[CHECK] DONE {check.Name}: {checkSw.ElapsedMilliseconds}ms [{sevs}]");
+                    Finish(check.Name, results, checkSw.Elapsed);
                     concurrentResults.Add((check, results, null, checkSw.Elapsed, false));
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -351,6 +392,7 @@ public class DomainValidator
                         Summary = $"Check failed: {ex.Message}",
                         Errors = { ex.Message }
                     };
+                    Finish(check.Name, new List<CheckResult> { errorResult }, checkSw.Elapsed);
                     concurrentResults.Add((check, null, errorResult, checkSw.Elapsed, false));
                 }
             });
@@ -369,6 +411,7 @@ public class DomainValidator
             if (entry.TimedOut)
             {
                 timedOutChecks.Add(check);
+                firstAttempt[check.Name] = entry.Elapsed;
             }
             else if (entry.Results != null)
             {
@@ -388,6 +431,8 @@ public class DomainValidator
         // ── Deferred retry: timed-out checks get a second attempt ─────────
         foreach (var check in timedOutChecks)
         {
+            var retrySw = Stopwatch.StartNew();
+            TimeSpan Spent() => retrySw.Elapsed + firstAttempt.GetValueOrDefault(check.Name);
             try
             {
                 OnCheckStarted?.Invoke(check.Name);
@@ -411,6 +456,7 @@ public class DomainValidator
                         }
                     };
                 }
+                Finish(check.Name, results, Spent());
                 foreach (var r in results)
                 {
                     report.Results.Add(r);
@@ -427,6 +473,7 @@ public class DomainValidator
                     Summary = $"Check failed: {ex.Message}",
                     Errors = { ex.Message }
                 };
+                Finish(check.Name, new List<CheckResult> { errorResult }, Spent());
                 report.Results.Add(errorResult);
                 OnCheckCompleted?.Invoke(check.Name, errorResult);
             }
@@ -476,18 +523,18 @@ public class DomainValidator
     }
 
     private async Task RunCheckAsync(ICheck check, string domain, CheckContext context,
-        ValidationReport report, List<ICheck> timedOutChecks)
+        ValidationReport report, List<ICheck> timedOutChecks, Dictionary<string, TimeSpan> firstAttempt)
     {
         // Foundation runs sequentially in the validator's flow context — set
         // Check before each call and clear it after so traces between checks
         // aren't mis-attributed.
         var previousCheck = TraceContext.Check;
         TraceContext.Check = check.Name;
+        var checkSw = Stopwatch.StartNew();
         try
         {
             OnCheckStarted?.Invoke(check.Name);
             TraceLog($"[CHECK] START {check.Name}");
-            var checkSw = Stopwatch.StartNew();
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
             List<CheckResult> results;
             try
@@ -498,6 +545,7 @@ public class DomainValidator
             {
                 timedOutChecks.Add(check);
                 checkSw.Stop();
+                firstAttempt[check.Name] = checkSw.Elapsed;
                 TraceLog($"[CHECK] TIMEOUT {check.Name}: {checkSw.ElapsedMilliseconds}ms");
                 OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
                 return;
@@ -506,6 +554,7 @@ public class DomainValidator
             var severities = string.Join(",", results.Select(r => r.Severity));
             TraceLog($"[CHECK] DONE {check.Name}: {checkSw.ElapsedMilliseconds}ms [{severities}]");
             OnCheckTiming?.Invoke(check.Name, checkSw.Elapsed);
+            Finish(check.Name, results, checkSw.Elapsed);
             foreach (var r in results)
             {
                 report.Results.Add(r);
@@ -522,6 +571,7 @@ public class DomainValidator
                 Summary = $"Check failed: {ex.Message}",
                 Errors = { ex.Message }
             };
+            Finish(check.Name, new List<CheckResult> { errorResult }, checkSw.Elapsed);
             report.Results.Add(errorResult);
             OnCheckCompleted?.Invoke(check.Name, errorResult);
         }

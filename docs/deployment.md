@@ -137,9 +137,9 @@ sequenceDiagram
     Tracker->>DV: ValidateAsync() [background]
 
     loop Poll for status
-        Client->>API: GET /api/status/abc123
+        Client->>API: GET /api/status/abc123?since=40
         API->>Tracker: TryGetJob()
-        API-->>Client: {"status": "running",<br/>"completedChecks": 45,<br/>"currentCheck": "SmtpTlsCertCheck"}
+        API-->>Client: {"status": "running",<br/>"completedChecks": 45,<br/>"checks": [5 newly finished],<br/>"checksCursor": 45,<br/>"running": [...]}
     end
 
     DV-->>Tracker: ValidationReport
@@ -173,9 +173,18 @@ Start an async validation job.
 }
 ```
 
-#### GET /api/status/{jobId}
+#### GET /api/status/{jobId}?since={cursor}
 
 Poll job status with real-time progress.
+
+While the job runs, `checks` carries each finished check's results in the order the
+checks finished, as soon as each one does — not at the end of the parallel phase — and
+`running` lists the checks still in flight, longest-running first, with `elapsed` in
+seconds. Pass the previous response's `checksCursor` as `since` to receive only checks
+finished after it; omit it to receive all of them. Both fields are absent once the job
+has finished: `report` then carries every result. Every result, live or in the report,
+has `durationMs` — how long its check took, including any wait on the shared DNS rate
+limit, and both attempts for a check retried after a timeout.
 
 **Response**:
 ```json
@@ -185,6 +194,19 @@ Poll job status with real-time progress.
   "status": "running",
   "currentCheck": "SmtpTlsCertCheck",
   "completedChecks": 45,
+  "totalChecks": 88,
+  "running": [
+    { "name": "IP Blocklist Check (DNSBL)", "elapsed": 23.4 },
+    { "name": "SMTP TLS Certificate", "elapsed": 4.1 }
+  ],
+  "checks": [
+    {
+      "name": "MX Records",
+      "durationMs": 412,
+      "results": [ { "checkName": "MX Records", "severity": "Pass", "durationMs": 412, "...": "..." } ]
+    }
+  ],
+  "checksCursor": 45,
   "results": {
     "pass": 30,
     "info": 5,
@@ -279,7 +301,7 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 
 Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
 
-- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck.
+- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck. Results appear as each check finishes, alongside a panel of the checks still running with their elapsed time; every finding shows how long its check took, and the slowest checks are summarised above the results.
 - **`config.html`** — admin console for the live runtime config (toggles, DKIM selectors, probe data lists) and user/token management, backed by the `/api/config*` and `/api/auth/users*` endpoints.
 
 ## Docker

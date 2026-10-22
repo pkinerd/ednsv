@@ -114,6 +114,15 @@ Each check is wrapped in a `CancellationTokenSource(45s)`; the token is passed i
 - `OperationCanceledException` while `cts.IsCancellationRequested` → **timeout** → check queued for the deferred retry phase
 - Any other exception → CheckResult with `Severity.Error` and the exception message
 
+Results reach callers through two events. `OnCheckCompleted` delivers one result at a
+time in check-list order, so concurrent results are held until the whole phase is done —
+which is what the CLI wants, printing them grouped by category. `OnCheckFinished` delivers
+a check's results the moment it finishes, from the thread that ran it, which is what the
+web service uses to stream results to the UI while slower checks are still running. A
+timed-out attempt raises neither; the check finishes when its deferred retry settles. Both
+deliver results already stamped with `DurationMs`: the check's run time, with both attempts
+summed for a retried check.
+
 This replaced the older `Task.WhenAny(checkTask, Task.Delay(45s))` pattern, which kept the timed-out task running in the background and held its DNS/TCP slot until natural completion. Results are collected into a `ConcurrentBag` and then reordered to match the original check registration order for consistent output.
 
 ### Phase 4: Deferred Retry

@@ -99,6 +99,23 @@
      The full commit is the tooltip; click copies it. */
   .subtitle .build { margin-left: 0.5rem; font-size: 0.72rem; opacity: 0.45; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; border-bottom: 1px dotted currentColor; }
   .subtitle .build:hover { opacity: 0.8; }
+  /* Per-check timing. Muted by default; a check slow enough to be worth noticing
+     picks up the warning colour, one near the 45s check timeout the error colour. */
+  .check .dur { margin-left: auto; color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+  .dur.slow { color: var(--warn); }
+  .dur.very-slow { color: var(--error); }
+  .slowest { color: var(--muted); font-size: 0.78rem; margin: -0.75rem 0 1rem; }
+  .slowest .dur { margin-left: 0.25rem; }
+  /* Live view: checks still in flight, longest-running first. */
+  #running:empty { display: none; }
+  #running { margin-bottom: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.5rem 0.75rem; font-size: 0.8rem; }
+  #running .running-title { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; margin-bottom: 0.3rem; }
+  #running .row { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.1rem 0; }
+  #running .row .dot { color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  #running .row .dur { margin-left: auto; color: var(--muted); font-size: 0.75rem; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .progress { height: 3px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; max-width: 24rem; }
+  .progress > div { height: 100%; background: var(--accent); transition: width 0.3s; }
 </style>
 </head>
 <body>
@@ -167,12 +184,13 @@
   </section>
 
   <div id="status"></div>
+  <div id="running"></div>
   <div id="results"></div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
-const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results');
+const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results'), runningEl = $('#running');
 const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
 let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
 let pollTimer = null;
@@ -499,6 +517,9 @@ form.addEventListener('submit', async e => {
 async function startValidation(domain, recheckSeverity) {
   btn.disabled = true;
   resultsEl.innerHTML = '';
+  runningEl.innerHTML = '';
+  activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
+  collapsedCats = new Set();
   const recheckLabel = recheckSeverity
     ? (recheckSeverity === 'all' ? ' (recheck all)' : ` (recheck >= ${recheckSeverity})`)
     : '';
@@ -524,11 +545,28 @@ async function startValidation(domain, recheckSeverity) {
 
 function pollJob(jobId, domain) {
   if (pollTimer) clearInterval(pollTimer);
+  // Results of finished checks, accumulated across polls. `cursor` counts finished
+  // checks received so far; each poll asks only for those after it.
+  const liveResults = [];
+  let cursor = 0;
   pollTimer = setInterval(async () => {
     try {
-      const res = await fetch(`/api/status/${jobId}`);
+      const since = cursor;
+      const res = await fetch(`/api/status/${jobId}?since=${since}`);
       const data = await res.json();
       if (data.status === 'running') {
+        // Polls can overlap (setInterval does not wait for a slow response), so
+        // place this batch by the cursor it was requested with and drop whatever
+        // an earlier response already delivered.
+        if (Array.isArray(data.checks)) {
+          const fresh = data.checks.slice(Math.max(0, cursor - since));
+          if (fresh.length) {
+            for (const c of fresh) liveResults.push(...(c.results || []));
+            cursor += fresh.length;
+            renderReport({ results: liveResults }, domain, { live: true });
+          }
+        }
+        renderRunning(data.running);
         const d = data.dns;
         const s = data.smtp;
         const elapsed = data.elapsed != null ? `${data.elapsed.toFixed(1)}s` : '';
@@ -555,8 +593,13 @@ function pollJob(jobId, domain) {
 
         let line1;
         if (data.completedChecks > 0) {
-          const check = data.currentCheck ? ` [${data.currentCheck}]` : '';
-          line1 = `Validating ${esc(domain)}... <b>${data.completedChecks}</b> checks done${check}`;
+          // The running panel lists every check in flight; the old single-name hint
+          // is kept only for a server too old to send it.
+          const check = data.currentCheck && !data.running ? ` [${esc(data.currentCheck)}]` : '';
+          const of = data.totalChecks ? `/${data.totalChecks}` : '';
+          line1 = `Validating ${esc(domain)}... <b>${data.completedChecks}</b>${of} checks done${check}`;
+          if (data.totalChecks)
+            line1 += `<div class="progress"><div style="width:${Math.min(100, 100 * data.completedChecks / data.totalChecks).toFixed(1)}%"></div></div>`;
         } else if (data.currentCheck) {
           line1 = `Validating ${esc(domain)}... [${esc(data.currentCheck)}]`;
         } else {
@@ -584,6 +627,7 @@ function pollJob(jobId, domain) {
         clearInterval(pollTimer);
         pollTimer = null;
         btn.disabled = false;
+        runningEl.innerHTML = '';
         if (data.status === 'completed') {
           const d = data.dns;
           const dur = fmtDuration(data.report.duration);
@@ -603,6 +647,35 @@ function pollJob(jobId, domain) {
   }, 800);
 }
 
+// Check durations arrive as milliseconds (durationMs) or seconds (running.elapsed).
+function fmtMs(ms) {
+  if (ms == null) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const secs = ms / 1000;
+  if (secs < 60) return `${secs.toFixed(1)}s`;
+  return `${Math.floor(secs / 60)}m ${String(Math.round(secs % 60)).padStart(2, '0')}s`;
+}
+// Thresholds are against the 45s per-check timeout: 10s is slow enough to notice,
+// 30s is close enough to the limit that a retry is likely.
+function durClass(ms) {
+  return ms >= 30000 ? 'dur very-slow' : ms >= 10000 ? 'dur slow' : 'dur';
+}
+function durSpan(ms, title) {
+  if (ms == null) return '';
+  return `<span class="${durClass(ms)}" title="${esc(title || 'Time this check took')}">${fmtMs(ms)}</span>`;
+}
+
+function renderRunning(running) {
+  if (!Array.isArray(running) || running.length === 0) { runningEl.innerHTML = ''; return; }
+  let html = `<div class="running-title">Running (${running.length})</div>`;
+  for (const r of running) {
+    const ms = r.elapsed * 1000;
+    html += `<div class="row"><span class="dot">&#9679;</span><span>${esc(r.name)}</span>`
+          + durSpan(ms, 'Running for') + '</div>';
+  }
+  runningEl.innerHTML = html;
+}
+
 function fmtDuration(d) {
   if (!d) return '';
   // Duration comes as "HH:MM:SS.fff" or seconds
@@ -617,14 +690,16 @@ function fmtDuration(d) {
 }
 
 let activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
+// Categories the user collapsed. Kept across re-renders: the live view rebuilds the
+// list each time a check lands, and must not re-open what the user just closed.
+let collapsedCats = new Set();
 
 // Categories whose detail lines (SPF mechanisms, DKIM selectors, DMARC tags,
 // raw TXT records) are never truncated — these are the records operators come
 // here to read in full.
 const NO_TRUNCATE_CATS = new Set(['SPF', 'DKIM', 'DMARC', 'TXT']);
 
-function renderReport(report, domain) {
-  activeFilters = new Set(['Pass','Info','Warning','Error','Critical']);
+function renderReport(report, domain, { live = false } = {}) {
   const r = report.results || report.Results || [];
   const counts = { Pass: 0, Info: 0, Warning: 0, Error: 0, Critical: 0 };
   r.forEach(c => counts[c.severity] = (counts[c.severity]||0) + 1);
@@ -645,9 +720,18 @@ function renderReport(report, domain) {
 
   html += '<div class="filter-bar">';
   for (const sev of ['Pass','Info','Warning','Error','Critical']) {
-    html += `<button class="sev-filter active" data-sev="${sev}">${sev} (${counts[sev]||0})</button>`;
+    html += `<button class="sev-filter${activeFilters.has(sev) ? ' active' : ''}" data-sev="${sev}">${sev} (${counts[sev]||0})</button>`;
   }
   html += '</div>';
+
+  // Where the time went. One entry per check (multi-result checks share a duration).
+  const byCheck = new Map();
+  for (const c of r) if (c.durationMs != null && !byCheck.has(c.checkName)) byCheck.set(c.checkName, c.durationMs);
+  const slowest = [...byCheck].filter(([, ms]) => ms >= 1000).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (slowest.length) {
+    html += '<div class="slowest">Slowest' + (live ? ' so far' : '') + ': '
+          + slowest.map(([n, ms]) => `${esc(n)}${durSpan(ms)}`).join(' &middot; ') + '</div>';
+  }
 
   // Severity order for sorting categories by worst result
   const sevOrder = { Critical: 0, Error: 1, Warning: 2, Info: 3, Pass: 4 };
@@ -659,17 +743,20 @@ function renderReport(report, domain) {
 
   for (const [cat, checks] of catEntries) {
     const worst = checks.reduce((w, c) => (sevOrder[c.severity]??4) < (sevOrder[w]??4) ? c.severity : w, 'Pass');
+    const collapsed = collapsedCats.has(cat);
+    const catMax = Math.max(0, ...checks.map(c => c.durationMs ?? 0));
     html += `<div class="category" data-cat="${cat}">`;
-    html += `<div class="category-header" onclick="toggleCat(this)">`;
+    html += `<div class="category-header${collapsed ? ' collapsed' : ''}" onclick="toggleCat(this)">`;
     html += `<span class="arrow">&#9660;</span>`;
     html += `<span class="cat-name">${cat}</span>`;
     html += `<span class="cat-badge badge-${worst}">${worst}</span>`;
-    html += `<span style="color:var(--muted);font-size:0.75rem;margin-left:auto">${checks.length} check${checks.length>1?'s':''}</span>`;
+    const slowestNote = catMax >= 1000 ? ` &middot; slowest ${durSpan(catMax, 'Slowest check in this category')}` : '';
+    html += `<span style="color:var(--muted);font-size:0.75rem;margin-left:auto">${checks.length} check${checks.length>1?'s':''}${slowestNote}</span>`;
     html += '</div>';
-    html += `<div class="checks">`;
+    html += `<div class="checks${collapsed ? ' hidden' : ''}">`;
     for (const c of checks) {
       html += `<div class="check" data-sev="${c.severity}">`;
-      html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span></div>`;
+      html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span>${durSpan(c.durationMs)}</div>`;
       html += `<div class="check-summary">${esc(c.summary)}</div>`;
       // Warnings and errors are the actionable findings — always shown in full,
       // first and never truncated. Informational details are capped, EXCEPT for
@@ -694,7 +781,7 @@ function renderReport(report, domain) {
   }
 
   const hasIssues = (counts.Warning || 0) + (counts.Error || 0) + (counts.Critical || 0) > 0;
-  if (domain) {
+  if (domain && !live) {
     // "All" re-runs every check against fresh data and is always available;
     // the severity-scoped rechecks only appear when there are issues to target.
     html += '<div style="margin-top:1rem;display:flex;gap:0.5rem;align-items:center">';
@@ -724,6 +811,7 @@ function renderReport(report, domain) {
       applyFilters();
     });
   });
+  applyFilters();
 }
 
 function applyFilters() {
@@ -734,6 +822,8 @@ function applyFilters() {
 
 function toggleCat(header) {
   header.classList.toggle('collapsed');
+  const cat = header.parentElement.dataset.cat;
+  if (header.classList.contains('collapsed')) collapsedCats.add(cat); else collapsedCats.delete(cat);
   const checks = header.nextElementSibling;
   checks.classList.toggle('hidden');
 }

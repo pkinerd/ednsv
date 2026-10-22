@@ -18,6 +18,13 @@ sealed record JobDnsStats(
 sealed record JobSmtpStats(
     int ProbesStarted, int ProbesDone, int PortsStarted, int PortsDone);
 
+// A check still unresolved and when it first started. Elapsed is computed at read
+// time from StartedAt, so a pod serving the snapshot from Redis shows a live clock.
+sealed record JobRunningCheck(string Name, DateTime StartedAt);
+
+// A finished check's results, in completion order — what a live view appends.
+sealed record JobFinishedCheck(string Name, double? DurationMs, List<CheckResult> Results);
+
 sealed class JobState
 {
     public string JobId { get; set; } = "";
@@ -25,6 +32,11 @@ sealed class JobState
     public string Status { get; set; } = "running"; // running|completed|failed
     public string? CurrentCheck { get; set; }
     public int CompletedChecks { get; set; }
+    public int TotalChecks { get; set; }
+    // Live progress, present only while running: the final Report carries every
+    // result, so a terminal snapshot does not repeat them.
+    public List<JobRunningCheck>? Running { get; set; }
+    public List<JobFinishedCheck>? Checks { get; set; }
     public int Pass { get; set; }
     public int Info { get; set; }
     public int Warning { get; set; }

@@ -47,6 +47,7 @@ classDiagram
         +List~string~ Details
         +List~string~ Warnings
         +List~string~ Errors
+        +double? DurationMs
         +AdjustForUnreachableHosts(total, unreachable)
     }
 

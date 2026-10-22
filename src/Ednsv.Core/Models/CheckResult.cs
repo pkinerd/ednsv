@@ -55,6 +55,14 @@ public class CheckResult
     public List<string> Errors { get; set; } = new();
 
     /// <summary>
+    /// How long the check that produced this result ran, in milliseconds, stamped by
+    /// <see cref="DomainValidator"/>; every result of a multi-result check carries the
+    /// same figure. A check retried after a timeout carries both attempts, not the wait
+    /// between them. Null on synthesised results (DNS Query Errors) that no check ran.
+    /// </summary>
+    public double? DurationMs { get; set; }
+
+    /// <summary>
     /// If this check would report Pass but some or all hosts were unreachable,
     /// downgrades to Warning. Call this after setting Severity and Summary.
     /// </summary>
