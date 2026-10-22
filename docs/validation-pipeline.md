@@ -66,7 +66,9 @@ flowchart TD
 
 Primes service caches before checks begin, minimizing network latency during the actual check execution. Implemented in `DomainValidator.PrefetchAsync()`.
 
-**Fire-and-forget HTTP** (runs in background throughout the pipeline):
+**Fire-and-forget HTTP** (runs in background throughout the pipeline; skipped entirely
+when HTTP probes are off, so `--no-http` and `--restricted-network` send no HTTPS at all.
+The list comes from `DomainValidator.HttpPrefetchRequests`):
 - `https://mta-sts.{domain}/.well-known/mta-sts.txt` (3 retries, email-critical)
 - `https://{domain}/.well-known/security.txt` (1 retry, informational)
 - `{crtShBaseUrl}?q={domain}&output=json` (1 retry, informational; base URL defaults to `https://crt.sh/`, configurable via the runtime config)
