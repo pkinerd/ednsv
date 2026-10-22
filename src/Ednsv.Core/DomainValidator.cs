@@ -122,6 +122,7 @@ public class DomainValidator
             new NullMxCheck(),
             new MxPriorityDistributionCheck(),
             new MxBackupSecurityCheck(),
+            new MailProviderDetectionCheck(),
             new MailSubdomainSurveyCheck(),
 
             // SPF (remaining — SpfRecordCheck is foundation)

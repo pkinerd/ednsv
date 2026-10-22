@@ -1,6 +1,6 @@
 # Caching Architecture
 
-> For a per-check view — what each of the 87 checks queries, which caches its results
+> For a per-check view — what each of the 88 checks queries, which caches its results
 > land in, and how long each kind of answer is kept — see
 > [cache-behaviour-map.md](cache-behaviour-map.md).
 

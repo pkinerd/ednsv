@@ -10,12 +10,12 @@ flushing, the recheck bypass; this maps it onto the checks.
 
 Each check, the record types or protocol it uses, the cache that holds the result, how
 that result is classified, and the lifetime and reach that follow. Same shape as the DNS
-flow in §2, drawn out for all 87 checks.
+flow in §2, drawn out for all 88 checks.
 
 Edge labels are the record types a check reaches through that cache — including ones it
 gets indirectly through `CheckContext` rather than querying itself.
 
-### Record lookups — 48 checks
+### Record lookups — 49 checks
 
 ```mermaid
 flowchart TD
@@ -39,6 +39,7 @@ flowchart TD
         NMXPrivateIPDetection["MX Private IP Detection"]
         NMXRecords["MX Records"]
         NMXtoIPDetection["MX-to-IP Detection"]
+        NMailProviderDetection["Mail Provider Detection"]
         NMailSubdomainSurvey["Mail Subdomain Survey"]
         NNullMXDuplicates["Null MX / Duplicates"]
     end
@@ -159,6 +160,9 @@ flowchart TD
     NMXRecords -->|"PTR"| NptrCache
     NMXRecords -->|"A, AAAA, MX, PTR"| NqueryCache
     NMXtoIPDetection -->|"MX"| NqueryCache
+    NMailProviderDetection --> NprobeCache
+    NMailProviderDetection -->|"PTR"| NptrCache
+    NMailProviderDetection -->|"A, AAAA, CNAME, MX, TXT"| NqueryCache
     NMailSubdomainSurvey -->|"A, CNAME"| NqueryCache
     NNullMXDuplicates -->|"MX"| NqueryCache
     NMXHostsCoveredbySPF -->|"A, AAAA, MX, TXT"| NqueryCache
@@ -806,7 +810,7 @@ correctly. Comparing the configured resolver against a public one (`dig -x <ip>`
 
 ## 5. The same thing as a table
 
-All 87 checks, for searching and diffing rather than reading. **Record types queried** includes types reached indirectly through
+All 88 checks, for searching and diffing rather than reading. **Record types queried** includes types reached indirectly through
 `CheckContext` — a check reading `ctx.MxHosts` depends on the cached `MX` lookup even
 though it issues no query itself. **Recheck flags** are the `CacheDep` bits a recheck of
 that category bypasses; see *Recheck System* in
@@ -855,6 +859,7 @@ that category bypasses; see *Recheck System* in
 |  | MX Private IP Detection | `A`, `AAAA` | `_queryCache` | `Dns, Smtp, Ptr` |
 |  | MX Records | `A`, `AAAA`, `MX`, `PTR` | `_probeCache`, `_ptrCache`, `_queryCache` | `Dns, Smtp, Ptr` |
 |  | MX-to-IP Detection | `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
+|  | Mail Provider Detection | `A`, `AAAA`, `CNAME`, `MX`, `PTR`, `TXT` | `_probeCache`, `_ptrCache`, `_queryCache` | `Dns, Smtp, Ptr` |
 |  | Mail Subdomain Survey | `A`, `CNAME` | `_queryCache` | `Dns, Smtp, Ptr` |
 |  | Null MX / Duplicates | `MX` | `_queryCache` | `Dns, Smtp, Ptr` |
 | NS | DNS Propagation Consistency | `A`, `MX` | `_getCache`, `_queryCache`, `_serverQueryCache` | `Dns, ServerDns` |

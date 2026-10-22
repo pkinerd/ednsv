@@ -21,7 +21,9 @@ public static class CheckDescriptions
         new("MX Records", new[] { CheckCategory.MX },
             "Verifies MX record configuration including priority distribution, backup parity, " +
             "RFC 5321 violations (IP literals, CNAMEs), null MX (RFC 7505), and private IP usage. " +
-            "MX misconfigurations directly prevent email delivery."),
+            "MX misconfigurations directly prevent email delivery. Also identifies, for information, " +
+            "the receiving provider (e.g. a Proofpoint or Mimecast gateway) and the likely mailbox " +
+            "provider behind it (e.g. Microsoft 365, Google Workspace)."),
 
         new("SPF (Sender Policy Framework)", new[] { CheckCategory.SPF },
             "Validates SPF records, DNS lookup limits (max 10), include depth, record size, macro " +

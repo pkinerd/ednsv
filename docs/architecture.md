@@ -1,6 +1,6 @@
 # System Architecture Overview
 
-EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 87 automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 10.0 and can be run as a CLI tool or a web service.
+EDNSV (Email DNS Validator) is a comprehensive DNS and email infrastructure validation tool that performs 88 automated checks on domains to assess deliverability, security, and compliance. It is built on .NET 10.0 and can be run as a CLI tool or a web service.
 
 ## High-Level Architecture
 
@@ -14,7 +14,7 @@ graph TD
     subgraph "Ednsv.Core"
         DV["DomainValidator<br/><i>Orchestrator</i>"]
 
-        subgraph Checks["Check Modules (14 files, 87 checks)"]
+        subgraph Checks["Check Modules (15 files, 88 checks)"]
             FC["Foundation Checks<br/><i>Sequential, populate shared state</i>"]
             CC["Concurrent Checks<br/><i>Parallel, read-only</i>"]
         end
@@ -85,7 +85,7 @@ ednsv.sln
 │   │   ├── CheckDescriptions.cs       # Built-in check category descriptions
 │   │   ├── Models/
 │   │   │   └── CheckResult.cs         # CheckResult, ValidationReport, enums
-│   │   ├── Checks/                    # Check implementations (87 checks)
+│   │   ├── Checks/                    # Check implementations (88 checks)
 │   │   │   ├── ICheck.cs              # ICheck interface, CheckContext, ValidationOptions, ProbeDefaults
 │   │   │   ├── BasicRecordChecks.cs   # A, AAAA, CNAME
 │   │   │   ├── DelegationChecks.cs    # NS delegation chain, consistency
@@ -93,6 +93,7 @@ ednsv.sln
 │   │   │   ├── DmarcChecks.cs         # DMARC policy, inheritance, reporting
 │   │   │   ├── ExtendedChecks.cs      # CAA, DANE, security.txt, CT, propagation
 │   │   │   ├── HighValueChecks.cs     # MTA-STS, TLS-RPT, BIMI, DNSSEC, extended DNSBL
+│   │   │   ├── MailProviderChecks.cs  # Receiving gateway + likely mailbox provider (info)
 │   │   │   ├── MiscChecks.cs          # Wildcard, TTL, TXT hygiene, SRV, autodiscover
 │   │   │   ├── MxChecks.cs            # MX records, IP detection, null MX
 │   │   │   ├── NsChecks.cs            # NS records, lame delegation, diversity
@@ -142,7 +143,7 @@ ednsv.sln
 | Component | Responsibility |
 |-----------|---------------|
 | **DomainValidator** | Orchestrates the 4-phase validation pipeline (prefetch, foundation, concurrent, deferred retry). Creates CheckContext with shared state and coordinates check execution. |
-| **ICheck implementations** | 87 individual checks organized into 14 files. Each check receives a domain and CheckContext, returning a list of CheckResult objects. |
+| **ICheck implementations** | 88 individual checks organized into 15 files. Each check receives a domain and CheckContext, returning a list of CheckResult objects. |
 | **CheckContext** | Thread-safe shared state populated by foundation checks (MxHosts, NsHosts, SpfRecord, DmarcRecord, etc.) and read by concurrent checks. Also holds per-validation SMTP probe cache and error tracking. |
 | **DnsResolverService** | Executes DNS queries with rate limiting (40 tokens/sec via token bucket, max 50 concurrent), in-memory caching, and unreachable-server tracking with 5-minute time-decay. Routes per-validation errors via an AsyncLocal bag. Supports custom nameservers. |
 | **SmtpProbeService** | Connects to SMTP servers, performs STARTTLS handshake, extracts TLS/certificate details. Supports port probing (587, 465), RCPT verification, and relay testing. |
@@ -179,7 +180,7 @@ ednsv.sln
 
 Foundation checks (AuthoritativeNs, A, AAAA, MX, SPF, DMARC) run **sequentially** because they populate shared state in CheckContext that all other checks depend on. This ordering is required — for example, MX checks need NS resolution to have completed, and SPF/DMARC parsing feeds into dozens of downstream checks.
 
-Concurrent checks (81) run in **parallel** (max 12) because they only **read** from the shared state established by foundation checks. This design maximizes throughput while keeping the shared state model simple and race-free.
+Concurrent checks (82) run in **parallel** (max 12) because they only **read** from the shared state established by foundation checks. This design maximizes throughput while keeping the shared state model simple and race-free.
 
 ### Service Sharing Across Validations
 
