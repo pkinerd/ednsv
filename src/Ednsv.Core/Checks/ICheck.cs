@@ -166,6 +166,19 @@ public class ValidationOptions
     public bool EnableDirectDns { get; set; } = true;
 
     /// <summary>
+    /// Narrows <see cref="EnableDirectDns"/>: when false, the public resolvers
+    /// (8.8.8.8 / 1.1.1.1 / 9.9.9.9, i.e. <see cref="PropagationResolvers"/>) are not
+    /// queried directly, while the authoritative-nameserver checks still run. Many
+    /// networks allow outbound DNS to a zone's own nameservers but block the well-known
+    /// public resolvers to keep clients on the internal one; without this split the only
+    /// way to stop the propagation check timing out there was to give up every
+    /// direct-DNS check. A narrowing flag rather than an independent one, so a caller
+    /// that already turns <see cref="EnableDirectDns"/> off keeps skipping everything.
+    /// The DoH path (<see cref="EnableDoh"/>) is HTTPS and unaffected.
+    /// </summary>
+    public bool EnablePublicResolvers { get; set; } = true;
+
+    /// <summary>
     /// When true, the public-resolver propagation check (Google + Cloudflare)
     /// uses DNS-over-HTTPS instead of raw UDP/53. Routes through HTTPS_PROXY
     /// when configured. The other direct-DNS checks have no DoH equivalent.

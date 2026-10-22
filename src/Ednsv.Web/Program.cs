@@ -146,6 +146,7 @@ var defaultEnableSmtpProbes = builder.Configuration.GetValue<bool>("EnableSmtpPr
 var defaultEnableHttpProbes = builder.Configuration.GetValue<bool>("EnableHttpProbes", true);
 var defaultEnableDnsbl      = builder.Configuration.GetValue<bool>("EnableDnsbl",      true);
 var defaultEnableDirectDns  = builder.Configuration.GetValue<bool>("EnableDirectDns",  true);
+var defaultEnablePublicResolvers = builder.Configuration.GetValue<bool>("EnablePublicResolvers", true);
 var defaultEnableDoh        = builder.Configuration.GetValue<bool>("EnableDoh",        false);
 
 // Auth: env var EDNSV_AUTH_TOKEN_HASH wins, then config "AuthTokenHash", else "none" (disabled).
@@ -226,6 +227,7 @@ var seedConfig = new AppConfig
     EnableHttpProbes = defaultEnableHttpProbes,
     EnableDnsbl      = defaultEnableDnsbl,
     EnableDirectDns  = defaultEnableDirectDns,
+    EnablePublicResolvers = defaultEnablePublicResolvers,
     EnableDoh        = defaultEnableDoh,
     DefaultDkimSelectors = !string.IsNullOrEmpty(dkimSelectorsStr)
         ? dkimSelectorsStr.Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -258,6 +260,7 @@ ValidationOptions BuildDefaultOptions()
         EnableHttpProbes        = cfg.EnableHttpProbes,
         EnableDnsbl             = cfg.EnableDnsbl,
         EnableDirectDns         = cfg.EnableDirectDns,
+        EnablePublicResolvers   = cfg.EnablePublicResolvers,
         EnableDoh               = cfg.EnableDoh,
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
@@ -981,9 +984,9 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
 
     var jobId = tracker.StartValidation(domain, dnsSvc, smtpSvc, httpSvc, options, cache, logger, recheckSeverity, enableTrace, traceMasker, username, recheckAll);
     logger.LogInformation(
-        "Validation requested: job={JobId} domain={Domain} user={User} smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} doh={Doh} recheck={Recheck} dkimSelectors={DkimCount}",
+        "Validation requested: job={JobId} domain={Domain} user={User} smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} publicResolvers={PublicResolvers} doh={Doh} recheck={Recheck} dkimSelectors={DkimCount}",
         jobId, Disp(domain), Disp(username), options.EnableSmtpProbes, options.EnableHttpProbes,
-        options.EnableDnsbl, options.EnableDirectDns, options.EnableDoh,
+        options.EnableDnsbl, options.EnableDirectDns, options.EnablePublicResolvers, options.EnableDoh,
         recheckAll ? "all" : (recheckSeverity?.ToString() ?? "none"), options.AdditionalDkimSelectors.Count);
     return Results.Accepted($"/api/status/{jobId}", new { jobId, domain, status = "running" });
 })
@@ -1060,6 +1063,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, int? since, ValidationTracker t
 //   ?noHttp=true                        skip HTTP/HTTPS probes (--no-http)
 //   ?noDnsbl=true                       skip DNSBL queries (--no-dnsbl)
 //   ?noDirectDns=true                   skip checks that talk directly to nameservers / public resolvers
+//   ?noPublicResolvers=true             skip only the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9)
 //   ?noDoh=true                         force the propagation check to use raw UDP/53 even when DoH is enabled
 //   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl + noDirectDns
 //   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
@@ -1116,6 +1120,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableHttpProbes = defaults.EnableHttpProbes && !restricted && !ParseBool("noHttp"),
         EnableDnsbl      = defaults.EnableDnsbl      && !restricted && !ParseBool("noDnsbl"),
         EnableDirectDns  = defaults.EnableDirectDns  && !restricted && !ParseBool("noDirectDns"),
+        EnablePublicResolvers = defaults.EnablePublicResolvers && !ParseBool("noPublicResolvers"),
         EnableDoh        = defaults.EnableDoh        && !ParseBool("noDoh"),
         EnableAxfr         = ParseBool("axfr"),
         EnableCatchAll     = ParseBool("catchAll"),
@@ -1151,9 +1156,9 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
 
     // Scope already carries the masked Username / Domain for this request.
     logger.LogInformation(
-        "Validation requested: domain={Domain} user={User} endpoint=sync smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} doh={Doh} dkimSelectors={DkimCount}",
+        "Validation requested: domain={Domain} user={User} endpoint=sync smtp={Smtp} http={Http} dnsbl={Dnsbl} directDns={DirectDns} publicResolvers={PublicResolvers} doh={Doh} dkimSelectors={DkimCount}",
         displayDomain, displayUser, options.EnableSmtpProbes, options.EnableHttpProbes,
-        options.EnableDnsbl, options.EnableDirectDns, options.EnableDoh, options.AdditionalDkimSelectors.Count);
+        options.EnableDnsbl, options.EnableDirectDns, options.EnablePublicResolvers, options.EnableDoh, options.AdditionalDkimSelectors.Count);
 
     try
     {
@@ -1203,6 +1208,9 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
         enableHttpProbes = cfg.EnableHttpProbes,
         enableDnsbl      = cfg.EnableDnsbl,
         enableDirectDns  = cfg.EnableDirectDns,
+        enablePublicResolvers = cfg.EnablePublicResolvers,
+        // The validator page has always read this to seed its DoH box; it was never sent.
+        enableDoh        = cfg.EnableDoh,
         dkimSelectors    = cfg.DefaultDkimSelectors.Count > 0
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),

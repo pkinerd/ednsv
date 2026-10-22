@@ -90,6 +90,9 @@
   .options-body label { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.82rem; cursor: pointer; }
   .options-body label input[type="checkbox"] { margin-top: 0.15rem; accent-color: var(--accent); }
   .options-body label .desc { display: block; color: var(--muted); font-size: 0.75rem; margin-top: 0.1rem; }
+  /* A sub-option that only means something while its parent is on. */
+  .options-body label.sub { margin-left: 1.6rem; }
+  .options-body label.sub.off { opacity: 0.45; cursor: not-allowed; }
   .options-body .field { display: flex; flex-direction: column; gap: 0.25rem; }
   .options-body .field span { font-size: 0.82rem; }
   .options-body .field input[type="text"] { padding: 0.4rem 0.6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: inherit; font-size: 0.82rem; outline: none; }
@@ -168,6 +171,10 @@
         <input type="checkbox" id="optDirectDns" checked>
         <span>Direct DNS / external resolvers<span class="desc">Allow checks to talk directly to authoritative nameservers and public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9). Disable when outbound raw DNS is blocked but the configured resolver works — propagation, lame delegation, SOA serial, glue records, parent delegation and open-recursive-resolver checks are skipped. (AXFR is gated by this too, but is never enabled from this page.)</span></span>
       </label>
+      <label class="sub" id="optPublicResolversLabel">
+        <input type="checkbox" id="optPublicResolvers" checked>
+        <span>&hellip;including public resolvers<span class="desc">Query 8.8.8.8 / 1.1.1.1 / 9.9.9.9 directly for the propagation check. Untick on networks that allow DNS to a domain's own nameservers but block the well-known public resolvers: the authoritative-nameserver checks keep running and only propagation is skipped (or runs over DoH, below).</span></span>
+      </label>
       <label>
         <input type="checkbox" id="optDoh">
         <span>DNS-over-HTTPS for propagation check<span class="desc">Run the propagation check against Google + Cloudflare's JSON DoH endpoints over HTTPS instead of raw UDP/53. Works through HTTPS_PROXY when set. Other direct-DNS checks have no DoH equivalent.</span></span>
@@ -191,7 +198,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results'), runningEl = $('#running');
-const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
+const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optPublicResolvers = $('#optPublicResolvers'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
 let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
 let pollTimer = null;
 let lastDomain = '';
@@ -223,6 +230,7 @@ function loadUserOptions() {
     if (typeof o.enableHttpProbes === 'boolean') { optHttp.checked = o.enableHttpProbes;       userOverrideKeys.add('http'); }
     if (typeof o.enableDnsbl === 'boolean')      { optDnsbl.checked = o.enableDnsbl;           userOverrideKeys.add('dnsbl'); }
     if (typeof o.enableDirectDns === 'boolean')  { optDirectDns.checked = o.enableDirectDns;   userOverrideKeys.add('directDns'); }
+    if (typeof o.enablePublicResolvers === 'boolean') { optPublicResolvers.checked = o.enablePublicResolvers; userOverrideKeys.add('publicResolvers'); }
     if (typeof o.enableDoh === 'boolean')        { optDoh.checked = o.enableDoh;               userOverrideKeys.add('doh'); }
     if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
     if (Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
@@ -237,6 +245,7 @@ function saveUserOptions() {
     enableHttpProbes:   optHttp.checked,
     enableDnsbl:        optDnsbl.checked,
     enableDirectDns:    optDirectDns.checked,
+    enablePublicResolvers: optPublicResolvers.checked,
     enableDoh:          optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
     dkimSelectors:      parseSelectors(optDkim.value)
@@ -249,6 +258,7 @@ function currentOptions() {
     enableHttpProbes: optHttp.checked,
     enableDnsbl:      optDnsbl.checked,
     enableDirectDns:  optDirectDns.checked,
+    enablePublicResolvers: optPublicResolvers.checked,
     enableDoh:        optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
     additionalDkimSelectors: parseSelectors(optDkim.value)
@@ -302,6 +312,7 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (!userOverrideKeys.has('http')      && typeof d.enableHttpProbes === 'boolean') optHttp.checked      = d.enableHttpProbes;
   if (!userOverrideKeys.has('dnsbl')     && typeof d.enableDnsbl      === 'boolean') optDnsbl.checked     = d.enableDnsbl;
   if (!userOverrideKeys.has('directDns') && typeof d.enableDirectDns  === 'boolean') optDirectDns.checked = d.enableDirectDns;
+  if (!userOverrideKeys.has('publicResolvers') && typeof d.enablePublicResolvers === 'boolean') optPublicResolvers.checked = d.enablePublicResolvers;
   if (!userOverrideKeys.has('doh')       && typeof d.enableDoh        === 'boolean') optDoh.checked       = d.enableDoh;
   if (d.perDomainDkimSelectors && typeof d.perDomainDkimSelectors === 'object')
     perDomainDkim = d.perDomainDkimSelectors;
@@ -310,9 +321,19 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
     optDkim.value = d.dkimSelectors.join(', ');
   updateDomainHint();
+  syncPublicResolvers();
 }).catch(() => {});
 
-[optSmtp, optHttp, optDnsbl, optDirectDns, optDoh].forEach(el => el.addEventListener('change', saveUserOptions));
+// Public resolvers narrow Direct DNS: with the parent off the box has no effect, so
+// it is shown disabled rather than left looking like a live choice.
+function syncPublicResolvers() {
+  optPublicResolvers.disabled = !optDirectDns.checked;
+  $('#optPublicResolversLabel').classList.toggle('off', !optDirectDns.checked);
+}
+optDirectDns.addEventListener('change', syncPublicResolvers);
+syncPublicResolvers();
+
+[optSmtp, optHttp, optDnsbl, optDirectDns, optPublicResolvers, optDoh].forEach(el => el.addEventListener('change', saveUserOptions));
 optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);

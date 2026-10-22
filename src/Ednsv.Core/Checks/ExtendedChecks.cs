@@ -178,6 +178,8 @@ public class DnsPropagationCheck : ICheck
         var useDoh = ctx.Options.EnableDoh;
         if (!useDoh && !ctx.Options.EnableDirectDns)
             return CheckContext.SkippedResult(this, "Skipped: direct DNS to public resolvers disabled (and DoH off)");
+        if (!useDoh && !ctx.Options.EnablePublicResolvers)
+            return CheckContext.SkippedResult(this, "Skipped: public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) disabled (and DoH off)");
 
         var publicResolvers = ProbeList.Labeled(ctx.Options.PropagationResolvers, ProbeDefaults.PropagationResolvers);
         var dohResolvers = ProbeList.Labeled(ctx.Options.PropagationDohResolvers, ProbeDefaults.PropagationDohResolvers);
@@ -186,6 +188,10 @@ public class DnsPropagationCheck : ICheck
 
         var resolverResults = new Dictionary<string, List<string>>();
         var mxResults = new Dictionary<string, List<string>>();
+        // Set when some resolvers did not answer. Reported as a warning of its own, but
+        // it says nothing about consistency, so it must not turn the summary into
+        // "inconsistency detected" when every resolver that answered agreed.
+        string? partialReach = null;
 
         if (useDoh)
         {
@@ -194,10 +200,9 @@ public class DnsPropagationCheck : ICheck
             {
                 var (aRecords, aOk) = await DohQueryAsync(baseUrl, domain, "A", ctx);
                 var (mxAnswers, mxOk) = await DohQueryAsync(baseUrl, domain, "MX", ctx);
-                if (aOk || mxOk) dohReached++;
-                resolverResults[name] = aRecords.OrderBy(x => x).ToList();
+                var aList = aRecords.OrderBy(x => x).ToList();
                 // MX JSON data is "<preference> <exchange>." — normalise to "pref:host".
-                mxResults[name] = mxAnswers
+                var mxList = mxAnswers
                     .Select(d =>
                     {
                         var parts = d.Split(' ', 2);
@@ -206,8 +211,17 @@ public class DnsPropagationCheck : ICheck
                             : d.TrimEnd('.');
                     })
                     .OrderBy(x => x).ToList();
-                var status = aOk || mxOk ? "" : " (unreachable)";
-                result.Details.Add($"{name}{status}: A=[{string.Join(", ", resolverResults[name])}] MX=[{string.Join(", ", mxResults[name])}]");
+                if (aOk || mxOk)
+                {
+                    dohReached++;
+                    resolverResults[name] = aList;
+                    mxResults[name] = mxList;
+                    result.Details.Add($"{name}: A=[{string.Join(", ", aList)}] MX=[{string.Join(", ", mxList)}]");
+                }
+                else
+                {
+                    result.Details.Add($"{name}: unreachable");
+                }
             }
             if (dohReached == 0)
             {
@@ -217,26 +231,80 @@ public class DnsPropagationCheck : ICheck
                 return new List<CheckResult> { result };
             }
             if (dohReached < dohResolvers.Count)
-            {
-                result.Warnings.Add($"Only {dohReached}/{dohResolvers.Count} DoH endpoints responded — propagation comparison is partial");
-            }
+                partialReach = $"Only {dohReached}/{dohResolvers.Count} DoH endpoints responded — propagation comparison is partial";
         }
         else
         {
-            foreach (var (ip, name) in publicResolvers)
+            // Every resolver and both types at once, each attempt capped short. This ran
+            // one query at a time on the tuned default (15s, two retries), so a network
+            // that blocks the public resolvers cost ~45s per query and several minutes in
+            // all — and the check never looks at its cancellation token, so the 45s check
+            // timeout could not cut it short. Public resolvers are anycast and answer in
+            // milliseconds when reachable; a few seconds is ample.
+            var probes = publicResolvers.Select(r =>
             {
-                var addr = IPAddress.Parse(ip);
+                var addr = IPAddress.Parse(r.value);
+                return (r.value, r.label,
+                    a: ctx.Dns.QueryServerAsync(addr, domain, QueryType.A, PublicResolverProbeTimeout),
+                    mx: ctx.Dns.QueryServerAsync(addr, domain, QueryType.MX, PublicResolverProbeTimeout));
+            }).ToList();
+            await Task.WhenAll(probes.SelectMany(p => new[] { p.a, p.mx }));
 
-                var aResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.A);
+            int reached = 0;
+            foreach (var (ip, name, aTask, mxTask) in probes)
+            {
+                var aResp = aTask.Result;
+                var mxResp = mxTask.Result;
+                // An empty answer from a resolver that failed is not an empty answer from
+                // the zone. Treating it as one reported three blocked resolvers as
+                // "consistent" — A=[] MX=[] agreeing with A=[] MX=[] — and passed.
+                if (!DnsResolverService.IsAnswer(aResp) && !DnsResolverService.IsAnswer(mxResp))
+                {
+                    result.Details.Add($"{name} ({ip}): no response");
+                    continue;
+                }
+                reached++;
                 var aRecords = aResp.Answers.ARecords().Select(a => a.Address.ToString()).OrderBy(x => x).ToList();
-                resolverResults[name] = aRecords;
-
-                var mxResp = await ctx.Dns.QueryServerAsync(addr, domain, QueryType.MX);
                 var mxRecords = mxResp.Answers.MxRecords().Select(m => $"{m.Preference}:{m.Exchange.Value.TrimEnd('.')}").OrderBy(x => x).ToList();
+                resolverResults[name] = aRecords;
                 mxResults[name] = mxRecords;
-
                 result.Details.Add($"{name} ({ip}): A=[{string.Join(", ", aRecords)}] MX=[{string.Join(", ", mxRecords)}]");
             }
+
+            if (reached == 0)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "No public resolver reachable over UDP/53 — propagation not checked";
+                result.Warnings.Add("None of the public resolvers answered. If outbound DNS to them is blocked here, "
+                    + "turn off the public-resolver option (CLI: --no-public-resolvers) or use DoH instead.");
+                return new List<CheckResult> { result };
+            }
+            if (reached < publicResolvers.Count)
+                partialReach = $"Only {reached}/{publicResolvers.Count} public resolvers responded — propagation comparison is partial";
+        }
+
+        // Every resolver that answered agrees there is nothing — which is agreement, but
+        // not evidence of propagation. Judge it against what the configured resolver saw.
+        // A firewall that intercepts DNS to the public resolvers (rather than dropping it)
+        // forges exactly this: a prompt NXDOMAIN from all three for a domain that exists.
+        if (resolverResults.Values.All(v => v.Count == 0) && mxResults.Values.All(v => v.Count == 0))
+        {
+            var configuredSees = ctx.MxHosts.Any(h => !string.IsNullOrEmpty(h)) || ctx.DomainARecords.Any();
+            if (configuredSees)
+            {
+                result.Severity = CheckSeverity.Warning;
+                result.Summary = "Public resolvers return no A or MX records, but the configured resolver does";
+                result.Warnings.Add("Every public resolver that answered said the domain has no A or MX records. If the "
+                    + "domain is published, something on this network is answering in their place (DNS interception), "
+                    + "or the zone is not yet visible publicly.");
+            }
+            else
+            {
+                result.Severity = CheckSeverity.Info;
+                result.Summary = "No A or MX records from any resolver — nothing to compare";
+            }
+            if (partialReach != null) result.Warnings.Add(partialReach);
+            return new List<CheckResult> { result };
         }
 
         // Compare all resolver pairs (not just against the first)
@@ -263,14 +331,17 @@ public class DnsPropagationCheck : ICheck
         if (!mxConsistent)
             result.Warnings.Add("MX record answers differ across resolvers - propagation may be in progress");
 
-        bool hasWarnings = result.Warnings.Any();
-        result.Severity = hasWarnings ? CheckSeverity.Warning : CheckSeverity.Pass;
-        result.Summary = hasWarnings ?
-            "DNS propagation inconsistency detected" :
-            $"DNS answers consistent across resolvers ({(useDoh ? "DoH" : "UDP/53")})";
+        bool inconsistent = result.Warnings.Any();
+        if (partialReach != null) result.Warnings.Add(partialReach);
+        result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
+        result.Summary = inconsistent
+            ? "DNS propagation inconsistency detected"
+            : $"DNS answers consistent across {(partialReach != null ? "the reachable " : "")}resolvers ({(useDoh ? "DoH" : "UDP/53")})";
 
         return new List<CheckResult> { result };
     }
+
+    private static readonly TimeSpan PublicResolverProbeTimeout = TimeSpan.FromSeconds(3);
 
     /// <summary>
     /// DoH JSON query (Cloudflare/Google JSON variant — distinct from RFC 8484

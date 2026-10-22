@@ -34,6 +34,15 @@ public sealed class AppConfig
     public bool EnableDirectDns { get; set; } = true;
 
     /// <summary>
+    /// Narrows <see cref="EnableDirectDns"/> to the authoritative nameservers: when
+    /// false the public resolvers are not queried directly. See
+    /// <see cref="Checks.ValidationOptions.EnablePublicResolvers"/>. Defaults true, so a
+    /// config.json written before this existed keeps its behaviour.
+    /// </summary>
+    [JsonPropertyName("enablePublicResolvers")]
+    public bool EnablePublicResolvers { get; set; } = true;
+
+    /// <summary>
     /// Enable DNS-over-HTTPS for the public-resolver propagation check
     /// (8.8.8.8 / 1.1.1.1). When set, that check uses HTTPS to the
     /// providers' JSON DoH endpoints instead of raw UDP/53, which routes
@@ -895,6 +904,7 @@ public sealed class ConfigService
         EnableHttpProbes = c.EnableHttpProbes,
         EnableDnsbl = c.EnableDnsbl,
         EnableDirectDns = c.EnableDirectDns,
+        EnablePublicResolvers = c.EnablePublicResolvers,
         EnableDoh = c.EnableDoh,
         DefaultDkimSelectors = new List<string>(c.DefaultDkimSelectors),
         DkimSelectors = new Dictionary<string, List<string>>(

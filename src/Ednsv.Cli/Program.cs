@@ -81,6 +81,7 @@ var noSmtpOption = new Option<bool>("--no-smtp") { Description = "Skip all SMTP 
 var noHttpOption = new Option<bool>("--no-http") { Description = "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked" };
 var noDnsblOption = new Option<bool>("--no-dnsbl") { Description = "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver" };
 var noDirectDnsOption = new Option<bool>("--no-direct-dns") { Description = "Skip checks that bypass the configured resolver to query specific authoritative nameservers or public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. Use in environments where outbound raw UDP/TCP 53 to internet IPs is blocked" };
+var noPublicResolversOption = new Option<bool>("--no-public-resolvers") { Description = "Don't query the public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9) directly, but keep the authoritative-nameserver checks. For networks that allow DNS to a zone's own nameservers but block the well-known public resolvers. Skips the propagation check unless --doh is set" };
 var dohOption = new Option<bool>("--doh") { Description = "Run the propagation check against Google + Cloudflare's JSON DNS-over-HTTPS endpoints instead of raw UDP/53. Routes through HTTPS_PROXY when set. Other direct-DNS checks have no DoH equivalent" };
 var restrictedNetworkOption = new Option<bool>("--restricted-network") { Description = "Convenience preset: equivalent to --no-smtp --no-http --no-dnsbl --no-direct-dns. Run only DNS-based checks against your configured resolver" };
 var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDescriptions.GetHelpSummary())
@@ -114,6 +115,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     noHttpOption,
     noDnsblOption,
     noDirectDnsOption,
+    noPublicResolversOption,
     dohOption,
     restrictedNetworkOption
 };
@@ -244,6 +246,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
     var noHttp = restricted || parseResult.GetValue(noHttpOption);
     var noDnsbl = restricted || parseResult.GetValue(noDnsblOption);
     var noDirectDns = restricted || parseResult.GetValue(noDirectDnsOption);
+    var noPublicResolvers = parseResult.GetValue(noPublicResolversOption);
     var doh = parseResult.GetValue(dohOption);
     if (restricted)
         Console.Error.WriteLine("[--restricted-network] SMTP, HTTP/HTTPS, DNSBL, and direct-DNS checks are disabled.");
@@ -261,6 +264,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         EnableHttpProbes = !noHttp,
         EnableDnsbl = !noDnsbl,
         EnableDirectDns = !noDirectDns,
+        EnablePublicResolvers = !noPublicResolvers,
         EnableDoh = doh
     };
 

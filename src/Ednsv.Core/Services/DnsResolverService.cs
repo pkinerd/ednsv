@@ -486,7 +486,16 @@ public class DnsResolverService
     }
 
 
-    public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type)
+    /// <param name="timeout">
+    /// Per-attempt timeout for this query, with a single retry, in place of the tuned
+    /// default (15s and two retries, ~45s for a server that never answers). For probes
+    /// of servers that either answer in milliseconds or are blocked outright — the
+    /// public resolvers — where the default turns one firewall into minutes of waiting.
+    /// The cache key does not include it: an answer is the same answer however long
+    /// one was prepared to wait for it.
+    /// </param>
+    public async Task<IDnsQueryResponse> QueryServerAsync(IPAddress server, string domain, QueryType type,
+        TimeSpan? timeout = null)
     {
         var serverStr = server.ToString();
         var cacheKey = $"sq:{serverStr}:{domain.ToLowerInvariant()}:{type}";
@@ -515,7 +524,10 @@ public class DnsResolverService
             try
             {
                 var client = GetServerClient(server);
-                var result = await RateLimitedAsync(() => client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
+                var result = await RateLimitedAsync(() => timeout is { } t
+                    ? client.QueryAsync(new DnsQuestion(domain, type), new DnsQueryAndServerOptions(server)
+                        { Timeout = t, Retries = 1, UseCache = false, ThrowDnsErrors = false })
+                    : client.QueryAsync(domain, type), $"SERVER {server} {type} {domain}");
                 Interlocked.Increment(ref _responsesReceived);
                 if (!result.HasError)
                 {
@@ -893,7 +905,7 @@ public class DnsResolverService
     /// full <c>CacheTtlHours</c> — one failed lookup recorded for hours, on disk and
     /// shared with every peer, and indistinguishable from "this does not exist".</para>
     /// </summary>
-    private static bool IsAnswer(IDnsQueryResponse response)
+    public static bool IsAnswer(IDnsQueryResponse response)
     {
         if (ReferenceEquals(response, EmptyResponse.Instance)) return false;
 
