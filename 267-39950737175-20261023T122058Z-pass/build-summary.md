@@ -2,18 +2,16 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #217 (attempt 1) |
-| **Run ID** | 30197028334 |
+| **Run** | #267 (attempt 1) |
+| **Run ID** | 39950737175 |
 | **Result** | pass |
 | **Build & Unit Tests** | success |
 | **Integration Tests** | success |
 | **Docker** | success |
-| **Commit** | 1714982d68da3266efd68557acb973e589100a30 |
-| **Ref** | refs/pull/28/merge |
-| **Event** | pull_request |
+| **Commit** | 37d7a338810ab116e1cfa05f36b499ee3a78fcc2 |
+| **Ref** | refs/heads/claude/selector-fields-follow-domain |
+| **Event** | push |
 | **Actor** | pkinerd |
-| **PR** | #28: Fix unguarded concurrent file access in config, auth and disk cache |
-| **Branch** | claude/redis-dependency-removal-213elh |
 
 ## Artifacts
 ```
@@ -28,8 +26,8 @@ test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
 test-reports/google.com.json
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T094851827Z.64c67518.jsonl
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T094904420Z.cdcc2fea.jsonl
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T094921660Z.47140a56.jsonl
+test-reports/integration-cache/runnervm8k3b6/cache.20261023T121634174Z.c85eae3c.jsonl
+test-reports/integration-cache/runnervm8k3b6/cache.20261023T121647403Z.e7357236.jsonl
+test-reports/integration-cache/runnervm8k3b6/cache.20261023T121705657Z.c5f5328b.jsonl
 test-reports/multi-domain.txt
 ```
