@@ -287,11 +287,15 @@ function loadUserOptions() {
     const pub = typeof o.enablePublicResolvers === 'boolean' ? o.enablePublicResolvers : o.enableDirectDns;
     if (typeof pub === 'boolean') { optPublicResolvers.checked = pub; userOverrideKeys.add('publicResolvers'); }
     if (typeof o.enableDoh === 'boolean')        { optDoh.checked = o.enableDoh;               userOverrideKeys.add('doh'); }
-    if (typeof o.bimiSelector === 'string' && o.bimiSelector.trim()) {
+    // Selector lists count as the user's edits only when this page saved them. Older
+    // pages saved whatever the field held — the pre-filled defaults, a value typed
+    // once to try something — and restored as an edit, such a list pins the field and
+    // stops it following the domain, though the user never chose it here.
+    if (o.selectorEdits === 2 && typeof o.bimiSelector === 'string' && o.bimiSelector.trim()) {
       optBimiSelector.value = o.bimiSelector;
       bimiUserCustomized = true;
     }
-    if (Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
+    if (o.selectorEdits === 2 && Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
       optDkim.value = o.dkimSelectors.join(', ');
       dkimUserCustomized = true;
     }
@@ -308,7 +312,8 @@ function saveUserOptions() {
     dkimSelectors:      dkimUserCustomized ? parseSelectors(optDkim.value) : [],
     // Only a list the user typed is remembered: saving the pre-filled defaults would
     // pin this browser to them after the server's defaults change.
-    bimiSelector:       bimiUserCustomized ? optBimiSelector.value.trim() : ''
+    bimiSelector:       bimiUserCustomized ? optBimiSelector.value.trim() : '',
+    selectorEdits:      2
   };
   try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
 }
@@ -405,6 +410,9 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
     defaultBimi = d.bimiSelectors;
   if (Array.isArray(d.knownDomains))
     knownDomains = d.knownDomains;
+  // The domain box has autofocus, so its list is usually open — and was rendered
+  // before these configured domains arrived. Without this it stays empty.
+  if (combo.classList.contains('open')) renderSuggestions();
   if (Array.isArray(d.dkimSelectors))
     defaultDkim = d.dkimSelectors;
   syncSelectorFields();
