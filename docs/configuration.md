@@ -500,8 +500,11 @@ domain without one, a list given with the request (the validator page's fields,
 `additionalDkimSelectors` / `bimiSelector`) is used; failing that, the defaults. The
 validator page pre-fills both fields with the defaults, so a per-domain entry has to
 outrank them. To check a request's list even where a per-domain entry exists, set
-`forceDkimSelectors` / `forceBimiSelectors` (the page's "Force these selectors"
-box sets both). Every BIMI result names the list it used and where it came from.
+`forceDkimSelectors` / `forceBimiSelectors`. The validator page fills both fields
+with the list the domain will get — its own entry, else the defaults — as the domain
+is typed or picked; an edited field stays as edited, with a button to take the
+domain's list instead, and is sent forced. Every BIMI result names the list it used
+and where it came from.
 
 | JSON field             | Meaning |
 |------------------------|---------|
