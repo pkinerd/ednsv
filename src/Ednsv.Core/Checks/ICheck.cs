@@ -225,11 +225,19 @@ public class ValidationOptions
     public List<string> VmcIssuers { get; set; } = new();
     /// <summary>
     /// BIMI selectors to check for this request, comma- or space-separated; each is
-    /// looked up as &lt;selector&gt;._bimi.&lt;domain&gt; and reported separately. Set, it
-    /// wins over <see cref="PerDomainBimiSelectors"/> and <see cref="DefaultBimiSelectors"/>;
-    /// blank defers to them. Resolved and validated by <see cref="BimiCheck.Selectors"/>.
+    /// looked up as &lt;selector&gt;._bimi.&lt;domain&gt; and reported separately. Like
+    /// <see cref="AdditionalDkimSelectors"/>: used when the domain has no entry in
+    /// <see cref="PerDomainBimiSelectors"/> (or <see cref="ForceBimiSelectors"/> is set),
+    /// in place of <see cref="DefaultBimiSelectors"/>; blank defers to them. Resolved and
+    /// validated by <see cref="BimiCheck.Selectors"/>.
     /// </summary>
     public string? BimiSelector { get; set; }
+
+    /// <summary>
+    /// When true, <see cref="BimiSelector"/> overrides any per-domain BIMI config.
+    /// When false (default), per-domain config wins — as with <see cref="ForceDkimSelectors"/>.
+    /// </summary>
+    public bool ForceBimiSelectors { get; set; } = false;
 
     /// <summary>Per-domain BIMI selectors keyed by lowercase bare domain — the same
     /// shape and precedence as <see cref="PerDomainDkimSelectors"/>.</summary>

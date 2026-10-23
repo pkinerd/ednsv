@@ -225,14 +225,14 @@
         <span>DKIM selectors<span class="desc">Comma- or space-separated list of selectors to probe. Pre-filled with the server's default list. <span id="domHint" style="color:var(--accent);"></span></span></span>
         <input type="text" id="optDkimSelectors" placeholder="loading defaults..." autocomplete="off">
       </div>
+      <div class="field">
+        <span>BIMI selectors<span class="desc">Comma-separated; each is checked as &lt;selector&gt;._bimi.&lt;domain&gt; and reported separately. Pre-filled with the server's default list (normally just <code>default</code>, the one receivers use when a message names none). <span id="bimiHint" style="color:var(--accent);"></span></span></span>
+        <input type="text" id="optBimiSelector" placeholder="loading defaults..." autocomplete="off" spellcheck="false">
+      </div>
       <label>
         <input type="checkbox" id="optForceDkim">
-        <span>Force these selectors for every domain<span class="desc">By default, when the server has a per-domain DKIM list configured for the domain you query, that list is used instead of the field above. Tick this to override the per-domain config and check exactly the selectors above.</span></span>
+        <span>Force these selectors for every domain<span class="desc">By default, when the server has a per-domain DKIM or BIMI list configured for the domain you query, that list is used instead of the fields above. Tick this to override the per-domain config and check exactly the selectors in the DKIM and BIMI fields.</span></span>
       </label>
-      <div class="field">
-        <span>BIMI selectors<span class="desc">Checks &lt;selector&gt;._bimi.&lt;domain&gt; for each, comma-separated, reported separately. Leave blank to use the domain's configured selectors, or the server's defaults (normally just <code>default</code>, the one receivers use when a message names none). <span id="bimiHint" style="color:var(--accent);"></span></span></span>
-        <input type="text" id="optBimiSelector" placeholder="default" autocomplete="off" spellcheck="false">
-      </div>
     </div>
   </section>
 
@@ -265,6 +265,7 @@ function parseSelectors(s) {
   return (s || '').split(/[\s,]+/).map(x => x.trim()).filter(x => x.length > 0);
 }
 let dkimUserCustomized = false;  // true once the user edits the field or had a saved value
+let bimiUserCustomized = false;  // likewise for the BIMI field
 // Keys that came from localStorage on this page load — server defaults from
 // /api/defaults override only the keys NOT in this set, so a fresh user/session
 // inherits the admin config rather than the optimistic HTML "checked" defaults.
@@ -284,7 +285,10 @@ function loadUserOptions() {
     if (typeof pub === 'boolean') { optPublicResolvers.checked = pub; userOverrideKeys.add('publicResolvers'); }
     if (typeof o.enableDoh === 'boolean')        { optDoh.checked = o.enableDoh;               userOverrideKeys.add('doh'); }
     if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
-    if (typeof o.bimiSelector === 'string') optBimiSelector.value = o.bimiSelector;
+    if (typeof o.bimiSelector === 'string' && o.bimiSelector.trim()) {
+      optBimiSelector.value = o.bimiSelector;
+      bimiUserCustomized = true;
+    }
     if (Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
       optDkim.value = o.dkimSelectors.join(', ');
       dkimUserCustomized = true;
@@ -301,7 +305,9 @@ function saveUserOptions() {
     enableDoh:          optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
     dkimSelectors:      parseSelectors(optDkim.value),
-    bimiSelector:       optBimiSelector.value.trim()
+    // Only a list the user typed is remembered: saving the pre-filled defaults would
+    // pin this browser to them after the server's defaults change.
+    bimiSelector:       bimiUserCustomized ? optBimiSelector.value.trim() : ''
   };
   try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
 }
@@ -315,6 +321,7 @@ function currentOptions() {
     enableDoh:        optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
     additionalDkimSelectors: parseSelectors(optDkim.value),
+    forceBimiSelectors: optForceDkim.checked,
     bimiSelector: optBimiSelector.value.trim() || null
   };
 }
@@ -326,19 +333,19 @@ function updateDomainHint() {
   if (dom && perDomainDkim[dom]) {
     const list = perDomainDkim[dom].join(', ');
     hint.textContent = optForceDkim.checked
-      ? ` (per-domain config exists for ${dom} — overridden by "Force"; will probe: ${list})`
+      ? ` (per-domain config for ${dom}, ${list}, overridden by "Force" — will probe the selectors above)`
       : ` (per-domain config will be used for ${dom}: ${list})`;
   } else {
     hint.textContent = '';
   }
-  // BIMI: what a blank field will check for this domain.
+  // BIMI follows the same rule: a per-domain list beats the field unless forced.
   const bimiHint = document.getElementById('bimiHint');
   if (bimiHint) {
-    const typed = optBimiSelector.value.trim();
     const configured = dom && perDomainBimi[dom];
-    bimiHint.textContent = typed ? ''
-      : configured ? ` (per-domain config will be used for ${dom}: ${configured.join(', ')})`
-      : defaultBimi.join(',') !== 'default' ? ` (server defaults: ${defaultBimi.join(', ')})` : '';
+    bimiHint.textContent = !configured ? ''
+      : optForceDkim.checked
+        ? ` (per-domain config for ${dom}, ${configured.join(', ')}, overridden by "Force" — will check the selectors above)`
+        : ` (per-domain config will be used for ${dom}: ${configured.join(', ')})`;
   }
 }
 
@@ -383,6 +390,8 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
     perDomainBimi = d.perDomainBimiSelectors;
   if (Array.isArray(d.bimiSelectors) && d.bimiSelectors.length)
     defaultBimi = d.bimiSelectors;
+  if (!bimiUserCustomized && !optBimiSelector.value)
+    optBimiSelector.value = defaultBimi.join(', ');
   if (Array.isArray(d.knownDomains))
     knownDomains = d.knownDomains;
   if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
@@ -392,6 +401,7 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
 
 [optSmtp, optHttp, optDnsbl, optDirectDns, optPublicResolvers, optDoh].forEach(el => el.addEventListener('change', saveUserOptions));
 optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
+optBimiSelector.addEventListener('input', () => { bimiUserCustomized = true; });
 optBimiSelector.addEventListener('change', saveUserOptions);
 optBimiSelector.addEventListener('input', updateDomainHint);
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });

@@ -224,7 +224,7 @@ public sealed class BimiViewTests
     private static List<string> Names(ValidationOptions o) => BimiCheck.Selectors(Domain, o).Select(s => s.Name).ToList();
 
     [Fact]
-    public void SelectorPrecedence_RequestThenPerDomainThenDefaultsThenDefault()
+    public void SelectorPrecedence_FollowsDkim_PerDomainThenRequestThenDefaultsThenDefault()
     {
         var o = new ValidationOptions();
         Assert.Equal(new[] { "default" }, Names(o));
@@ -232,12 +232,23 @@ public sealed class BimiViewTests
         o.DefaultBimiSelectors = new() { "default", "news" };
         Assert.Equal(new[] { "default", "news" }, Names(o));
 
-        o.PerDomainBimiSelectors[Domain] = new() { "brand" };
-        Assert.Equal(new[] { "brand" }, Names(o));
-
         // Comma- or space-separated, de-duplicated case-insensitively.
         o.BimiSelector = "promo, Promo  offers";
         Assert.Equal(new[] { "promo", "offers" }, Names(o));
+
+        // The validator page pre-fills its field, so the request always carries a list;
+        // a per-domain entry has to beat it or no per-domain entry would ever be used.
+        o.PerDomainBimiSelectors[Domain] = new() { "brand", "promo" };
+        Assert.Equal(new[] { "brand", "promo" }, Names(o));
+        Assert.Equal($"per-domain config for {Domain}", BimiCheck.Resolve(Domain, o).Source);
+
+        o.ForceBimiSelectors = true;
+        Assert.Equal(new[] { "promo", "offers" }, Names(o));
+        Assert.Equal("request-forced, per-domain config overridden", BimiCheck.Resolve(Domain, o).Source);
+
+        // Force with nothing requested is not an override.
+        o.BimiSelector = " ";
+        Assert.Equal(new[] { "brand", "promo" }, Names(o));
     }
 
     [Fact]
@@ -260,6 +271,8 @@ public sealed class BimiViewTests
         Assert.Equal("default", (string?)results[0].Data!["selector"]);
         Assert.Equal("brand2", (string?)results[1].Data!["selector"]);
         Assert.EndsWith("(selector 'brand2')", results[1].Summary);
+        // Each says which list it came from, so a list taken from the wrong place shows.
+        Assert.All(results, r => Assert.Contains($"Selectors checked: default, brand2 (per-domain config for {Domain})", r.Details));
     }
 
     [Fact]

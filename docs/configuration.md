@@ -495,9 +495,13 @@ The CLI does not expose these lists; it always uses the built-in defaults.
 ### Selectors: defaults and per domain
 
 DNS offers no way to list a domain's DKIM or BIMI selectors, so the ones to check
-are configured. Both follow the same precedence: a list given with the request
-(the validator page's fields, `additionalDkimSelectors` / `bimiSelector`) wins over
-the domain's own entry, which wins over the defaults.
+are configured. Both follow the same precedence: the domain's own entry wins; for a
+domain without one, a list given with the request (the validator page's fields,
+`additionalDkimSelectors` / `bimiSelector`) is used; failing that, the defaults. The
+validator page pre-fills both fields with the defaults, so a per-domain entry has to
+outrank them. To check a request's list even where a per-domain entry exists, set
+`forceDkimSelectors` / `forceBimiSelectors` (the page's "Force these selectors"
+box sets both). Every BIMI result names the list it used and where it came from.
 
 | JSON field             | Meaning |
 |------------------------|---------|

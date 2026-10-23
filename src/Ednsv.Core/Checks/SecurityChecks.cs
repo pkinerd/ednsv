@@ -563,22 +563,36 @@ public class BimiCheck : ICheck
 
     /// <summary>
     /// The selectors to check for a domain, in order, each with whether it is usable.
-    /// The request's own list wins, then the domain's entry, then the defaults, then
-    /// "default" — the precedence DKIM selectors already follow.
+    /// Same precedence as DKIM selectors: the domain's per-domain entry wins over the
+    /// request's list unless the request forces it, then the request's list, then the
+    /// defaults, then "default". It was request-first once, and a value left in the
+    /// validator page's field — which the browser remembers — silently beat every
+    /// per-domain list; the page now pre-fills that field with the defaults, as it does
+    /// for DKIM, which request-first would make permanent.
     /// </summary>
-    public static List<(string Name, bool Valid)> Selectors(string domain, ValidationOptions options)
+    public static List<(string Name, bool Valid)> Selectors(string domain, ValidationOptions options) =>
+        Resolve(domain, options).Selectors;
+
+    /// <summary><see cref="Selectors"/>, plus where the list came from — reported in the
+    /// result, since a list silently taken from the wrong place looks like no effect.</summary>
+    public static (List<(string Name, bool Valid)> Selectors, string Source) Resolve(string domain, ValidationOptions options)
     {
-        IEnumerable<string> chosen =
-            !string.IsNullOrWhiteSpace(options.BimiSelector)
-                ? options.BimiSelector.Split(new[] { ',', ' ', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries)
-            : options.PerDomainBimiSelectors.TryGetValue(domain.TrimEnd('.').ToLowerInvariant(), out var perDomain) && perDomain.Count > 0
-                ? perDomain
-            : options.DefaultBimiSelectors.Count > 0
-                ? options.DefaultBimiSelectors
-                : new[] { "default" };
-        return chosen.Select(x => x.Trim().TrimEnd('.')).Where(x => x.Length > 0)
+        var requested = (options.BimiSelector ?? "")
+            .Split(new[] { ',', ' ', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries);
+        options.PerDomainBimiSelectors.TryGetValue(domain.TrimEnd('.').ToLowerInvariant(), out var perDomain);
+        var perDomainSet = perDomain is { Count: > 0 };
+
+        (IEnumerable<string> Names, string Source) pick =
+            requested.Length > 0 && options.ForceBimiSelectors
+                ? (requested, perDomainSet ? "request-forced, per-domain config overridden" : "request-forced")
+            : perDomainSet ? (perDomain!, $"per-domain config for {domain}")
+            : requested.Length > 0 ? (requested, "request")
+            : options.DefaultBimiSelectors.Count > 0 ? (options.DefaultBimiSelectors, "server defaults")
+            : (new[] { "default" }, "built-in default");
+        var list = pick.Names.Select(x => x.Trim().TrimEnd('.')).Where(x => x.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxSelectors)
             .Select(x => (x, IsValidSelector(x))).ToList();
+        return (list, pick.Source);
     }
 
     /// <summary>
@@ -613,10 +627,14 @@ public class BimiCheck : ICheck
         // One result per selector: each is a separate record with its own logo and
         // certificate, and a message uses exactly one of them.
         var results = new List<CheckResult>();
-        foreach (var (selector, valid) in Selectors(domain, ctx.Options))
+        var (selectors, source) = Resolve(domain, ctx.Options);
+        var checkedLine = $"Selectors checked: {string.Join(", ", selectors.Select(s => s.Name))} ({source})";
+        foreach (var (selector, valid) in selectors)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            results.Add(await CheckSelectorAsync(domain, ctx, selector, valid));
+            var r = await CheckSelectorAsync(domain, ctx, selector, valid);
+            r.Details.Add(checkedLine);
+            results.Add(r);
         }
         return results;
     }
