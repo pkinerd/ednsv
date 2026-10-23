@@ -48,6 +48,7 @@ classDiagram
         +List~string~ Warnings
         +List~string~ Errors
         +double? DurationMs
+        +JsonObject? Data
         +AdjustForUnreachableHosts(total, unreachable)
     }
 

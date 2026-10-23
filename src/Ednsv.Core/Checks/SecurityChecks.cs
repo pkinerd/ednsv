@@ -482,6 +482,88 @@ public class BimiCheck : ICheck
     public string Name => "BIMI";
     public CheckCategory Category => CheckCategory.BIMI;
 
+    /// <summary>
+    /// What the check found, shaped for drawing rather than reading: the record and its
+    /// tags, the logo (inlined, so the page shows the bytes this check validated and the
+    /// viewer's browser never fetches from the brand's server), the mark certificate, and
+    /// a requirement-by-requirement checklist. Carried on <see cref="CheckResult.Data"/>.
+    /// The text Details remain the full account; this repeats it, never extends it.
+    /// </summary>
+    public sealed class View
+    {
+        public const string Pass = "pass", Warn = "warn", Fail = "fail", Info = "info";
+        public string Domain { get; set; } = "";
+        public string Selector { get; set; } = "default";
+        public string RecordName { get; set; } = "";
+        public string? Record { get; set; }
+        public Dictionary<string, string> Tags { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public LogoInfo? Logo { get; set; }
+        public CertInfo? Certificate { get; set; }
+        /// <summary>The sender name a preview shows: the certificate's organisation when
+        /// there is one (it is what a mark certificate attests), else the domain.</summary>
+        public string DisplayName => Certificate?.Organization ?? Domain;
+        public List<Item> Checklist { get; set; } = new();
+
+        public void Add(string group, string label, string status, string? value, IEnumerable<string>? notes = null) =>
+            Checklist.Add(new Item { Group = group, Label = label, Status = status, Value = value, Notes = notes?.ToList() ?? new() });
+    }
+
+    public sealed class Item
+    {
+        public string Group { get; set; } = "";
+        public string Label { get; set; } = "";
+        /// <summary><see cref="View.Pass"/>, <see cref="View.Warn"/>, <see cref="View.Fail"/>
+        /// (BIMI will not display), or <see cref="View.Info"/> (optional or advisory).</summary>
+        public string Status { get; set; } = View.Info;
+        public string? Value { get; set; }
+        public List<string> Notes { get; set; } = new();
+    }
+
+    public sealed class LogoInfo
+    {
+        public string Url { get; set; } = "";
+        public bool Reachable { get; set; }
+        public int StatusCode { get; set; }
+        public int? SizeBytes { get; set; }
+        public string? Title { get; set; }
+        public string? ViewBox { get; set; }
+        /// <summary>data:image/svg+xml;base64,… — only for an SVG within
+        /// <see cref="MaxInlineLogoBytes"/>. Shown through an img element, where browsers
+        /// run SVG without scripts or external loads, so an untrusted logo is safe to draw.</summary>
+        public string? DataUri { get; set; }
+    }
+
+    public sealed class CertInfo
+    {
+        public string Url { get; set; } = "";
+        /// <summary>VMC, CMC, or null when the mark type does not say.</summary>
+        public string? Type { get; set; }
+        public string? Subject { get; set; }
+        public string? Organization { get; set; }
+        public string? Issuer { get; set; }
+        public string? NotBefore { get; set; }
+        public string? NotAfter { get; set; }
+        public int? DaysLeft { get; set; }
+        public string? MarkType { get; set; }
+        public string? TrademarkOffice { get; set; }
+        public string? TrademarkCountry { get; set; }
+        public string? TrademarkRegistration { get; set; }
+        /// <summary>True/false once the logo was hashed against the certificate; null when
+        /// it could not be (no logotype extension, or no SVG retrieved).</summary>
+        public bool? LogoHashMatches { get; set; }
+        public int ChainLength { get; set; }
+    }
+
+    /// <summary>Largest logo inlined into the result. BIMI recommends under 32 KB; twice
+    /// that still previews an oversized logo without letting one bloat every report.</summary>
+    public const int MaxInlineLogoBytes = 64 * 1024;
+
+    private static readonly System.Text.Json.JsonSerializerOptions ViewJson = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
     // BIMI SVG Tiny PS forbids these elements
     private static readonly string[] ForbiddenSvgElements =
     {
@@ -514,12 +596,16 @@ public class BimiCheck : ICheck
 
             var text = string.Join("", bimiRecord.Text);
             result.Details.Add($"BIMI: {text}");
+            var view = new View { Domain = domain, RecordName = bimiDomain, Record = text };
 
             // #63 - Non-default BIMI selector note
             result.Details.Add("Only the 'default' BIMI selector is checked — use BIMI-Selector header for non-default selectors");
 
             // #32 - v=BIMI1 must be first tag
             var textTrimmed = text.TrimStart();
+            var vFirst = textTrimmed.StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase);
+            view.Add("Record", "BIMI record", vFirst ? View.Pass : View.Fail, bimiDomain,
+                vFirst ? null : new[] { "v=BIMI1 is not the first tag — receivers treat the record as invalid" });
             if (textTrimmed.StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase))
             {
                 // Good - it's the first tag. Now check case (#60)
@@ -545,13 +631,37 @@ public class BimiCheck : ICheck
                     tags[trimmed.Substring(0, eqIdx).Trim()] = trimmed.Substring(eqIdx + 1).Trim();
             }
 
-            // #62 - Unknown BIMI tag names
-            var knownBimiTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "v", "l", "a" };
+            foreach (var kv in tags) view.Tags[kv.Key] = kv.Value;
+
+            // #62 - Unknown BIMI tag names. avp= and lps= are defined by the current BIMI
+            // draft and were being reported here as possible typos.
+            var knownBimiTags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "v", "l", "a", "avp", "lps" };
             foreach (var tagName in tags.Keys)
             {
                 if (!knownBimiTags.Contains(tagName))
                     result.Details.Add($"Unknown tag '{tagName}' in BIMI record (will be ignored, possible typo?)");
             }
+
+            // avp= — avatar preference: whether a receiver may prefer the sender's personal
+            // avatar over the brand logo.
+            if (tags.TryGetValue("avp", out var avp))
+            {
+                var avpOk = avp.Equals("brand", StringComparison.OrdinalIgnoreCase) || avp.Equals("personal", StringComparison.OrdinalIgnoreCase);
+                if (!avpOk)
+                    result.Warnings.Add($"BIMI avp={avp} is not a valid value — expected brand or personal");
+                view.Add("Record", "avp= (avatar preference)", avpOk ? View.Pass : View.Warn, avp,
+                    avpOk
+                        ? new[] { avp.Equals("brand", StringComparison.OrdinalIgnoreCase)
+                            ? "Receivers should show the brand logo rather than a personal avatar"
+                            : "Receivers may show a sender's personal avatar instead of the brand logo" }
+                        : new[] { "Expected brand or personal" });
+            }
+            else
+            {
+                view.Add("Record", "avp= (avatar preference)", View.Info, "not set", new[] { "Optional — receivers apply their own default" });
+            }
+            view.Add("Record", "lps= (local-part selectors)", View.Info, tags.TryGetValue("lps", out var lps) ? lps : "not set",
+                new[] { "Optional draft extension: From local-parts that use a selector of their own" });
 
             // Validate logo URL (l= tag) — remember the first successful fetch so the
             // VMC's logotype hash can be verified against the actual bytes we retrieved.
@@ -571,6 +681,11 @@ public class BimiCheck : ICheck
                         if (logoUrls.Count > 1)
                             result.Details.Add($"Logo URL found: {singleLogoUrl}");
 
+                        // The view describes the first logo; any others are still validated
+                        // above and reported in the text.
+                        var first = view.Logo == null;
+                        var urlWarnings = result.Warnings.Count;
+
                         if (!singleLogoUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                             result.Warnings.Add($"BIMI logo URL must use HTTPS: {singleLogoUrl}");
 
@@ -580,55 +695,104 @@ public class BimiCheck : ICheck
                         var (success, svgContent, statusCode, svgContentType) = await ctx.Http.GetWithHeadersAsync(singleLogoUrl);
                         result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
                         if (!success)
-                        {
                             result.Warnings.Add($"BIMI logo URL is not reachable: {singleLogoUrl}");
+
+                        if (first)
+                        {
+                            view.Logo = new LogoInfo { Url = singleLogoUrl, Reachable = success, StatusCode = statusCode };
+                            view.Add("Logo (l=)", "Logo URL", success ? (result.Warnings.Count > urlWarnings ? View.Warn : View.Pass) : View.Fail,
+                                singleLogoUrl, result.Warnings.Skip(urlWarnings).Concat(new[] { $"HTTP {statusCode}" }));
                         }
-                        else
+
+                        if (success)
                         {
                             // #61 - SVG Content-Type validation
                             if (svgContentType != null && !svgContentType.Equals("image/svg+xml", StringComparison.OrdinalIgnoreCase))
                                 result.Details.Add($"SVG logo served with Content-Type '{svgContentType}' — expected image/svg+xml");
 
-                            ValidateSvg(svgContent, result);
+                            var svgWarnings = result.Warnings.Count;
+                            var svg = ValidateSvg(svgContent, result);
                             fetchedSvgContent ??= svgContent;
+
+                            if (first)
+                            {
+                                var bytes = System.Text.Encoding.UTF8.GetBytes(svgContent);
+                                view.Logo!.SizeBytes = bytes.Length;
+                                view.Logo.Title = svg.Title;
+                                view.Logo.ViewBox = svg.ViewBox;
+                                if (svg.IsSvg && bytes.Length <= MaxInlineLogoBytes)
+                                    view.Logo.DataUri = "data:image/svg+xml;base64," + Convert.ToBase64String(bytes);
+                                var issues = result.Warnings.Skip(svgWarnings).ToList();
+                                view.Add("Logo (l=)", "SVG Tiny PS", issues.Count == 0 ? View.Pass : View.Warn,
+                                    $"{bytes.Length / 1024.0:F1} KB" + (svg.ViewBox != null ? $", viewBox {svg.ViewBox}" : ""),
+                                    issues.Count == 0 ? new[] { "tiny-ps profile, version 1.2, square, with a title" } : issues);
+                            }
                         }
                     }
                 }
                 else
                 {
                     result.Details.Add("Logo URL is empty (no logo specified)");
+                    view.Add("Logo (l=)", "Logo URL", View.Info, "empty", new[] { "An empty l= declares that the domain has no BIMI logo" });
                 }
             }
             else
             {
                 result.Warnings.Add("BIMI record missing l= tag (logo URL)");
+                view.Add("Logo (l=)", "Logo URL", View.Fail, "missing", new[] { "BIMI record missing l= tag (logo URL)" });
             }
 
             // Validate VMC (a= tag)
-            if (tags.TryGetValue("a", out var vmcUrl))
+            if (tags.TryGetValue("a", out var vmcUrl) && !string.IsNullOrEmpty(vmcUrl))
             {
                 result.Details.Add($"VMC URL: {vmcUrl}");
-                if (!string.IsNullOrEmpty(vmcUrl))
-                {
-                    if (!vmcUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                        result.Warnings.Add("VMC URL must use HTTPS");
+                var certWarnings = result.Warnings.Count;
+                view.Certificate = new CertInfo { Url = vmcUrl };
 
-                    var (success, pemContent, statusCode) = await ctx.Http.GetAsync(vmcUrl);
-                    result.Details.Add($"VMC reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
-                    if (!success)
-                    {
-                        result.Warnings.Add("VMC URL is not reachable");
-                    }
-                    else
-                    {
-                        ValidateVmc(pemContent, domain, fetchedSvgContent, result,
-                            ProbeList.OrDefault(ctx.Options.VmcIssuers, ProbeDefaults.VmcIssuers));
-                    }
+                if (!vmcUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                    result.Warnings.Add("VMC URL must use HTTPS");
+
+                var (success, pemContent, statusCode) = await ctx.Http.GetAsync(vmcUrl);
+                result.Details.Add($"VMC reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
+                if (!success)
+                {
+                    result.Warnings.Add("VMC URL is not reachable");
                 }
+                else
+                {
+                    ValidateVmc(pemContent, domain, fetchedSvgContent, result,
+                        ProbeList.OrDefault(ctx.Options.VmcIssuers, ProbeDefaults.VmcIssuers), view.Certificate);
+                }
+
+                var c = view.Certificate;
+                var issues = result.Warnings.Skip(certWarnings).ToList();
+                var summary = string.Join(" · ", new[]
+                {
+                    c.Type ?? "Mark certificate",
+                    c.Issuer != null ? ExtractCn(c.Issuer) : null,
+                    c.NotAfter != null ? $"valid to {c.NotAfter}" : null,
+                }.Where(x => x != null));
+                view.Add("Certificate (a=)", "Mark certificate", !success ? View.Fail : issues.Count == 0 ? View.Pass : View.Warn,
+                    success ? summary : vmcUrl, issues.Count > 0 ? issues : new[] { $"HTTP {statusCode}" });
+                if (c.LogoHashMatches is { } matches)
+                    view.Add("Certificate (a=)", "Logo matches certificate", matches ? View.Pass : View.Fail,
+                        matches ? "hash matches" : "hash differs",
+                        matches ? null : new[] { "The logo at l= is not the one the certificate was issued for — receivers that check will not display it" });
+                if (c.MarkType != null || c.TrademarkRegistration != null)
+                    view.Add("Certificate (a=)", "Mark", View.Info, c.MarkType ?? "registered mark",
+                        new[]
+                        {
+                            c.TrademarkOffice != null ? $"Office: {c.TrademarkOffice}" : null,
+                            c.TrademarkCountry != null ? $"Country/region: {c.TrademarkCountry}" : null,
+                            c.TrademarkRegistration != null ? $"Registration: {c.TrademarkRegistration}" : null,
+                        }.Where(x => x != null)!);
             }
             else
             {
+                if (vmcUrl != null) result.Details.Add($"VMC URL: {vmcUrl}");
                 result.Details.Add("No authority evidence (a= tag) — self-asserted BIMI (VMC or CMC certificate recommended for wider receiver support)");
+                view.Add("Certificate (a=)", "Mark certificate", View.Info, "none — self-asserted",
+                    new[] { "Receivers that require a VMC or CMC will not display the logo" });
             }
 
             // Check DMARC prerequisite
@@ -636,29 +800,44 @@ public class BimiCheck : ICheck
             {
                 var dmarcTags = DmarcRecordCheck.ParseDmarcTags(ctx.DmarcRecord);
                 dmarcTags.TryGetValue("p", out var policy);
-                if (policy != "quarantine" && policy != "reject")
+                var enforced = policy == "quarantine" || policy == "reject";
+                if (!enforced)
                 {
                     result.Warnings.Add($"BIMI requires DMARC p=quarantine or p=reject (current: p={policy ?? "none"})");
                 }
+                view.Add("DMARC", "Policy (p=)", enforced ? View.Pass : View.Fail, policy ?? "none",
+                    enforced ? null : new[] { "BIMI requires p=quarantine or p=reject" });
 
                 // #33 - DMARC pct= check for BIMI
+                var pctOk = true;
                 if (policy == "quarantine" && dmarcTags.TryGetValue("pct", out var pctStr))
                 {
                     if (int.TryParse(pctStr, out var pct) && pct != 100)
+                    {
+                        pctOk = false;
                         result.Warnings.Add($"DMARC pct={pct} with p=quarantine — BIMI requires pct=100 (or omitted) when policy is quarantine");
+                    }
                 }
+                view.Add("DMARC", "Percentage (pct=)", pctOk ? View.Pass : View.Fail,
+                    dmarcTags.TryGetValue("pct", out var pctShown) ? pctShown : "100 (default)",
+                    pctOk ? null : new[] { "With p=quarantine, BIMI requires pct=100" });
 
                 // #34 - DMARC sp=none breaks BIMI
                 if (dmarcTags.TryGetValue("sp", out var spPolicy) && spPolicy == "none")
                     result.Warnings.Add("DMARC sp=none — BIMI will not work for subdomains and some receivers may reject BIMI entirely");
+                view.Add("DMARC", "Subdomain policy (sp=)", spPolicy == "none" ? View.Warn : View.Pass,
+                    spPolicy ?? $"not set (inherits p={policy ?? "none"})",
+                    spPolicy == "none" ? new[] { "sp=none — BIMI will not work for subdomains" } : null);
             }
             else
             {
                 result.Warnings.Add("BIMI requires DMARC - no DMARC record found");
+                view.Add("DMARC", "DMARC record", View.Fail, "none", new[] { "BIMI requires a DMARC policy at enforcement" });
             }
 
             result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
             result.Summary = "BIMI record found";
+            result.Data = System.Text.Json.JsonSerializer.SerializeToNode(view, ViewJson)?.AsObject();
         }
         catch (Exception ex)
         {
@@ -669,7 +848,9 @@ public class BimiCheck : ICheck
         return new List<CheckResult> { result };
     }
 
-    private static void ValidateSvg(string svgContent, CheckResult result)
+    private readonly record struct SvgFacts(bool IsSvg, string? Title, string? ViewBox);
+
+    private static SvgFacts ValidateSvg(string svgContent, CheckResult result)
     {
         var sizeKb = System.Text.Encoding.UTF8.GetByteCount(svgContent) / 1024.0;
         result.Details.Add($"SVG size: {sizeKb:F1} KB");
@@ -681,8 +862,12 @@ public class BimiCheck : ICheck
         if (!svgContent.Contains("<svg", StringComparison.OrdinalIgnoreCase))
         {
             result.Warnings.Add("Response does not appear to be a valid SVG document");
-            return;
+            return new SvgFacts(false, null, null);
         }
+
+        var titleMatch = System.Text.RegularExpressions.Regex.Match(svgContent, @"<title[^>]*>\s*([^<]*?)\s*</title>",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        string? title = titleMatch.Success && titleMatch.Groups[1].Value.Length > 0 ? titleMatch.Groups[1].Value : null;
 
         // Check for SVG Tiny PS profile declaration
         if (svgContent.Contains("baseProfile", StringComparison.OrdinalIgnoreCase))
@@ -730,6 +915,7 @@ public class BimiCheck : ICheck
         // Try to extract viewBox for aspect ratio check
         var viewBoxMatch = System.Text.RegularExpressions.Regex.Match(
             svgContent, @"viewBox\s*=\s*[""']([^""']+)[""']", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        string? viewBox = viewBoxMatch.Success ? viewBoxMatch.Groups[1].Value.Trim() : null;
         if (viewBoxMatch.Success)
         {
             var parts = viewBoxMatch.Groups[1].Value.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
@@ -742,9 +928,30 @@ public class BimiCheck : ICheck
                     result.Warnings.Add($"SVG is not square ({w}x{h}) — BIMI requires a square logo");
             }
         }
+        return new SvgFacts(true, title, viewBox);
     }
 
-    private static void ValidateVmc(string pemContent, string domain, string? svgContent, CheckResult result, IReadOnlyList<string> knownVmcIssuers)
+    // Subject attributes a mark certificate carries, per the BIMI Group's VMC/CMC
+    // guidelines. Read by OID because .NET renders unknown ones only as "OID.x.y=".
+    private const string MarkTypeOid = "1.3.6.1.4.1.53087.1.13";
+    private const string TrademarkOfficeOid = "1.3.6.1.4.1.53087.1.2";
+    private const string TrademarkCountryOid = "1.3.6.1.4.1.53087.1.3";
+    private const string TrademarkRegistrationOid = "1.3.6.1.4.1.53087.1.4";
+
+    /// <summary>
+    /// VMC or CMC from the mark type: a Verified Mark Certificate covers registered and
+    /// government marks; the Common Mark Certificate added prior-use and modified
+    /// registered marks. Null for anything else rather than a guess.
+    /// </summary>
+    public static string? CertificateTypeFor(string? markType) => markType?.Trim().ToLowerInvariant() switch
+    {
+        "registered mark" or "government mark" => "VMC",
+        "prior use mark" or "modified registered mark" => "CMC",
+        _ => null,
+    };
+
+    private static void ValidateVmc(string pemContent, string domain, string? svgContent, CheckResult result,
+        IReadOnlyList<string> knownVmcIssuers, CertInfo? view = null)
     {
         if (!pemContent.Contains("-----BEGIN CERTIFICATE-----"))
         {
@@ -773,6 +980,30 @@ public class BimiCheck : ICheck
             result.Details.Add($"VMC Subject: {cert.Subject}");
             result.Details.Add($"VMC Issuer: {cert.Issuer}");
             result.Details.Add($"VMC Valid: {cert.NotBefore:yyyy-MM-dd} to {cert.NotAfter:yyyy-MM-dd}");
+
+            string? Attr(string oid)
+            {
+                foreach (var rdn in cert.SubjectName.EnumerateRelativeDistinguishedNames())
+                    if (rdn.GetSingleElementType().Value == oid) return rdn.GetSingleElementValue();
+                return null;
+            }
+            var markType = Attr(MarkTypeOid);
+            if (markType != null)
+                result.Details.Add($"Mark type: {markType} ({CertificateTypeFor(markType) ?? "certificate type not determined"})");
+            if (view != null)
+            {
+                view.Subject = cert.Subject;
+                view.Organization = Attr("2.5.4.10");
+                view.Issuer = cert.Issuer;
+                view.NotBefore = cert.NotBefore.ToUniversalTime().ToString("yyyy-MM-dd");
+                view.NotAfter = cert.NotAfter.ToUniversalTime().ToString("yyyy-MM-dd");
+                view.DaysLeft = (int)Math.Floor((cert.NotAfter.ToUniversalTime() - DateTime.UtcNow).TotalDays);
+                view.MarkType = markType;
+                view.Type = CertificateTypeFor(markType);
+                view.TrademarkOffice = Attr(TrademarkOfficeOid);
+                view.TrademarkCountry = Attr(TrademarkCountryOid);
+                view.TrademarkRegistration = Attr(TrademarkRegistrationOid);
+            }
 
             // Check expiry
             if (cert.NotAfter < DateTime.UtcNow)
@@ -836,7 +1067,10 @@ public class BimiCheck : ICheck
             else if (svgContent == null)
                 result.Details.Add("Logo hash not verified — SVG was not retrieved");
             else
-                VerifyLogotypeHash(logotypeExtBytes, svgContent, result);
+            {
+                var matched = VerifyLogotypeHash(logotypeExtBytes, svgContent, result);
+                if (view != null) view.LogoHashMatches = matched;
+            }
 
             // Count certificates in the PEM chain
             int chainCount = 0;
@@ -850,6 +1084,7 @@ public class BimiCheck : ICheck
             }
             if (chainCount > 1)
                 result.Details.Add($"VMC PEM contains {chainCount} certificates (full chain)");
+            if (view != null) view.ChainLength = chainCount;
 
             cert.Dispose();
         }
@@ -859,20 +1094,22 @@ public class BimiCheck : ICheck
         }
     }
 
-    private static void VerifyLogotypeHash(byte[] extBytes, string svgContent, CheckResult result)
+    /// <summary>True when a hash matched, false when one was computed and none matched,
+    /// null when nothing could be compared.</summary>
+    private static bool? VerifyLogotypeHash(byte[] extBytes, string svgContent, CheckResult result)
     {
         var parsed = ParseSubjectLogoHashes(extBytes);
         if (parsed == null)
         {
             result.Warnings.Add("Could not parse VMC logotype extension for hash verification");
-            return;
+            return null;
         }
 
         var (hashes, _) = parsed.Value;
         if (hashes.Count == 0)
         {
             result.Warnings.Add("VMC logotype extension contains no hash values");
-            return;
+            return null;
         }
 
         var svgBytes = System.Text.Encoding.UTF8.GetBytes(svgContent);
@@ -896,12 +1133,13 @@ public class BimiCheck : ICheck
             if (computed.AsSpan().SequenceEqual(expected))
             {
                 result.Details.Add($"Logo hash matches VMC ({algoName})");
-                return;
+                return true;
             }
         }
 
-        if (algoTried != null)
-            result.Warnings.Add($"Logo hash ({algoTried}) does not match VMC — retrieved SVG differs from the logo signed in the certificate");
+        if (algoTried == null) return null;
+        result.Warnings.Add($"Logo hash ({algoTried}) does not match VMC — retrieved SVG differs from the logo signed in the certificate");
+        return false;
     }
 
     // Parse RFC 3709 LogotypeExtn, returning the hashes and URIs for the first image

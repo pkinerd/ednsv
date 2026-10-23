@@ -304,7 +304,7 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 
 Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
 
-- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck. Results appear as each check finishes, alongside a panel of the checks still running with their elapsed time; every finding shows how long its check took, and the slowest checks are summarised above the results.
+- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck. Results appear as each check finishes, alongside a panel of the checks still running with their elapsed time; every finding shows how long its check took, and the slowest checks are summarised above the results. A BIMI result also draws the logo as an inbox would show it (circle and rounded-square avatars), the mark certificate's details (VMC or CMC, organisation, issuer, validity, mark type, trademark registration) and a requirement-by-requirement checklist, from the structured view the check attaches as `CheckResult.Data`.
 - **`config.html`** — admin console for the live runtime config (toggles, DKIM selectors, probe data lists) and user/token management, backed by the `/api/config*` and `/api/auth/users*` endpoints.
 
 ## Docker

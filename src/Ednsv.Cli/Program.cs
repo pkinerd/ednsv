@@ -2122,6 +2122,7 @@ h2.domain-header { font-size: 1.3rem; margin-top: 2rem; margin-bottom: 0.5rem; p
 .badge-critical { background: var(--crit-bg); color: var(--crit); }
 .check-name { font-weight: 600; }
 .check-summary { color: var(--muted); font-size: 0.9rem; margin-top: 0.25rem; }
+.bimi-logo { width: 64px; height: 64px; border-radius: 50%; background: #fff; border: 1px solid #e5e7eb; object-fit: contain; margin-top: 0.5rem; }
 details { margin-top: 0.5rem; }
 .detail-list, .warning-list, .error-list { list-style: none; padding: 0; margin-top: 0.375rem; font-size: 0.825rem; }
 .detail-list li { color: var(--muted); padding: 0.125rem 0; padding-left: 1rem; text-indent: -0.6rem; }
@@ -2228,6 +2229,12 @@ footer { text-align: center; margin-top: 2rem; font-size: 0.75rem; color: var(--
                 sb.AppendLine($"      <span class=\"check-name\">{e(check.CheckName)}</span>");
                 sb.AppendLine($"    </div>");
                 sb.AppendLine($"    <div class=\"check-summary\">{e(check.Summary)}</div>");
+
+                // The BIMI logo, inlined by the check as a data: URI — an img element draws
+                // SVG without scripts or external loads, so the report stays self-contained.
+                if (check.Data?["logo"]?["dataUri"]?.GetValue<string>() is { } logoUri
+                    && logoUri.StartsWith("data:image/svg+xml;base64,", StringComparison.Ordinal))
+                    sb.AppendLine($"    <img class=\"bimi-logo\" src=\"{e(logoUri)}\" alt=\"{e(check.Data?["logo"]?["title"]?.GetValue<string>() ?? "BIMI logo")}\">");
 
                 if (check.Details.Any())
                 {

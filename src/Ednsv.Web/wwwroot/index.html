@@ -114,6 +114,46 @@
   #running .row .dot { color: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
   #running .row .dur { margin-left: auto; color: var(--muted); font-size: 0.75rem; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  /* BIMI panel: the logo as an inbox would show it, and the requirements one by one.
+     Avatars sit on white, as mail clients draw them — most logos assume a light ground. */
+  .bimi { display: flex; flex-wrap: wrap; gap: 1rem; margin: 0.6rem 0 0.4rem; }
+  .bimi-preview { flex: 1 1 15rem; min-width: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+  .bimi-list { flex: 2 1 20rem; min-width: 0; }
+  .bimi .inbox { display: flex; gap: 0.75rem; align-items: center; background: #fff; color: #1f2937; border-radius: 10px; padding: 0.75rem; font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .bimi .inbox .from { font-weight: 600; font-size: 0.9rem; overflow-wrap: anywhere; }
+  .bimi .inbox .addr, .bimi .inbox .subj { font-size: 0.78rem; color: #4b5563; overflow-wrap: anywhere; }
+  .bimi .avatar { width: 48px; height: 48px; flex: none; background: #fff; overflow: hidden; display: flex; align-items: center; justify-content: center; border: 1px solid #e5e7eb; }
+  .bimi .avatar img { width: 100%; height: 100%; object-fit: contain; }
+  .bimi .avatar.circle { border-radius: 50%; }
+  .bimi .avatar.square { border-radius: 22%; }
+  .bimi .avatar.lg { width: 88px; height: 88px; }
+  .bimi .avatar .initial { font: 600 1.3rem -apple-system, 'Segoe UI', Roboto, sans-serif; color: #6b7280; }
+  .bimi .shapes { display: flex; gap: 1rem; }
+  .bimi figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+  .bimi figcaption, .bimi .note { color: var(--muted); font-size: 0.72rem; }
+  .bimi .cert { font-size: 0.76rem; display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; }
+  .bimi .cert dt { color: var(--muted); }
+  .bimi .cert dd { margin: 0; overflow-wrap: anywhere; }
+  .bimi .badge { font-size: 0.7rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 4px; background: #1e3a5f; color: var(--info); }
+  .bimi-group { margin-bottom: 0.6rem; }
+  /* Not uppercased: the titles name tags (l=, a=), and tag names are not to be recased. */
+  .bimi-group .g-title { font-size: 0.74rem; font-weight: 600; color: var(--muted); margin-bottom: 0.25rem; }
+  .bimi-row { display: grid; grid-template-columns: 0.75rem minmax(7rem, auto) 1fr; gap: 0.1rem 0.5rem; align-items: baseline; padding: 0.3rem 0.5rem; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.3rem; font-size: 0.8rem; }
+  .bimi-row .dot { width: 0.6rem; height: 0.6rem; border-radius: 50%; align-self: center; }
+  .bimi-row .val { font-family: inherit; color: var(--muted); overflow-wrap: anywhere; }
+  .bimi-row ul { grid-column: 2 / -1; margin: 0; padding-left: 1rem; color: var(--muted); font-size: 0.74rem; }
+  .bimi-row.st-pass .dot { background: var(--pass); }
+  .bimi-row.st-warn .dot { background: var(--warn); }
+  .bimi-row.st-warn { border-color: #713f12; }
+  .bimi-row.st-fail .dot { background: var(--error); }
+  .bimi-row.st-fail { border-color: #7f1d1d; }
+  .bimi-row.st-info .dot { background: var(--muted); }
+  @media (max-width: 560px) {
+    .bimi-row { grid-template-columns: 0.75rem 1fr; }
+    .bimi-row .val { grid-column: 2; }
+  }
+  .check details.more { margin-top: 0.3rem; }
+  .check details.more summary { color: var(--muted); font-size: 0.76rem; cursor: pointer; }
   .progress { height: 3px; background: var(--border); border-radius: 2px; margin-top: 0.35rem; overflow: hidden; max-width: 24rem; }
   .progress > div { height: 100%; background: var(--accent); transition: width 0.3s; }
 </style>
@@ -769,6 +809,7 @@ function renderReport(report, domain, { live = false } = {}) {
       html += `<div class="check" data-sev="${c.severity}">`;
       html += `<div class="check-header"><span class="sev sev-${c.severity}">${c.severity}</span><span class="name">${esc(c.checkName)}</span>${durSpan(c.durationMs)}</div>`;
       html += `<div class="check-summary">${esc(c.summary)}</div>`;
+      if (c.data && Array.isArray(c.data.checklist)) html += renderBimi(c.data);
       // Warnings and errors are the actionable findings — always shown in full,
       // first and never truncated. Informational details are capped, EXCEPT for
       // the critical email-DNS categories (SPF/DKIM/DMARC/TXT), whose records
@@ -777,14 +818,18 @@ function renderReport(report, domain, { live = false } = {}) {
       // just show them all (no pointless "...and 1 more").
       const issues = [...(c.errors||[]), ...(c.warnings||[])];
       const info = (c.details||[]);
+      // A check that drew a structured panel has already shown what its detail lines
+      // say, so those fold away; warnings and errors stay in view regardless.
+      const folded = !!(c.data && Array.isArray(c.data.checklist));
       if (issues.length || info.length) {
         html += '<ul class="details">';
         for (const d of issues) html += `<li class="issue">${esc(d)}</li>`;
+        if (folded && info.length) html += `</ul><details class="more"><summary>All details (${info.length})</summary><ul class="details">`;
         const cap = 20;
-        const shown = (NO_TRUNCATE_CATS.has(cat) || info.length - cap < 5) ? info.length : cap;
+        const shown = (folded || NO_TRUNCATE_CATS.has(cat) || info.length - cap < 5) ? info.length : cap;
         for (const d of info.slice(0, shown)) html += `<li>${esc(d)}</li>`;
         if (info.length > shown) html += `<li>...and ${info.length - shown} more</li>`;
-        html += '</ul>';
+        html += folded && info.length ? '</ul></details>' : '</ul>';
       }
       html += '</div>';
     }
@@ -823,6 +868,66 @@ function renderReport(report, domain, { live = false } = {}) {
     });
   });
   applyFilters();
+}
+
+// The BIMI check attaches a structured view (BimiCheck.View): the logo inlined as a
+// data: URI by the server, the certificate it parsed, and a checklist. The logo goes in
+// an <img>, where browsers draw SVG without scripts or external loads — the page never
+// fetches from the brand's server and an untrusted SVG cannot run anything.
+function renderBimi(v) {
+  const name = v.displayName || v.domain || '';
+  const logo = v.logo && v.logo.dataUri;
+  const alt = (v.logo && v.logo.title) || name;
+  const img = logo
+    ? `<img src="${esc(logo)}" alt="${esc(alt)}">`
+    : `<span class="initial">${esc((name[0] || '?').toUpperCase())}</span>`;
+  let h = '<div class="bimi"><div class="bimi-preview">';
+  h += `<div class="inbox"><div class="avatar circle">${img}</div><div>`
+     + `<div class="from">${esc(name)}</div><div class="addr">via ${esc(v.domain || '')}</div>`
+     + `<div class="subj">How the brand logo appears beside a message</div></div></div>`;
+  h += `<div class="shapes"><figure><div class="avatar circle lg">${img}</div><figcaption>circle</figcaption></figure>`
+     + `<figure><div class="avatar square lg">${img}</div><figcaption>rounded square</figcaption></figure></div>`;
+  if (!logo) {
+    const why = !v.logo ? 'No logo URL in the record.'
+      : !v.logo.reachable ? 'The logo could not be retrieved.'
+      : 'The logo is too large to preview here.';
+    h += `<div class="note">${why}</div>`;
+  }
+  const c = v.certificate;
+  if (c && (c.issuer || c.subject)) {
+    h += '<dl class="cert">';
+    const row = (k, val) => { if (val) h += `<dt>${esc(k)}</dt><dd>${val}</dd>`; };
+    row('Certificate', c.type ? `<span class="badge">${esc(c.type)}</span>` : 'Mark certificate');
+    row('Organisation', c.organization && esc(c.organization));
+    row('Issuer', c.issuer && esc(cn(c.issuer)));
+    row('Valid', c.notBefore && `${esc(c.notBefore)} → ${esc(c.notAfter)}` + (c.daysLeft != null ? ` <span class="note">(${c.daysLeft < 0 ? 'expired' : c.daysLeft + ' days left'})</span>` : ''));
+    row('Mark', c.markType && esc(c.markType));
+    row('Trademark', [c.trademarkOffice, c.trademarkCountry, c.trademarkRegistration].filter(Boolean).map(esc).join(' · '));
+    h += '</dl>';
+  }
+  h += '</div><div class="bimi-list">';
+  const groups = [];
+  for (const it of v.checklist) {
+    let g = groups.find(x => x.name === it.group);
+    if (!g) groups.push(g = { name: it.group, items: [] });
+    g.items.push(it);
+  }
+  for (const g of groups) {
+    h += `<div class="bimi-group"><div class="g-title">${esc(g.name)}</div>`;
+    for (const it of g.items) {
+      h += `<div class="bimi-row st-${esc(it.status)}" title="${esc(it.status)}"><span class="dot"></span>`
+         + `<span>${esc(it.label)}</span><span class="val">${esc(it.value || '')}</span>`;
+      if (it.notes && it.notes.length) h += '<ul>' + it.notes.map(n => `<li>${esc(n)}</li>`).join('') + '</ul>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  return h + '</div></div>';
+}
+
+function cn(dn) {
+  const m = /(?:^|,\s*)CN=("([^"]*)"|[^,]*)/.exec(dn || '');
+  return m ? (m[2] ?? m[1]).trim() : dn;
 }
 
 function applyFilters() {

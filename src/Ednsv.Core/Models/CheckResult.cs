@@ -1,3 +1,5 @@
+using System.Text.Json.Nodes;
+
 namespace Ednsv.Core.Models;
 
 public enum CheckSeverity
@@ -61,6 +63,16 @@ public class CheckResult
     /// between them. Null on synthesised results (DNS Query Errors) that no check ran.
     /// </summary>
     public double? DurationMs { get; set; }
+
+    /// <summary>
+    /// Structured detail for a richer rendering than text lines allow — the web UI draws
+    /// the BIMI logo and its requirement checklist from it. Optional and check-specific
+    /// (BIMI: <see cref="Checks.BimiCheck.View"/>). Details, Warnings and Errors remain
+    /// the complete account, so a consumer that ignores this loses the picture, never
+    /// a finding. A JSON object rather than a typed model so it passes unchanged through
+    /// the report, the job snapshot in Redis and the CLI's JSON output.
+    /// </summary>
+    public JsonObject? Data { get; set; }
 
     /// <summary>
     /// If this check would report Pass but some or all hosts were unreachable,
