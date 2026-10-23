@@ -925,7 +925,15 @@ app.UseSwaggerUI(c =>
 
 // ── Static files (wwwroot/index.html) ────────────────────────────────────
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// The pages are a few self-contained HTML files with their script inline, so a
+// stale copy is a stale UI talking to a newer API. With no Cache-Control the
+// browser falls back to heuristic freshness off Last-Modified and keeps serving
+// the old page for hours after a deploy. no-cache makes every load revalidate
+// against the ETag: still a 304 when nothing changed, the new page when it has.
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache"
+});
 
 // ── API endpoints ────────────────────────────────────────────────────────
 
