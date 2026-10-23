@@ -71,6 +71,23 @@ public sealed class AppConfig
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
+    /// BIMI selectors checked when a domain has no per-domain entry and the request
+    /// names none. Empty means just "default", the selector receivers use when a
+    /// message names none.
+    /// </summary>
+    [JsonPropertyName("defaultBimiSelectors")]
+    public List<string> DefaultBimiSelectors { get; set; } = new();
+
+    /// <summary>
+    /// Per-domain BIMI selectors, keyed like <see cref="DkimSelectors"/>. A domain can
+    /// publish several (picked per message by the BIMI-Selector header); each listed
+    /// here is checked, and reported, separately.
+    /// </summary>
+    [JsonPropertyName("bimiSelectors")]
+    public Dictionary<string, List<string>> BimiSelectors { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Operator-curated list of well-known domains for the validator page's
     /// dropdown / autocomplete. Surfaced via /api/defaults; the UI merges
     /// this with the keys of <see cref="DkimSelectors"/> and the user's
@@ -292,6 +309,8 @@ public sealed class ConfigService
                 {
                     // Normalize keys: lowercase, trim trailing dot
                     parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors);
+                    parsed.BimiSelectors = NormalizeKeys(parsed.BimiSelectors ?? new Dictionary<string, List<string>>());
+                    parsed.DefaultBimiSelectors = NormalizeSelectors(parsed.DefaultBimiSelectors);
                     parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains);
                     lock (_lock)
                     {
@@ -346,6 +365,10 @@ public sealed class ConfigService
         }
 
         seed.DkimSelectors = NormalizeKeys(seed.DkimSelectors ?? new Dictionary<string, List<string>>());
+
+        seed.BimiSelectors = NormalizeKeys(seed.BimiSelectors ?? new Dictionary<string, List<string>>());
+
+        seed.DefaultBimiSelectors = NormalizeSelectors(seed.DefaultBimiSelectors);
         seed.KnownDomains = NormalizeDomainList(seed.KnownDomains ?? new List<string>());
         lock (_lock)
         {
@@ -373,6 +396,8 @@ public sealed class ConfigService
         if (incoming == null) throw new ArgumentNullException(nameof(incoming));
         incoming.DefaultDkimSelectors ??= new List<string>();
         incoming.DkimSelectors = NormalizeKeys(incoming.DkimSelectors ?? new Dictionary<string, List<string>>());
+        incoming.BimiSelectors = NormalizeKeys(incoming.BimiSelectors ?? new Dictionary<string, List<string>>());
+        incoming.DefaultBimiSelectors = NormalizeSelectors(incoming.DefaultBimiSelectors);
         incoming.KnownDomains = NormalizeDomainList(incoming.KnownDomains ?? new List<string>());
         // Trim/compact the probe data lists; null (field omitted) reverts to the
         // built-in default so a caller can't accidentally wipe a list to null.
@@ -507,6 +532,8 @@ public sealed class ConfigService
             var cfg = TryReadRevisionBody(_history[i].Id);
             if (cfg == null) continue;
             cfg.DkimSelectors = NormalizeKeys(cfg.DkimSelectors ?? new Dictionary<string, List<string>>());
+            cfg.BimiSelectors = NormalizeKeys(cfg.BimiSelectors ?? new Dictionary<string, List<string>>());
+            cfg.DefaultBimiSelectors = NormalizeSelectors(cfg.DefaultBimiSelectors);
             cfg.KnownDomains = NormalizeDomainList(cfg.KnownDomains ?? new List<string>());
             return cfg;
         }
@@ -685,6 +712,8 @@ public sealed class ConfigService
                     if (parsed != null)
                     {
                         parsed.DkimSelectors = NormalizeKeys(parsed.DkimSelectors ?? new Dictionary<string, List<string>>());
+                        parsed.BimiSelectors = NormalizeKeys(parsed.BimiSelectors ?? new Dictionary<string, List<string>>());
+                        parsed.DefaultBimiSelectors = NormalizeSelectors(parsed.DefaultBimiSelectors);
                         parsed.KnownDomains = NormalizeDomainList(parsed.KnownDomains ?? new List<string>());
                         _current = parsed;
                         ok = true;
@@ -798,6 +827,8 @@ public sealed class ConfigService
                 var cfg = JsonSerializer.Deserialize<AppConfig>(json, JsonOpts);
                 if (cfg == null) return null;
                 cfg.DkimSelectors = NormalizeKeys(cfg.DkimSelectors ?? new Dictionary<string, List<string>>());
+                cfg.BimiSelectors = NormalizeKeys(cfg.BimiSelectors ?? new Dictionary<string, List<string>>());
+                cfg.DefaultBimiSelectors = NormalizeSelectors(cfg.DefaultBimiSelectors);
                 cfg.KnownDomains = NormalizeDomainList(cfg.KnownDomains ?? new List<string>());
                 return CloneConfig(cfg);
             }
@@ -913,6 +944,11 @@ public sealed class ConfigService
                 new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
             StringComparer.OrdinalIgnoreCase),
         KnownDomains = new List<string>(c.KnownDomains),
+        DefaultBimiSelectors = new List<string>(c.DefaultBimiSelectors ?? new()),
+        BimiSelectors = new Dictionary<string, List<string>>(
+            (c.BimiSelectors ?? new()).Select(kv =>
+                new KeyValuePair<string, List<string>>(kv.Key, new List<string>(kv.Value))),
+            StringComparer.OrdinalIgnoreCase),
         PropagationResolvers = new List<string>(c.PropagationResolvers ?? new()),
         PropagationDohResolvers = new List<string>(c.PropagationDohResolvers ?? new()),
         IpBlocklistsPublic = new List<string>(c.IpBlocklistsPublic ?? new()),
@@ -928,6 +964,12 @@ public sealed class ConfigService
         VmcIssuers = new List<string>(c.VmcIssuers ?? new()),
         CrtShBaseUrl = string.IsNullOrWhiteSpace(c.CrtShBaseUrl) ? Checks.ProbeDefaults.CrtShBaseUrl : c.CrtShBaseUrl,
     };
+
+    /// <summary>Trimmed and de-duplicated. Null — what a config.json written before
+    /// the field existed holds — becomes empty.</summary>
+    private static List<string> NormalizeSelectors(List<string>? src) =>
+        (src ?? new List<string>()).Select(x => x?.Trim() ?? "").Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static Dictionary<string, List<string>> NormalizeKeys(Dictionary<string, List<string>> src)
     {

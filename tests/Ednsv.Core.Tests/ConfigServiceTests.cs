@@ -18,6 +18,40 @@ public sealed class ConfigServiceTests : IDisposable
 
     private static AppConfig Seed() => new() { EnableSmtpProbes = true, KnownDomains = new() { "example.com" } };
 
+    // ── BIMI selectors: stored like DKIM's, and absent from older files ─────
+
+    [Fact]
+    public void BimiSelectors_AreNormalisedLikeDkimSelectors_AndSurviveAReload()
+    {
+        var svc = new ConfigService(_dir);
+        svc.LoadOrSeed(Seed());
+        svc.Replace(new AppConfig
+        {
+            DefaultBimiSelectors = new() { " default ", "news", "NEWS" },
+            BimiSelectors = new() { ["Example.COM."] = new() { "brand", " promo ", "brand" }, ["empty.test"] = new() },
+        }, "alice");
+
+        var cfg = new ConfigService(_dir).LoadOrSeed(Seed());
+
+        Assert.Equal(new[] { "default", "news" }, cfg.DefaultBimiSelectors);
+        Assert.Equal(new[] { "brand", "promo" }, cfg.BimiSelectors["example.com"]);
+        Assert.False(cfg.BimiSelectors.ContainsKey("empty.test"));   // an empty entry is not kept
+    }
+
+    [Fact]
+    public void ConfigWrittenBeforeBimiSelectors_LoadsWithNone()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(Path.Combine(_dir, "config.json"),
+            """{ "enableSmtpProbes": true, "dkimSelectors": { "example.com": ["s1"] } }""");
+
+        var cfg = new ConfigService(_dir).LoadOrSeed(Seed());
+
+        Assert.Empty(cfg.DefaultBimiSelectors);
+        Assert.Empty(cfg.BimiSelectors);
+        Assert.Equal(new[] { "s1" }, cfg.DkimSelectors["example.com"]);
+    }
+
     // ── Corrupt config: quarantine, recover, stay up ────────────────────────
     // The seed branch writes to disk, so treating a bad config.json as "no config
     // yet" would silently replace the operator's settings with env-var defaults.

@@ -230,7 +230,7 @@
         <span>Force these selectors for every domain<span class="desc">By default, when the server has a per-domain DKIM list configured for the domain you query, that list is used instead of the field above. Tick this to override the per-domain config and check exactly the selectors above.</span></span>
       </label>
       <div class="field">
-        <span>BIMI selector<span class="desc">Checks &lt;selector&gt;._bimi.&lt;domain&gt;. Leave blank for <code>default</code>, the one receivers use when a message names none; a domain can publish others and pick one per message with the BIMI-Selector header.</span></span>
+        <span>BIMI selectors<span class="desc">Checks &lt;selector&gt;._bimi.&lt;domain&gt; for each, comma-separated, reported separately. Leave blank to use the domain's configured selectors, or the server's defaults (normally just <code>default</code>, the one receivers use when a message names none). <span id="bimiHint" style="color:var(--accent);"></span></span></span>
         <input type="text" id="optBimiSelector" placeholder="default" autocomplete="off" spellcheck="false">
       </div>
     </div>
@@ -246,6 +246,8 @@ const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results'), runningEl = $('#running');
 const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optPublicResolvers = $('#optPublicResolvers'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim'), optBimiSelector = $('#optBimiSelector');
 let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
+let perDomainBimi = {};  // likewise, for BIMI selectors
+let defaultBimi = ['default'];
 let pollTimer = null;
 let lastDomain = '';
 
@@ -329,6 +331,15 @@ function updateDomainHint() {
   } else {
     hint.textContent = '';
   }
+  // BIMI: what a blank field will check for this domain.
+  const bimiHint = document.getElementById('bimiHint');
+  if (bimiHint) {
+    const typed = optBimiSelector.value.trim();
+    const configured = dom && perDomainBimi[dom];
+    bimiHint.textContent = typed ? ''
+      : configured ? ` (per-domain config will be used for ${dom}: ${configured.join(', ')})`
+      : defaultBimi.join(',') !== 'default' ? ` (server defaults: ${defaultBimi.join(', ')})` : '';
+  }
 }
 
 loadUserOptions();
@@ -368,6 +379,10 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
   if (!userOverrideKeys.has('doh')       && typeof d.enableDoh        === 'boolean') optDoh.checked       = d.enableDoh;
   if (d.perDomainDkimSelectors && typeof d.perDomainDkimSelectors === 'object')
     perDomainDkim = d.perDomainDkimSelectors;
+  if (d.perDomainBimiSelectors && typeof d.perDomainBimiSelectors === 'object')
+    perDomainBimi = d.perDomainBimiSelectors;
+  if (Array.isArray(d.bimiSelectors) && d.bimiSelectors.length)
+    defaultBimi = d.bimiSelectors;
   if (Array.isArray(d.knownDomains))
     knownDomains = d.knownDomains;
   if (Array.isArray(d.dkimSelectors) && !dkimUserCustomized && !optDkim.value)
@@ -378,6 +393,7 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
 [optSmtp, optHttp, optDnsbl, optDirectDns, optPublicResolvers, optDoh].forEach(el => el.addEventListener('change', saveUserOptions));
 optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
 optBimiSelector.addEventListener('change', saveUserOptions);
+optBimiSelector.addEventListener('input', updateDomainHint);
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('blur', saveUserOptions);
@@ -465,6 +481,7 @@ function buildSuggestionGroups(query) {
   const mergedDomains = [];
   for (const d of known) if (!seen.has(d)) { mergedDomains.push(d); seen.add(d); }
   for (const d of dkimKeys) if (!seen.has(d)) { mergedDomains.push(d); seen.add(d); }
+  for (const d of Object.keys(perDomainBimi || {})) if (!seen.has(d)) { mergedDomains.push(d); seen.add(d); }
   const knownItems = mergedDomains.map(d => ({
     d,
     selectors: Array.isArray(dkimMap[d]) ? dkimMap[d] : []
@@ -479,7 +496,7 @@ function buildSuggestionGroups(query) {
 
   return [
     { label: 'Recent',          items: recentItems.filter(matches) },
-    { label: 'Known / DKIM',    items: knownItems.filter(matches) }
+    { label: 'Known / configured', items: knownItems.filter(matches) }
   ].filter(g => g.items.length > 0);
 }
 

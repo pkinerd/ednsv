@@ -224,12 +224,21 @@ public class ValidationOptions
     /// <summary>CA names recognised as authorised BIMI VMC issuers.</summary>
     public List<string> VmcIssuers { get; set; } = new();
     /// <summary>
-    /// BIMI selector to check: the record looked up is &lt;selector&gt;._bimi.&lt;domain&gt;.
-    /// A domain may publish several and pick one per message with the BIMI-Selector
-    /// header. Null or blank means "default", the selector receivers use when a message
-    /// names none. Validated as a DNS name by <see cref="BimiCheck.Selector"/>.
+    /// BIMI selectors to check for this request, comma- or space-separated; each is
+    /// looked up as &lt;selector&gt;._bimi.&lt;domain&gt; and reported separately. Set, it
+    /// wins over <see cref="PerDomainBimiSelectors"/> and <see cref="DefaultBimiSelectors"/>;
+    /// blank defers to them. Resolved and validated by <see cref="BimiCheck.Selectors"/>.
     /// </summary>
     public string? BimiSelector { get; set; }
+
+    /// <summary>Per-domain BIMI selectors keyed by lowercase bare domain — the same
+    /// shape and precedence as <see cref="PerDomainDkimSelectors"/>.</summary>
+    public Dictionary<string, List<string>> PerDomainBimiSelectors { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>BIMI selectors for a domain with no per-domain entry. Empty means
+    /// just "default", the selector receivers use when a message names none.</summary>
+    public List<string> DefaultBimiSelectors { get; set; } = new();
 
     /// <summary>Base URL of the Certificate Transparency (crt.sh) endpoint.</summary>
     public string? CrtShBaseUrl { get; set; }

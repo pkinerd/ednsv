@@ -202,19 +202,64 @@ public sealed class BimiViewTests
 
     [Theory]
     [InlineData("../etc")]
-    [InlineData("a b")]
+    [InlineData("a%b")]
     [InlineData("x/y")]
     [InlineData("a..b")]
     public void HostileSelectors_AreRefusedNotQueried(string selector)
     {
         // It is spliced into a lookup name, so it must be a DNS name and nothing else.
-        var (_, valid) = BimiCheck.Selector(new ValidationOptions { BimiSelector = selector });
-        Assert.False(valid);
+        Assert.False(BimiCheck.IsValidSelector(selector));
 
         var ctx = Context($"v=BIMI1; l={LogoUrl}");
         ctx.Options.BimiSelector = selector;
         var r = Assert.Single(new BimiCheck().RunAsync(Domain, ctx).GetAwaiter().GetResult());
         Assert.StartsWith("Invalid BIMI selector", r.Summary);
+    }
+
+    private static void SeedBimi(CheckContext ctx, string selector, string record) =>
+        Assert.True(ctx.Dns.TryImportRecord(CacheTypes.Dns, $"q:{selector}._bimi.{Domain}:TXT", JsonSerializer.SerializeToNode(
+            new DnsCacheEntry { Answers = { new DnsCacheRecord { Name = $"{selector}._bimi.{Domain}", Type = "TXT", Ttl = 300, Data = { ["Values"] = record } } } }),
+            Later));
+
+    private static List<string> Names(ValidationOptions o) => BimiCheck.Selectors(Domain, o).Select(s => s.Name).ToList();
+
+    [Fact]
+    public void SelectorPrecedence_RequestThenPerDomainThenDefaultsThenDefault()
+    {
+        var o = new ValidationOptions();
+        Assert.Equal(new[] { "default" }, Names(o));
+
+        o.DefaultBimiSelectors = new() { "default", "news" };
+        Assert.Equal(new[] { "default", "news" }, Names(o));
+
+        o.PerDomainBimiSelectors[Domain] = new() { "brand" };
+        Assert.Equal(new[] { "brand" }, Names(o));
+
+        // Comma- or space-separated, de-duplicated case-insensitively.
+        o.BimiSelector = "promo, Promo  offers";
+        Assert.Equal(new[] { "promo", "offers" }, Names(o));
+    }
+
+    [Fact]
+    public void SelectorList_IsCapped()
+    {
+        var o = new ValidationOptions { BimiSelector = string.Join(",", Enumerable.Range(1, 25).Select(i => $"s{i}")) };
+        Assert.Equal(BimiCheck.MaxSelectors, BimiCheck.Selectors(Domain, o).Count);
+    }
+
+    [Fact]
+    public void EachConfiguredSelector_GetsItsOwnResult()
+    {
+        var ctx = Context($"v=BIMI1; l={LogoUrl}");                // default
+        SeedBimi(ctx, "brand2", $"v=BIMI1; l={LogoUrl}; avp=brand");
+        ctx.Options.PerDomainBimiSelectors[Domain] = new() { "default", "brand2" };
+
+        var results = new BimiCheck().RunAsync(Domain, ctx).GetAwaiter().GetResult();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("default", (string?)results[0].Data!["selector"]);
+        Assert.Equal("brand2", (string?)results[1].Data!["selector"]);
+        Assert.EndsWith("(selector 'brand2')", results[1].Summary);
     }
 
     [Fact]

@@ -265,6 +265,9 @@ ValidationOptions BuildDefaultOptions()
         AdditionalDkimSelectors = new List<string>(cfg.DefaultDkimSelectors),
         PerDomainDkimSelectors  = cfg.DkimSelectors
             .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase),
+        DefaultBimiSelectors    = new List<string>(cfg.DefaultBimiSelectors),
+        PerDomainBimiSelectors  = cfg.BimiSelectors
+            .ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value), StringComparer.OrdinalIgnoreCase),
         PropagationResolvers        = new List<string>(cfg.PropagationResolvers),
         PropagationDohResolvers     = new List<string>(cfg.PropagationDohResolvers),
         IpBlocklistsPublic          = new List<string>(cfg.IpBlocklistsPublic),
@@ -962,6 +965,12 @@ app.MapPost("/api/validate", (HttpContext httpCtx, ValidateRequest req, Validati
         options.AdditionalDkimSelectors = defaults.AdditionalDkimSelectors;
     if (options.PerDomainDkimSelectors.Count == 0)
         options.PerDomainDkimSelectors = defaults.PerDomainDkimSelectors;
+    // BIMI selectors likewise: the request's own field wins inside the check, but a body
+    // that sends no config lists must not lose the operator's per-domain and default ones.
+    if (options.PerDomainBimiSelectors.Count == 0)
+        options.PerDomainBimiSelectors = defaults.PerDomainBimiSelectors;
+    if (options.DefaultBimiSelectors.Count == 0)
+        options.DefaultBimiSelectors = defaults.DefaultBimiSelectors;
     // Probe data lists come from server config: when the caller doesn't supply
     // one, fall back to the admin-configured default so a request body can't
     // silently drop the operator's curated lists.
@@ -1133,6 +1142,8 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         BimiSelector       = httpCtx.Request.Query["bimiSelector"].ToString() is { Length: > 0 } bs ? bs : null,
         AdditionalDkimSelectors = defaults.AdditionalDkimSelectors,
         PerDomainDkimSelectors  = defaults.PerDomainDkimSelectors,
+        DefaultBimiSelectors    = defaults.DefaultBimiSelectors,
+        PerDomainBimiSelectors  = defaults.PerDomainBimiSelectors,
         PropagationResolvers        = defaults.PropagationResolvers,
         PropagationDohResolvers     = defaults.PropagationDohResolvers,
         IpBlocklistsPublic          = defaults.IpBlocklistsPublic,
@@ -1218,6 +1229,8 @@ app.MapGet("/api/defaults", (ConfigService cfgSvc) =>
             ? cfg.DefaultDkimSelectors
             : DkimSelectorsCheck.CommonSelectors.ToList(),
         perDomainDkimSelectors = cfg.DkimSelectors,
+        bimiSelectors    = cfg.DefaultBimiSelectors.Count > 0 ? cfg.DefaultBimiSelectors : new List<string> { "default" },
+        perDomainBimiSelectors = cfg.BimiSelectors,
         knownDomains     = cfg.KnownDomains,
         // Which build is answering. See BuildInfo: without it, "is the fix deployed?"
         // cannot be answered from outside, and a rollout that never happened looks

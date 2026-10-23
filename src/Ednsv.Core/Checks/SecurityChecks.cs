@@ -557,17 +557,37 @@ public class BimiCheck : ICheck
         public int ChainLength { get; set; }
     }
 
+    /// <summary>Most selectors checked for one domain — each costs a lookup and, with
+    /// HTTP on, a logo and certificate fetch.</summary>
+    public const int MaxSelectors = 10;
+
     /// <summary>
-    /// The selector to check and whether it is usable: one or more DNS labels of letters,
-    /// digits, hyphens and underscores. It is spliced into a lookup name, so anything else
-    /// — a dot-dot, a slash, a space — is refused rather than queried.
+    /// The selectors to check for a domain, in order, each with whether it is usable.
+    /// The request's own list wins, then the domain's entry, then the defaults, then
+    /// "default" — the precedence DKIM selectors already follow.
     /// </summary>
-    public static (string Name, bool Valid) Selector(ValidationOptions options)
+    public static List<(string Name, bool Valid)> Selectors(string domain, ValidationOptions options)
     {
-        var s = string.IsNullOrWhiteSpace(options.BimiSelector) ? "default" : options.BimiSelector.Trim().TrimEnd('.');
-        var valid = s.Length <= 200 && System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$");
-        return (s, valid);
+        IEnumerable<string> chosen =
+            !string.IsNullOrWhiteSpace(options.BimiSelector)
+                ? options.BimiSelector.Split(new[] { ',', ' ', '\t', ';' }, StringSplitOptions.RemoveEmptyEntries)
+            : options.PerDomainBimiSelectors.TryGetValue(domain.TrimEnd('.').ToLowerInvariant(), out var perDomain) && perDomain.Count > 0
+                ? perDomain
+            : options.DefaultBimiSelectors.Count > 0
+                ? options.DefaultBimiSelectors
+                : new[] { "default" };
+        return chosen.Select(x => x.Trim().TrimEnd('.')).Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaxSelectors)
+            .Select(x => (x, IsValidSelector(x))).ToList();
     }
+
+    /// <summary>
+    /// One or more DNS labels of letters, digits, hyphens and underscores. A selector is
+    /// spliced into a lookup name, so anything else — a dot-dot, a slash, a space — is
+    /// refused rather than queried.
+    /// </summary>
+    public static bool IsValidSelector(string s) =>
+        s.Length <= 200 && System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$");
 
     /// <summary>Largest logo inlined into the result. BIMI recommends under 32 KB; twice
     /// that still previews an oversized logo without letting one bloat every report.</summary>
@@ -590,6 +610,19 @@ public class BimiCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
+        // One result per selector: each is a separate record with its own logo and
+        // certificate, and a message uses exactly one of them.
+        var results = new List<CheckResult>();
+        foreach (var (selector, valid) in Selectors(domain, ctx.Options))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results.Add(await CheckSelectorAsync(domain, ctx, selector, valid));
+        }
+        return results;
+    }
+
+    private async Task<CheckResult> CheckSelectorAsync(string domain, CheckContext ctx, string selector, bool selectorValid)
+    {
         // HTTP off no longer skips the check: the record, its tags and the DMARC side are
         // DNS, and are exactly what a restricted network can still verify. Only the logo
         // and certificate fetches wait on HTTP — and the web UI can then offer to load the
@@ -597,13 +630,12 @@ public class BimiCheck : ICheck
         var http = ctx.Options.EnableHttpProbes;
         var result = new CheckResult { CheckName = Name, Category = Category };
 
-        var (selector, selectorValid) = Selector(ctx.Options);
         if (!selectorValid)
         {
             result.Severity = CheckSeverity.Info;
             result.Summary = $"Invalid BIMI selector '{selector}' — not checked";
             result.Details.Add("A selector is one or more DNS labels of letters, digits, hyphens and underscores");
-            return new List<CheckResult> { result };
+            return result;
         }
 
         try
@@ -619,7 +651,7 @@ public class BimiCheck : ICheck
                 result.Summary = selector == "default"
                     ? "BIMI not configured"
                     : $"No BIMI record for selector '{selector}' ({bimiDomain})";
-                return new List<CheckResult> { result };
+                return result;
             }
 
             var text = string.Join("", bimiRecord.Text);
@@ -628,7 +660,7 @@ public class BimiCheck : ICheck
 
             // #63 - Which selector this is; a message picks another with the BIMI-Selector header.
             result.Details.Add(selector == "default"
-                ? "Selector: default (the one receivers use when a message names none) — check another with the BIMI selector option"
+                ? "Selector: default (the one receivers use when a message names none) — check others with the BIMI selector option or per-domain config"
                 : $"Selector: {selector} (used by messages that name it in a BIMI-Selector header)");
 
             // #32 - v=BIMI1 must be first tag
@@ -899,7 +931,7 @@ public class BimiCheck : ICheck
             result.Errors.Add(ex.Message);
         }
 
-        return new List<CheckResult> { result };
+        return result;
     }
 
     private readonly record struct SvgFacts(bool IsSvg, string? Title, string? ViewBox);

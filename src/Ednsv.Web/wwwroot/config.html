@@ -95,6 +95,39 @@
   details.panel > summary .hint { color: var(--muted); font-weight: normal; font-size: 0.72rem; margin-left: auto; text-transform: none; letter-spacing: 0; }
   details.panel .details-body { padding: 1rem; }
   details.panel .details-body .field:last-child { margin-bottom: 0; }
+  /* Per-domain selectors: a fixed-height, filterable window over the rows, so a few
+     hundred domains do not stretch the page to thousands of pixels. */
+  .dom-tools { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; flex-wrap: wrap; }
+  .dom-tools input[type=text] { flex: 1; min-width: 12rem; }
+  .dom-tools .count { color: var(--muted); font-size: 0.75rem; white-space: nowrap; }
+  .dom-scroll { max-height: 24rem; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+  .dom-scroll thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+  .dom-scroll td { padding: 0.2rem 0.4rem; border-bottom-color: #26334a; }
+  .dom-scroll td input[type=text] { padding: 0.3rem 0.5rem; }
+  .dom-scroll td.dom { width: 30%; }
+  .dom-scroll tr.flash td { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { background: #1e3a5f; } to { background: transparent; } }
+  .dom-add { display: grid; grid-template-columns: 30% 1fr 1fr auto; gap: 0.4rem; margin-bottom: 0.6rem; }
+  /* On a phone four columns leave each input a few characters wide, so a row becomes a
+     small card: domain and remove on top, the two selector fields full width below. */
+  @media (max-width: 640px) {
+    .dom-add { grid-template-columns: 1fr; }
+    .dom-scroll thead { display: none; }
+    .dom-scroll tr[data-dom] { display: grid; grid-template-columns: 1fr auto; gap: 0.3rem 0.4rem; padding: 0.5rem; border-bottom: 1px solid var(--border); }
+    .dom-scroll tr[data-dom] td { display: block; border: 0; padding: 0; width: auto; }
+    .dom-scroll tr[data-dom] td:nth-child(2), .dom-scroll tr[data-dom] td:nth-child(3) { grid-column: 1 / -1; }
+    .dom-scroll tr[data-dom] td.dom { grid-column: 1; grid-row: 1; }
+    .dom-scroll tr[data-dom] td.actions-col { grid-column: 2; grid-row: 1; }
+  }
+  button.icon { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 0.25rem 0.55rem; font-weight: 700; }
+  button.icon:hover { color: var(--error); border-color: var(--error); opacity: 1; }
+  /* value|label lists as rows of two fields, not one delimited line each. */
+  .pairs { display: flex; flex-direction: column; gap: 0.3rem; }
+  .pairs .pair { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 0.4rem; }
+  .pairs .pair.head { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; }
+  .pairs .pair input[type=text] { padding: 0.35rem 0.55rem; font-size: 0.8rem; }
+  .pairs .pair input.bad { border-color: var(--error); }
+  .pairs .add-pair { align-self: flex-start; margin-top: 0.2rem; padding: 0.3rem 0.8rem; }
 </style>
 </head>
 <body>
@@ -162,23 +195,36 @@
     </div>
 
     <div class="panel">
+      <h2>Default BIMI selectors</h2>
+      <p class="subtitle">Checked when a domain has no per-domain entry below and the request names none — each is reported separately. Leave empty for just <code>default</code>. Comma- or whitespace-separated.</p>
+      <textarea id="cfgDefaultBimi" placeholder="default"></textarea>
+    </div>
+
+    <div class="panel">
       <h2>Known domains</h2>
       <p class="subtitle">Operator-curated list shown in the validator page's domain dropdown alongside each user's own history and any domains with per-domain DKIM config. Comma-, space-, or newline-separated. Domains are normalised (lowercased, trailing dot stripped).</p>
       <textarea id="cfgKnownDomains" placeholder="example.com, gmail.com, your-customer.org"></textarea>
     </div>
 
     <details class="panel collapsible" open>
-      <summary>Per-domain DKIM selectors <span class="hint" id="domCountHint"></span></summary>
+      <summary>Per-domain selectors <span class="hint" id="domCountHint"></span></summary>
       <div class="details-body">
-        <p class="subtitle">When a domain matches an entry here, those selectors are checked instead of the default list. Domain match is exact (lowercase, no trailing dot).</p>
-        <table id="domTable">
-          <thead><tr><th>Domain</th><th>Selectors (comma- or space-separated)</th><th></th></tr></thead>
-          <tbody id="domTableBody"></tbody>
-        </table>
-        <div class="add-row">
-          <div class="col"><input type="text" id="newDomain" placeholder="blah.com" autocomplete="off"></div>
-          <div class="col" style="flex:2"><input type="text" id="newSelectors" placeholder="selector1, s2" autocomplete="off"></div>
-          <div><button class="secondary" id="addDomainBtn">Add</button></div>
+        <p class="subtitle">When a domain matches an entry here, its selectors are checked instead of the defaults — DKIM and BIMI independently; leave a cell empty to use the default for that one. Domain match is exact (lowercase, no trailing dot). Comma- or space-separated.</p>
+        <div class="dom-add">
+          <input type="text" id="newDomain" placeholder="domain, e.g. example.com" autocomplete="off" spellcheck="false">
+          <input type="text" id="newSelectors" placeholder="DKIM selectors" autocomplete="off" spellcheck="false">
+          <input type="text" id="newBimiSelectors" placeholder="BIMI selectors" autocomplete="off" spellcheck="false">
+          <button class="secondary" id="addDomainBtn">Add / update</button>
+        </div>
+        <div class="dom-tools">
+          <input type="text" id="domFilter" placeholder="Filter domains or selectors…" autocomplete="off" spellcheck="false">
+          <span class="count" id="domShown"></span>
+        </div>
+        <div class="dom-scroll">
+          <table id="domTable">
+            <thead><tr><th>Domain</th><th>DKIM selectors</th><th>BIMI selectors</th><th></th></tr></thead>
+            <tbody id="domTableBody"></tbody>
+          </table>
         </div>
       </div>
     </details>
@@ -187,18 +233,18 @@
       <h2>Advanced — probe data lists</h2>
       <span class="tier">optional</span>
     </div>
-    <p class="subtitle">Overrides for the built-in probe lists. Collapsed by default — leave a list empty to use the built-in defaults. One entry per line; labelled entries use <code>value|label</code> (the label is shown in reports).</p>
+    <p class="subtitle">Overrides for the built-in probe lists. Collapsed by default — leave a list empty to use the built-in defaults. Plain lists take one entry per line; labelled lists take a value and an optional label shown in reports.</p>
 
     <details class="panel collapsible">
       <summary>Propagation resolvers <span class="hint">DNS consistency sources</span></summary>
       <div class="details-body">
         <div class="field">
-          <label>Propagation resolvers (direct DNS)<span class="desc">Public resolvers queried for the propagation-consistency check. <code>ip|label</code>.</span></label>
-          <textarea id="cfgPropagationResolvers" placeholder="8.8.8.8|Google&#10;1.1.1.1|Cloudflare"></textarea>
+          <label>Propagation resolvers (direct DNS)<span class="desc">Public resolvers queried for the propagation-consistency check.</span></label>
+          <div class="pairs" id="cfgPropagationResolvers" data-value-name="IP address" data-example="8.8.8.8"></div>
         </div>
         <div class="field">
-          <label>Propagation resolvers (DoH JSON endpoints)<span class="desc">Used instead of raw DNS when DoH is enabled. <code>url|label</code>.</span></label>
-          <textarea id="cfgPropagationDohResolvers" placeholder="https://dns.google/resolve|Google (DoH)"></textarea>
+          <label>Propagation resolvers (DoH JSON endpoints)<span class="desc">Used instead of raw DNS when DoH is enabled.</span></label>
+          <div class="pairs" id="cfgPropagationDohResolvers" data-value-name="URL" data-example="https://dns.google/resolve"></div>
         </div>
       </div>
     </details>
@@ -208,19 +254,19 @@
       <div class="details-body">
         <div class="field">
           <label>IP blocklists — public resolvers<span class="desc">DNSBL zones that answer reliably over public DNS.</span></label>
-          <textarea id="cfgIpBlocklistsPublic" placeholder="bl.spamcop.net"></textarea>
+          <div class="pairs" id="cfgIpBlocklistsPublic" data-value-name="Zone" data-example="bl.spamcop.net"></div>
         </div>
         <div class="field">
           <label>IP blocklists — private resolver only<span class="desc">DNSBL zones that need a registered/private resolver.</span></label>
-          <textarea id="cfgIpBlocklistsPrivate" placeholder="zen.spamhaus.org&#10;b.barracudacentral.org"></textarea>
+          <div class="pairs" id="cfgIpBlocklistsPrivate" data-value-name="Zone" data-example="zen.spamhaus.org"></div>
         </div>
         <div class="field">
-          <label>Extended IP blocklists — public<span class="desc">Additional DNSBL zones for the extended check. <code>zone|label</code>.</span></label>
-          <textarea id="cfgExtendedIpBlocklistsPublic" placeholder="all.s5h.net|S5H"></textarea>
+          <label>Extended IP blocklists — public<span class="desc">Additional DNSBL zones for the extended check.</span></label>
+          <div class="pairs" id="cfgExtendedIpBlocklistsPublic" data-value-name="Zone" data-example="all.s5h.net"></div>
         </div>
         <div class="field">
-          <label>Extended IP blocklists — private<span class="desc">Extended DNSBL zones needing a private resolver. <code>zone|label</code>.</span></label>
-          <textarea id="cfgExtendedIpBlocklistsPrivate" placeholder="cbl.abuseat.org|CBL"></textarea>
+          <label>Extended IP blocklists — private<span class="desc">Extended DNSBL zones needing a private resolver.</span></label>
+          <div class="pairs" id="cfgExtendedIpBlocklistsPrivate" data-value-name="Zone" data-example="cbl.abuseat.org"></div>
         </div>
       </div>
     </details>
@@ -409,13 +455,14 @@ function fillForm(cfg) {
     ? cfg.enablePublicResolvers : cfg.enableDirectDns !== false;
   $('#cfgDoh').checked = !!cfg.enableDoh;
   $('#cfgDefaultDkim').value = (cfg.defaultDkimSelectors || []).join(', ');
+  $('#cfgDefaultBimi').value = (cfg.defaultBimiSelectors || []).join(', ');
   $('#cfgKnownDomains').value = (cfg.knownDomains || []).join(', ');
-  $('#cfgPropagationResolvers').value = (cfg.propagationResolvers || []).join('\n');
-  $('#cfgPropagationDohResolvers').value = (cfg.propagationDohResolvers || []).join('\n');
-  $('#cfgIpBlocklistsPublic').value = (cfg.ipBlocklistsPublic || []).join('\n');
-  $('#cfgIpBlocklistsPrivate').value = (cfg.ipBlocklistsPrivate || []).join('\n');
-  $('#cfgExtendedIpBlocklistsPublic').value = (cfg.extendedIpBlocklistsPublic || []).join('\n');
-  $('#cfgExtendedIpBlocklistsPrivate').value = (cfg.extendedIpBlocklistsPrivate || []).join('\n');
+  renderPairs('cfgPropagationResolvers', cfg.propagationResolvers || []);
+  renderPairs('cfgPropagationDohResolvers', cfg.propagationDohResolvers || []);
+  renderPairs('cfgIpBlocklistsPublic', cfg.ipBlocklistsPublic || []);
+  renderPairs('cfgIpBlocklistsPrivate', cfg.ipBlocklistsPrivate || []);
+  renderPairs('cfgExtendedIpBlocklistsPublic', cfg.extendedIpBlocklistsPublic || []);
+  renderPairs('cfgExtendedIpBlocklistsPrivate', cfg.extendedIpBlocklistsPrivate || []);
   $('#cfgDomainBlocklists').value = (cfg.domainBlocklists || []).join('\n');
   $('#cfgArcSelectors').value = (cfg.arcSelectors || []).join('\n');
   $('#cfgDmarcDiscoverySubdomains').value = (cfg.dmarcDiscoverySubdomains || []).join('\n');
@@ -424,50 +471,140 @@ function fillForm(cfg) {
   $('#cfgSrvServiceNames').value = (cfg.srvServiceNames || []).join('\n');
   $('#cfgVmcIssuers').value = (cfg.vmcIssuers || []).join('\n');
   $('#cfgCrtShBaseUrl').value = cfg.crtShBaseUrl || '';
-  renderDomTable(cfg.dkimSelectors || {});
+  renderDomTable(cfg.dkimSelectors || {}, cfg.bimiSelectors || {});
   $('#rawJson').value = JSON.stringify(cfg, null, 2);
 }
 
-function renderDomTable(map) {
-  const tbody = $('#domTableBody');
-  const keys = Object.keys(map);
-  const hint = $('#domCountHint');
-  if (hint) hint.textContent = keys.length ? `${keys.length} domain${keys.length === 1 ? '' : 's'}` : 'none yet';
-  if (keys.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
-    return;
+// ── value|label lists, edited as rows of two fields ───────────────────────
+// Stored exactly as before — "value|label", or a bare "value" when there is no
+// label — so config.json, the JSON tab and the revision history are unchanged.
+// The value is the part before the first "|", so it may not contain one; a
+// label may.
+let formErrors = [];
+
+function splitPair(line) {
+  const i = line.indexOf('|');
+  return i < 0 ? [line, ''] : [line.slice(0, i), line.slice(i + 1)];
+}
+
+function pairRow(value, label, valueName) {
+  const row = document.createElement('div');
+  row.className = 'pair';
+  row.innerHTML = `<input type="text" class="pv" placeholder="${esc(valueName)}" value="${esc(value)}" spellcheck="false">`
+    + `<input type="text" class="pl" placeholder="label (optional)" value="${esc(label)}">`
+    + `<button type="button" class="icon" title="Remove" aria-label="Remove">×</button>`;
+  row.querySelector('button').addEventListener('click', () => row.remove());
+  row.querySelector('.pv').addEventListener('input', e => e.target.classList.remove('bad'));
+  return row;
+}
+
+function renderPairs(id, list) {
+  const box = document.getElementById(id);
+  const valueName = box.dataset.valueName || 'value';
+  box.innerHTML = `<div class="pair head"><span>${esc(valueName)}</span><span>Label</span><span></span></div>`;
+  for (const line of list) {
+    const [v, l] = splitPair(line);
+    box.appendChild(pairRow(v, l, valueName));
   }
-  tbody.innerHTML = '';
-  for (const k of keys.sort()) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td class="dom"><input type="text" data-dom="" value="${esc(k)}" data-orig="${esc(k)}"></td>
-      <td><input type="text" data-sel="${esc(k)}" value="${esc((map[k] || []).join(', '))}"></td>
-      <td class="actions-col"><button class="danger" data-remove="${esc(k)}">Remove</button></td>
-    `;
-    tbody.appendChild(tr);
-  }
-  tbody.querySelectorAll('button[data-remove]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tr = btn.closest('tr');
-      tr.remove();
-      if (!$('#domTableBody').children.length)
-        $('#domTableBody').innerHTML = '<tr><td colspan="3" class="empty">No per-domain overrides yet.</td></tr>';
-    });
+  const add = document.createElement('button');
+  add.type = 'button'; add.className = 'secondary add-pair'; add.textContent = '+ Add';
+  add.addEventListener('click', () => {
+    const row = pairRow('', '', valueName);
+    box.insertBefore(row, add);
+    row.querySelector('.pv').focus();
   });
+  box.appendChild(add);
+}
+
+function collectPairs(id) {
+  const out = [];
+  document.getElementById(id).querySelectorAll('.pair:not(.head)').forEach(row => {
+    const vi = row.querySelector('.pv'), v = vi.value.trim(), l = row.querySelector('.pl').value.trim();
+    vi.classList.remove('bad');
+    if (!v) return;  // an empty row is simply not saved
+    if (/[|\s]/.test(v)) {
+      vi.classList.add('bad');
+      formErrors.push(`"${v}" — a value cannot contain spaces or "|"`);
+      return;
+    }
+    out.push(l ? `${v}|${l}` : v);
+  });
+  return out;
+}
+
+// ── Per-domain selectors: one row per domain, DKIM and BIMI side by side ──
+// Rows live in a fixed-height scrolling box with a filter, so the page stays the
+// same height whether there are three domains or three hundred.
+function normDomain(d) { return (d || '').trim().replace(/\.$/, '').toLowerCase(); }
+
+function domRow(dom, dkim, bimi) {
+  const tr = document.createElement('tr');
+  tr.dataset.dom = dom;
+  tr.innerHTML = `
+    <td class="dom"><input type="text" data-dom value="${esc(dom)}" spellcheck="false"></td>
+    <td><input type="text" data-sel value="${esc(dkim.join(', '))}" placeholder="DKIM selectors (defaults)" spellcheck="false"></td>
+    <td><input type="text" data-bimi value="${esc(bimi.join(', '))}" placeholder="BIMI selectors (defaults)" spellcheck="false"></td>
+    <td class="actions-col"><button type="button" class="icon" data-remove title="Remove" aria-label="Remove">×</button></td>`;
+  return tr;
+}
+
+function renderDomTable(dkimMap, bimiMap) {
+  const tbody = $('#domTableBody');
+  tbody.innerHTML = '';
+  const keys = [...new Set([...Object.keys(dkimMap), ...Object.keys(bimiMap)])].sort();
+  for (const k of keys) tbody.appendChild(domRow(k, dkimMap[k] || [], bimiMap[k] || []));
+  applyDomFilter();
+}
+
+function domRows() { return [...$('#domTableBody').querySelectorAll('tr[data-dom]')]; }
+
+function applyDomFilter() {
+  const q = ($('#domFilter').value || '').trim().toLowerCase();
+  const rows = domRows();
+  let shown = 0;
+  for (const tr of rows) {
+    const text = [...tr.querySelectorAll('input')].map(i => i.value.toLowerCase()).join(' ');
+    const hit = !q || text.includes(q);
+    tr.style.display = hit ? '' : 'none';
+    if (hit) shown++;
+  }
+  const n = rows.length;
+  $('#domCountHint').textContent = n ? `${n} domain${n === 1 ? '' : 's'}` : 'none yet';
+  $('#domShown').textContent = q ? `showing ${shown} of ${n}` : '';
+  const empty = $('#domTableBody').querySelector('tr.empty-row');
+  if (empty) empty.remove();
+  if (!n || !shown) {
+    const tr = document.createElement('tr');
+    tr.className = 'empty-row';
+    tr.innerHTML = `<td colspan="4" class="empty">${n ? 'No domain matches the filter.' : 'No per-domain overrides yet.'}</td>`;
+    $('#domTableBody').appendChild(tr);
+  }
+}
+
+$('#domFilter').addEventListener('input', applyDomFilter);
+$('#domTableBody').addEventListener('click', e => {
+  const b = e.target.closest('button[data-remove]');
+  if (!b) return;
+  b.closest('tr').remove();
+  applyDomFilter();
+});
+
+function collectDomMaps() {
+  const dkim = {}, bimi = {};
+  for (const tr of domRows()) {
+    const k = normDomain(tr.querySelector('input[data-dom]').value);
+    if (!k) continue;
+    const d = parseList(tr.querySelector('input[data-sel]').value);
+    const b = parseList(tr.querySelector('input[data-bimi]').value);
+    if (d.length) dkim[k] = d;
+    if (b.length) bimi[k] = b;
+  }
+  return { dkim, bimi };
 }
 
 function collectFormConfig() {
-  // Read per-domain table fresh from inputs (so renames/edits are picked up)
-  const dkim = {};
-  $('#domTableBody').querySelectorAll('tr').forEach(tr => {
-    const domInput = tr.querySelector('input[data-dom]');
-    const selInput = tr.querySelector('input[data-sel]');
-    if (!domInput || !selInput) return;
-    const k = (domInput.value || '').trim().replace(/\.$/, '').toLowerCase();
-    const list = parseList(selInput.value);
-    if (k && list.length) dkim[k] = list;
-  });
+  formErrors = [];
+  const { dkim, bimi } = collectDomMaps();
   return {
     enableSmtpProbes: $('#cfgSmtp').checked,
     enableHttpProbes: $('#cfgHttp').checked,
@@ -477,13 +614,15 @@ function collectFormConfig() {
     enableDoh:        $('#cfgDoh').checked,
     defaultDkimSelectors: parseList($('#cfgDefaultDkim').value),
     dkimSelectors: dkim,
+    defaultBimiSelectors: parseList($('#cfgDefaultBimi').value),
+    bimiSelectors: bimi,
     knownDomains: parseList($('#cfgKnownDomains').value),
-    propagationResolvers: parseLines($('#cfgPropagationResolvers').value),
-    propagationDohResolvers: parseLines($('#cfgPropagationDohResolvers').value),
-    ipBlocklistsPublic: parseLines($('#cfgIpBlocklistsPublic').value),
-    ipBlocklistsPrivate: parseLines($('#cfgIpBlocklistsPrivate').value),
-    extendedIpBlocklistsPublic: parseLines($('#cfgExtendedIpBlocklistsPublic').value),
-    extendedIpBlocklistsPrivate: parseLines($('#cfgExtendedIpBlocklistsPrivate').value),
+    propagationResolvers: collectPairs('cfgPropagationResolvers'),
+    propagationDohResolvers: collectPairs('cfgPropagationDohResolvers'),
+    ipBlocklistsPublic: collectPairs('cfgIpBlocklistsPublic'),
+    ipBlocklistsPrivate: collectPairs('cfgIpBlocklistsPrivate'),
+    extendedIpBlocklistsPublic: collectPairs('cfgExtendedIpBlocklistsPublic'),
+    extendedIpBlocklistsPrivate: collectPairs('cfgExtendedIpBlocklistsPrivate'),
     domainBlocklists: parseLines($('#cfgDomainBlocklists').value),
     arcSelectors: parseLines($('#cfgArcSelectors').value),
     dmarcDiscoverySubdomains: parseLines($('#cfgDmarcDiscoverySubdomains').value),
@@ -508,24 +647,33 @@ async function saveConfig(payload) {
 }
 
 $('#addDomainBtn').addEventListener('click', () => {
-  const dom = ($('#newDomain').value || '').trim().replace(/\.$/, '').toLowerCase();
-  const sels = parseList($('#newSelectors').value);
+  const dom = normDomain($('#newDomain').value);
+  const dkim = parseList($('#newSelectors').value), bimi = parseList($('#newBimiSelectors').value);
   if (!dom) { showMessage('Domain is required'); return; }
-  if (!sels.length) { showMessage('At least one selector is required'); return; }
-  // Merge into current snapshot, then re-render
-  const map = (current && current.dkimSelectors) ? { ...current.dkimSelectors } : {};
-  // Pick up edits already in the table
-  const formNow = collectFormConfig();
-  Object.assign(map, formNow.dkimSelectors);
-  map[dom] = sels;
-  current = { ...(current || {}), ...formNow, dkimSelectors: map };
-  renderDomTable(map);
-  $('#newDomain').value = '';
-  $('#newSelectors').value = '';
+  let tr = domRows().find(r => normDomain(r.querySelector('input[data-dom]').value) === dom);
+  if (tr) {
+    // Update: a filled-in field replaces that cell; an empty one leaves it alone.
+    if (dkim.length) tr.querySelector('input[data-sel]').value = dkim.join(', ');
+    if (bimi.length) tr.querySelector('input[data-bimi]').value = bimi.join(', ');
+  } else {
+    if (!dkim.length && !bimi.length) { showMessage('Give DKIM or BIMI selectors (or both)'); return; }
+    tr = domRow(dom, dkim, bimi);
+    const after = domRows().find(r => normDomain(r.querySelector('input[data-dom]').value) > dom);
+    $('#domTableBody').insertBefore(tr, after || null);
+  }
+  $('#domFilter').value = '';
+  applyDomFilter();
+  tr.classList.remove('flash'); void tr.offsetWidth; tr.classList.add('flash');
+  tr.scrollIntoView({ block: 'nearest' });
+  $('#newDomain').value = ''; $('#newSelectors').value = ''; $('#newBimiSelectors').value = '';
+  $('#newDomain').focus();
 });
+['#newDomain', '#newSelectors', '#newBimiSelectors'].forEach(id =>
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('#addDomainBtn').click(); }));
 
 $('#saveBtn').addEventListener('click', async () => {
   const payload = collectFormConfig();
+  if (formErrors.length) { showMessage(`Not saved — fix the highlighted entries: ${formErrors.join('; ')}`); return; }
   const result = await saveConfig(payload);
   if (result) { current = result; fillForm(result); await loadHistory(); showMessage('Config saved.', 'ok'); }
 });

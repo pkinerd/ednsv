@@ -955,11 +955,15 @@ public class DuplicateTxtRecordCheck : ICheck
                 result.Warnings.Add("DMARC record found at domain apex instead of _dmarc subdomain — will be ignored by receivers");
 
             // Multiple BIMI records
-            var bimiTxts = await ctx.Dns.GetTxtRecordsAsync($"{BimiCheck.Selector(ctx.Options).Name}._bimi.{domain}");
-            var bimiRecords = bimiTxts.Where(t => string.Join("", t.Text).TrimStart()
-                .StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase)).ToList();
-            if (bimiRecords.Count > 1)
-                result.Warnings.Add($"Multiple BIMI records found ({bimiRecords.Count}) — behavior is undefined");
+            foreach (var (bimiSelector, valid) in BimiCheck.Selectors(domain, ctx.Options))
+            {
+                if (!valid) continue;
+                var bimiTxts = await ctx.Dns.GetTxtRecordsAsync($"{bimiSelector}._bimi.{domain}");
+                var bimiRecords = bimiTxts.Where(t => string.Join("", t.Text).TrimStart()
+                    .StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase)).ToList();
+                if (bimiRecords.Count > 1)
+                    result.Warnings.Add($"Multiple BIMI records found at {bimiSelector}._bimi ({bimiRecords.Count}) — behavior is undefined");
+            }
 
             // Multiple MTA-STS records
             var stsTxts = await ctx.Dns.GetTxtRecordsAsync($"_mta-sts.{domain}");

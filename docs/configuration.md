@@ -467,9 +467,11 @@ the *Probe data lists* panel (or the raw-JSON editor), and take effect on the
 **next validation** — no restart needed. Each is seeded on first run with the
 built-in defaults, so the panel always shows the real values in use.
 
-Enter one entry per line. Some lists accept an optional label after a `|`
-(the `value|label` convention) — the label is what the report displays.
-**Clearing a list falls back to the built-in defaults** for that list.
+Plain lists take one entry per line. Labelled lists are edited as rows of a
+value and an optional label — the label is what the report displays — and are
+stored as `value|label` strings (the value is everything before the first `|`, so
+it cannot contain one; a label can). **Clearing a list falls back to the built-in
+defaults** for that list.
 
 | JSON field                    | Meaning | Entry form |
 |-------------------------------|---------|------------|
@@ -489,6 +491,25 @@ Enter one entry per line. Some lists accept an optional label after a `|`
 | `crtShBaseUrl`                | Base URL for Certificate Transparency lookups (blank = `https://crt.sh/`). | URL |
 
 The CLI does not expose these lists; it always uses the built-in defaults.
+
+### Selectors: defaults and per domain
+
+DNS offers no way to list a domain's DKIM or BIMI selectors, so the ones to check
+are configured. Both follow the same precedence: a list given with the request
+(the validator page's fields, `additionalDkimSelectors` / `bimiSelector`) wins over
+the domain's own entry, which wins over the defaults.
+
+| JSON field             | Meaning |
+|------------------------|---------|
+| `defaultDkimSelectors` | DKIM selectors for a domain with no per-domain entry. |
+| `dkimSelectors`        | Per-domain DKIM selectors, `{ "example.com": ["s1", "k2"] }` — used instead of the defaults. |
+| `defaultBimiSelectors` | BIMI selectors for a domain with no per-domain entry; empty means just `default`. |
+| `bimiSelectors`        | Per-domain BIMI selectors, same shape. Each selector is checked and reported separately (at most 10). |
+
+The Config page edits both per-domain maps in one table — domain, DKIM, BIMI —
+inside a fixed-height scrolling area with a filter, so it stays usable with
+hundreds of domains. A config.json written before the BIMI fields existed loads
+with none, which means `default` only, as before.
 
 ## Runtime config revision history
 
