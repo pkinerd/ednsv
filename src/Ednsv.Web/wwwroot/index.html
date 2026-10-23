@@ -134,6 +134,9 @@
   .bimi .cert { font-size: 0.76rem; display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; }
   .bimi .cert dt { color: var(--muted); }
   .bimi .cert dd { margin: 0; overflow-wrap: anywhere; }
+  /* Its own class, not .recheck-btn: every .recheck-btn on the page starts a recheck. */
+  .bimi .browser-logo { padding: 0.3rem 0.7rem; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--accent); font-family: inherit; font-size: 0.78rem; cursor: pointer; }
+  .bimi .browser-logo:hover { border-color: var(--accent); }
   .bimi .badge { font-size: 0.7rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 4px; background: #1e3a5f; color: var(--info); }
   .bimi-group { margin-bottom: 0.6rem; }
   /* Not uppercased: the titles name tags (l=, a=), and tag names are not to be recased. */
@@ -198,7 +201,7 @@
       </label>
       <label>
         <input type="checkbox" id="optHttp" checked>
-        <span>HTTP/HTTPS lookups<span class="desc">MTA-STS, security.txt, BIMI, Certificate Transparency (crt.sh). Disable when outbound HTTPS is blocked.</span></span>
+        <span>HTTP/HTTPS lookups<span class="desc">MTA-STS, security.txt, BIMI logo and certificate, Certificate Transparency (crt.sh). Disable when outbound HTTPS is blocked; the BIMI record is still checked over DNS.</span></span>
       </label>
       <label>
         <input type="checkbox" id="optDnsbl" checked>
@@ -224,6 +227,10 @@
         <input type="checkbox" id="optForceDkim">
         <span>Force these selectors for every domain<span class="desc">By default, when the server has a per-domain DKIM list configured for the domain you query, that list is used instead of the field above. Tick this to override the per-domain config and check exactly the selectors above.</span></span>
       </label>
+      <div class="field">
+        <span>BIMI selector<span class="desc">Checks &lt;selector&gt;._bimi.&lt;domain&gt;. Leave blank for <code>default</code>, the one receivers use when a message names none; a domain can publish others and pick one per message with the BIMI-Selector header.</span></span>
+        <input type="text" id="optBimiSelector" placeholder="default" autocomplete="off" spellcheck="false">
+      </div>
     </div>
   </section>
 
@@ -235,7 +242,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const form = $('#form'), input = $('#domain'), btn = $('#btn'), recheckSel = $('#recheck'), statusEl = $('#status'), resultsEl = $('#results'), runningEl = $('#running');
-const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optPublicResolvers = $('#optPublicResolvers'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim');
+const optSmtp = $('#optSmtp'), optHttp = $('#optHttp'), optDnsbl = $('#optDnsbl'), optDirectDns = $('#optDirectDns'), optPublicResolvers = $('#optPublicResolvers'), optDoh = $('#optDoh'), optDkim = $('#optDkimSelectors'), optForceDkim = $('#optForceDkim'), optBimiSelector = $('#optBimiSelector');
 let perDomainDkim = {};  // populated from /api/defaults; keyed by domain
 let pollTimer = null;
 let lastDomain = '';
@@ -273,6 +280,7 @@ function loadUserOptions() {
     if (typeof pub === 'boolean') { optPublicResolvers.checked = pub; userOverrideKeys.add('publicResolvers'); }
     if (typeof o.enableDoh === 'boolean')        { optDoh.checked = o.enableDoh;               userOverrideKeys.add('doh'); }
     if (typeof o.forceDkimSelectors === 'boolean') optForceDkim.checked = o.forceDkimSelectors;
+    if (typeof o.bimiSelector === 'string') optBimiSelector.value = o.bimiSelector;
     if (Array.isArray(o.dkimSelectors) && o.dkimSelectors.length > 0) {
       optDkim.value = o.dkimSelectors.join(', ');
       dkimUserCustomized = true;
@@ -288,7 +296,8 @@ function saveUserOptions() {
     enablePublicResolvers: optPublicResolvers.checked,
     enableDoh:          optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
-    dkimSelectors:      parseSelectors(optDkim.value)
+    dkimSelectors:      parseSelectors(optDkim.value),
+    bimiSelector:       optBimiSelector.value.trim()
   };
   try { localStorage.setItem(OPTIONS_KEY, JSON.stringify(o)); } catch {}
 }
@@ -301,7 +310,8 @@ function currentOptions() {
     enablePublicResolvers: optPublicResolvers.checked,
     enableDoh:        optDoh.checked,
     forceDkimSelectors: optForceDkim.checked,
-    additionalDkimSelectors: parseSelectors(optDkim.value)
+    additionalDkimSelectors: parseSelectors(optDkim.value),
+    bimiSelector: optBimiSelector.value.trim() || null
   };
 }
 
@@ -365,6 +375,7 @@ fetch('/api/defaults').then(r => r.ok ? r.json() : null).then(d => {
 
 [optSmtp, optHttp, optDnsbl, optDirectDns, optPublicResolvers, optDoh].forEach(el => el.addEventListener('change', saveUserOptions));
 optForceDkim.addEventListener('change', () => { saveUserOptions(); updateDomainHint(); });
+optBimiSelector.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('input', () => { dkimUserCustomized = true; });
 optDkim.addEventListener('change', saveUserOptions);
 optDkim.addEventListener('blur', saveUserOptions);
@@ -874,14 +885,29 @@ function renderReport(report, domain, { live = false } = {}) {
 // data: URI by the server, the certificate it parsed, and a checklist. The logo goes in
 // an <img>, where browsers draw SVG without scripts or external loads — the page never
 // fetches from the brand's server and an untrusted SVG cannot run anything.
+// Logo URLs the viewer has chosen to load from their own browser. Kept across live
+// re-renders, which rebuild the panel each time another check lands.
+const browserLogos = new Set();
+
 function renderBimi(v) {
   const name = v.displayName || v.domain || '';
   const logo = v.logo && v.logo.dataUri;
   const alt = (v.logo && v.logo.title) || name;
+  // Offered only when the server has no copy to show: it could not fetch (HTTP probes
+  // off, or its network cannot reach the host) or the logo was too large to inline. A
+  // click, never automatic: loading it tells the logo's host the viewer's address, which
+  // matters when the domain under inspection is a suspicious one. Only https:, the only
+  // scheme BIMI allows, and with no referrer so this page's URL is not sent either.
+  const logoUrl = v.logo && v.logo.url;
+  const canTryBrowser = !logo && logoUrl && /^https:\/\//i.test(logoUrl);
+  const viaBrowser = canTryBrowser && browserLogos.has(logoUrl);
   const img = logo
     ? `<img src="${esc(logo)}" alt="${esc(alt)}">`
-    : `<span class="initial">${esc((name[0] || '?').toUpperCase())}</span>`;
-  let h = '<div class="bimi"><div class="bimi-preview">';
+    : viaBrowser
+      ? `<img src="${esc(logoUrl)}" alt="${esc(alt)}" referrerpolicy="no-referrer" onerror="this.closest('.bimi').querySelector('.browser-note').textContent='Your browser could not load it either.'">`
+      : `<span class="initial">${esc((name[0] || '?').toUpperCase())}</span>`;
+  // The view rides along only when the browser-load button needs it to redraw the panel.
+  let h = `<div class="bimi"${canTryBrowser ? ` data-view="${esc(JSON.stringify(v))}"` : ''}><div class="bimi-preview">`;
   h += `<div class="inbox"><div class="avatar circle">${img}</div><div>`
      + `<div class="from">${esc(name)}</div><div class="addr">via ${esc(v.domain || '')}</div>`
      + `<div class="subj">How the brand logo appears beside a message</div></div></div>`;
@@ -889,9 +915,15 @@ function renderBimi(v) {
      + `<figure><div class="avatar square lg">${img}</div><figcaption>rounded square</figcaption></figure></div>`;
   if (!logo) {
     const why = !v.logo ? 'No logo URL in the record.'
-      : !v.logo.reachable ? 'The logo could not be retrieved.'
+      : v.logo.fetched === false ? 'The server did not fetch the logo (HTTP probes are off).'
+      : !v.logo.reachable ? 'The server could not retrieve the logo.'
       : 'The logo is too large to preview here.';
     h += `<div class="note">${why}</div>`;
+    if (viaBrowser)
+      h += `<div class="note browser-note">Loaded by your browser from ${esc(hostOf(logoUrl))} — not validated or hash-checked by the server.</div>`;
+    else if (canTryBrowser)
+      h += `<div><button type="button" class="browser-logo" data-url="${esc(logoUrl)}">Load from your browser</button>`
+         + `<div class="note">Your browser will contact ${esc(hostOf(logoUrl))} directly.</div></div>`;
   }
   const c = v.certificate;
   if (c && (c.issuer || c.subject)) {
@@ -925,6 +957,23 @@ function renderBimi(v) {
   return h + '</div></div>';
 }
 
+function hostOf(url) {
+  try { return new URL(url).host; } catch { return url; }
+}
+
+// Delegated, because the panel is rebuilt on every live update.
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('.browser-logo');
+  if (!b) return;
+  browserLogos.add(b.dataset.url);
+  const card = b.closest('.check');
+  const panel = card && card.querySelector('.bimi');
+  if (!panel) return;
+  // Re-render just this panel from the view it was drawn from.
+  const v = JSON.parse(panel.dataset.view);
+  panel.outerHTML = renderBimi(v);
+});
+
 function cn(dn) {
   const m = /(?:^|,\s*)CN=("([^"]*)"|[^,]*)/.exec(dn || '');
   return m ? (m[2] ?? m[1]).trim() : dn;
@@ -944,8 +993,13 @@ function toggleCat(header) {
   checks.classList.toggle('hidden');
 }
 
+// Escapes quotes as well as & < >, because results go into attributes too (alt, title,
+// data-*) and much of what they carry is chosen by the domain being inspected — its BIMI
+// record's URLs, its logo's <title>. The textContent/innerHTML idiom this replaced leaves
+// quotes alone, so a title such as  x" onload="…  closed the attribute and ran.
 function esc(s) {
-  const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML;
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 </script>
 </body>

@@ -93,7 +93,9 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+// Quotes too: the result is also placed inside attributes (value=, data-*).
+const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
 let state = { me: null, users: [] };
 

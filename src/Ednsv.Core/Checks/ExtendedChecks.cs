@@ -955,7 +955,7 @@ public class DuplicateTxtRecordCheck : ICheck
                 result.Warnings.Add("DMARC record found at domain apex instead of _dmarc subdomain — will be ignored by receivers");
 
             // Multiple BIMI records
-            var bimiTxts = await ctx.Dns.GetTxtRecordsAsync($"default._bimi.{domain}");
+            var bimiTxts = await ctx.Dns.GetTxtRecordsAsync($"{BimiCheck.Selector(ctx.Options).Name}._bimi.{domain}");
             var bimiRecords = bimiTxts.Where(t => string.Join("", t.Text).TrimStart()
                 .StartsWith("v=BIMI1", StringComparison.OrdinalIgnoreCase)).ToList();
             if (bimiRecords.Count > 1)

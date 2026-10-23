@@ -68,7 +68,7 @@ dotnet run --project src/Ednsv.Cli -- --domains-file domains.txt --output-dir re
 | Option | Disables |
 |--------|----------|
 | `--no-smtp` | SMTP probes (ports 25/465/587): SMTP, DANE, MX STARTTLS, Postmaster/Abuse, submission ports, IPv6 SMTP |
-| `--no-http` | HTTP/HTTPS probes: MTA-STS, security.txt, BIMI, Certificate Transparency |
+| `--no-http` | HTTP/HTTPS probes: MTA-STS, security.txt, BIMI logo and certificate, Certificate Transparency. The BIMI record and its DMARC requirements are still checked over DNS |
 | `--no-dnsbl` | Public DNSBL/RHSBL queries |
 | `--no-direct-dns` | All direct DNS: both of the next two |
 | `--no-authoritative-dns` | Direct queries to authoritative nameservers: lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. For networks that reach the public resolvers but not arbitrary nameservers |
@@ -304,7 +304,7 @@ The `ValidationTracker` class (in `src/Ednsv.Web/Program.cs`) manages async job 
 
 Single-page web apps served from `src/Ednsv.Web/wwwroot/`:
 
-- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck. Results appear as each check finishes, alongside a panel of the checks still running with their elapsed time; every finding shows how long its check took, and the slowest checks are summarised above the results. A BIMI result also draws the logo as an inbox would show it (circle and rounded-square avatars), the mark certificate's details (VMC or CMC, organisation, issuer, validity, mark type, trademark registration) and a requirement-by-requirement checklist, from the structured view the check attaches as `CheckResult.Data`.
+- **`index.html`** — the validator: dark theme, vanilla JavaScript (no framework dependencies); submits via POST /api/validate, polls GET /api/status/{jobId} for real-time progress, displays results with severity filtering, and supports recheck. Results appear as each check finishes, alongside a panel of the checks still running with their elapsed time; every finding shows how long its check took, and the slowest checks are summarised above the results. A BIMI selector other than `default` can be checked from the options panel (CLI: `--bimi-selector`, API: `bimiSelector`). A BIMI result also draws the logo as an inbox would show it (circle and rounded-square avatars), the mark certificate's details (VMC or CMC, organisation, issuer, validity, mark type, trademark registration) and a requirement-by-requirement checklist, from the structured view the check attaches as `CheckResult.Data`. When the server could not fetch the logo (HTTP probes off, or its network cannot reach the host), the panel offers to load it from the viewer's own browser — on a click, never automatically, since that tells the logo's host the viewer's address; with no referrer; https only; and labelled as not validated by the server.
 - **`config.html`** — admin console for the live runtime config (toggles, DKIM selectors, probe data lists) and user/token management, backed by the `/api/config*` and `/api/auth/users*` endpoints.
 
 ## Docker

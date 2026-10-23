@@ -78,7 +78,8 @@ var maskSaltOption = new Option<string?>("--mask-salt") { Description = "Static 
 var liveIndexOption = new Option<bool>("--live-index") { Description = "Rewrite the index and issues files after each domain completes (use with --output-dir)" };
 // Network-category opt-out flags (default ON; pass to disable in restricted environments)
 var noSmtpOption = new Option<bool>("--no-smtp") { Description = "Skip all SMTP probes (port 25/465/587). Use in environments where outbound SMTP is blocked. Affected categories: SMTP, DANE, MX STARTTLS, Postmaster/Abuse, Submission ports, IPv6 SMTP" };
-var noHttpOption = new Option<bool>("--no-http") { Description = "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked" };
+var noHttpOption = new Option<bool>("--no-http") { Description = "Skip HTTP/HTTPS probes (MTA-STS, security.txt, BIMI logo and certificate, Certificate Transparency / crt.sh). Use when outbound HTTP/HTTPS is blocked. The BIMI record itself is still checked over DNS" };
+var bimiSelectorOption = new Option<string?>("--bimi-selector") { Description = "BIMI selector to check (default: \"default\"). A domain can publish several and pick one per message with the BIMI-Selector header" };
 var noDnsblOption = new Option<bool>("--no-dnsbl") { Description = "Skip public DNSBL/RHSBL queries (Spamhaus, Barracuda, SpamCop, etc.). Use when public blocklist providers refuse or rate-limit queries from your resolver" };
 var noDirectDnsOption = new Option<bool>("--no-direct-dns") { Description = "Skip checks that bypass the configured resolver to query specific authoritative nameservers or public resolvers (8.8.8.8 / 1.1.1.1 / 9.9.9.9): propagation, lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver. Use in environments where outbound raw UDP/TCP 53 to internet IPs is blocked" };
 var noAuthoritativeDnsOption = new Option<bool>("--no-authoritative-dns") { Description = "Skip only the checks that query authoritative nameservers directly (lame delegation, SOA serial, glue, parent delegation, AXFR, open recursive resolver), keeping the public-resolver propagation check. For networks that reach 8.8.8.8 / 1.1.1.1 / 9.9.9.9 but not arbitrary nameservers" };
@@ -98,6 +99,7 @@ var rootCommand = new RootCommand("ednsv - DNS Email Validation Tool" + CheckDes
     openResolverOption,
     openResolverDomainOption,
     dkimSelectorsOption,
+    bimiSelectorOption,
     dnsServerOption,
     privateDnsblOption,
     cacheOption,
@@ -264,6 +266,7 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
         EnableOpenResolver = enableOpenResolver,
         OpenResolverTestDomain = resolverTestDomain ?? "www.google.com",
         AdditionalDkimSelectors = parsedSelectors,
+        BimiSelector = parseResult.GetValue(bimiSelectorOption),
         EnablePrivateDnsbl = enablePrivateDnsbl,
         EnableSmtpProbes = !noSmtp,
         EnableHttpProbes = !noHttp,

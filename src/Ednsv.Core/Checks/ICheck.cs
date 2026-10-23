@@ -223,6 +223,14 @@ public class ValidationOptions
     public List<string> SrvServiceNames { get; set; } = new();
     /// <summary>CA names recognised as authorised BIMI VMC issuers.</summary>
     public List<string> VmcIssuers { get; set; } = new();
+    /// <summary>
+    /// BIMI selector to check: the record looked up is &lt;selector&gt;._bimi.&lt;domain&gt;.
+    /// A domain may publish several and pick one per message with the BIMI-Selector
+    /// header. Null or blank means "default", the selector receivers use when a message
+    /// names none. Validated as a DNS name by <see cref="BimiCheck.Selector"/>.
+    /// </summary>
+    public string? BimiSelector { get; set; }
+
     /// <summary>Base URL of the Certificate Transparency (crt.sh) endpoint.</summary>
     public string? CrtShBaseUrl { get; set; }
 }

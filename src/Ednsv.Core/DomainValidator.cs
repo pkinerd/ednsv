@@ -640,7 +640,11 @@ public class DomainValidator
             allTasks.Add(_dns.QueryAsync($"_dmarc.{domain}", DnsClient.QueryType.TXT));
             allTasks.Add(_dns.QueryAsync($"_mta-sts.{domain}", DnsClient.QueryType.TXT));
             allTasks.Add(_dns.QueryAsync($"_smtp._tls.{domain}", DnsClient.QueryType.TXT));
-            allTasks.Add(_dns.QueryAsync($"_bimi.{domain}", DnsClient.QueryType.TXT));
+            // <selector>._bimi, the name BimiCheck reads. This warmed "_bimi.<domain>", which
+            // nothing queries, so the check always paid for its own lookup.
+            var (bimiSelector, bimiSelectorValid) = Checks.BimiCheck.Selector(ctx.Options);
+            if (bimiSelectorValid)
+                allTasks.Add(_dns.QueryAsync($"{bimiSelector}._bimi.{domain}", DnsClient.QueryType.TXT));
             allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CAA));
             allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.CNAME));
             allTasks.Add(_dns.QueryAsync(domain, DnsClient.QueryType.DS));

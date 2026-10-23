@@ -522,6 +522,9 @@ public class BimiCheck : ICheck
     public sealed class LogoInfo
     {
         public string Url { get; set; } = "";
+        /// <summary>False when the server did not try (HTTP probes off) — as opposed to
+        /// trying and failing, which <see cref="Reachable"/> reports.</summary>
+        public bool Fetched { get; set; }
         public bool Reachable { get; set; }
         public int StatusCode { get; set; }
         public int? SizeBytes { get; set; }
@@ -554,6 +557,18 @@ public class BimiCheck : ICheck
         public int ChainLength { get; set; }
     }
 
+    /// <summary>
+    /// The selector to check and whether it is usable: one or more DNS labels of letters,
+    /// digits, hyphens and underscores. It is spliced into a lookup name, so anything else
+    /// — a dot-dot, a slash, a space — is refused rather than queried.
+    /// </summary>
+    public static (string Name, bool Valid) Selector(ValidationOptions options)
+    {
+        var s = string.IsNullOrWhiteSpace(options.BimiSelector) ? "default" : options.BimiSelector.Trim().TrimEnd('.');
+        var valid = s.Length <= 200 && System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z0-9_-]{1,63}(\.[A-Za-z0-9_-]{1,63})*$");
+        return (s, valid);
+    }
+
     /// <summary>Largest logo inlined into the result. BIMI recommends under 32 KB; twice
     /// that still previews an oversized logo without letting one bloat every report.</summary>
     public const int MaxInlineLogoBytes = 64 * 1024;
@@ -575,14 +590,25 @@ public class BimiCheck : ICheck
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
     {
-        if (!ctx.Options.EnableHttpProbes)
-            return CheckContext.SkippedResult(this, "Skipped: HTTP/HTTPS probes disabled (--no-http)");
-
+        // HTTP off no longer skips the check: the record, its tags and the DMARC side are
+        // DNS, and are exactly what a restricted network can still verify. Only the logo
+        // and certificate fetches wait on HTTP — and the web UI can then offer to load the
+        // logo from the viewer's own browser.
+        var http = ctx.Options.EnableHttpProbes;
         var result = new CheckResult { CheckName = Name, Category = Category };
+
+        var (selector, selectorValid) = Selector(ctx.Options);
+        if (!selectorValid)
+        {
+            result.Severity = CheckSeverity.Info;
+            result.Summary = $"Invalid BIMI selector '{selector}' — not checked";
+            result.Details.Add("A selector is one or more DNS labels of letters, digits, hyphens and underscores");
+            return new List<CheckResult> { result };
+        }
 
         try
         {
-            var bimiDomain = $"default._bimi.{domain}";
+            var bimiDomain = $"{selector}._bimi.{domain}";
             var txts = await ctx.Dns.GetTxtRecordsAsync(bimiDomain);
             var bimiRecord = txts.FirstOrDefault(t => t.Text.Any(s =>
                 s.Contains("v=BIMI1", StringComparison.OrdinalIgnoreCase)));
@@ -590,16 +616,20 @@ public class BimiCheck : ICheck
             if (bimiRecord == null)
             {
                 result.Severity = CheckSeverity.Info;
-                result.Summary = "BIMI not configured";
+                result.Summary = selector == "default"
+                    ? "BIMI not configured"
+                    : $"No BIMI record for selector '{selector}' ({bimiDomain})";
                 return new List<CheckResult> { result };
             }
 
             var text = string.Join("", bimiRecord.Text);
             result.Details.Add($"BIMI: {text}");
-            var view = new View { Domain = domain, RecordName = bimiDomain, Record = text };
+            var view = new View { Domain = domain, Selector = selector, RecordName = bimiDomain, Record = text };
 
-            // #63 - Non-default BIMI selector note
-            result.Details.Add("Only the 'default' BIMI selector is checked — use BIMI-Selector header for non-default selectors");
+            // #63 - Which selector this is; a message picks another with the BIMI-Selector header.
+            result.Details.Add(selector == "default"
+                ? "Selector: default (the one receivers use when a message names none) — check another with the BIMI selector option"
+                : $"Selector: {selector} (used by messages that name it in a BIMI-Selector header)");
 
             // #32 - v=BIMI1 must be first tag
             var textTrimmed = text.TrimStart();
@@ -692,6 +722,18 @@ public class BimiCheck : ICheck
                         if (!singleLogoUrl.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
                             result.Warnings.Add($"BIMI logo should be SVG format: {singleLogoUrl}");
 
+                        if (!http)
+                        {
+                            result.Details.Add("Logo not fetched (HTTP probes disabled)");
+                            if (first)
+                            {
+                                view.Logo = new LogoInfo { Url = singleLogoUrl, Fetched = false };
+                                view.Add("Logo (l=)", "Logo URL", result.Warnings.Count > urlWarnings ? View.Warn : View.Info, singleLogoUrl,
+                                    result.Warnings.Skip(urlWarnings).Concat(new[] { "Not fetched — HTTP probes are disabled, so the logo is not validated" }));
+                            }
+                            continue;
+                        }
+
                         var (success, svgContent, statusCode, svgContentType) = await ctx.Http.GetWithHeadersAsync(singleLogoUrl);
                         result.Details.Add($"Logo reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
                         if (!success)
@@ -699,7 +741,7 @@ public class BimiCheck : ICheck
 
                         if (first)
                         {
-                            view.Logo = new LogoInfo { Url = singleLogoUrl, Reachable = success, StatusCode = statusCode };
+                            view.Logo = new LogoInfo { Url = singleLogoUrl, Fetched = true, Reachable = success, StatusCode = statusCode };
                             view.Add("Logo (l=)", "Logo URL", success ? (result.Warnings.Count > urlWarnings ? View.Warn : View.Pass) : View.Fail,
                                 singleLogoUrl, result.Warnings.Skip(urlWarnings).Concat(new[] { $"HTTP {statusCode}" }));
                         }
@@ -752,40 +794,49 @@ public class BimiCheck : ICheck
                 if (!vmcUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
                     result.Warnings.Add("VMC URL must use HTTPS");
 
-                var (success, pemContent, statusCode) = await ctx.Http.GetAsync(vmcUrl);
-                result.Details.Add($"VMC reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
-                if (!success)
+                if (!http)
                 {
-                    result.Warnings.Add("VMC URL is not reachable");
+                    result.Details.Add("Certificate not fetched (HTTP probes disabled)");
+                    view.Add("Certificate (a=)", "Mark certificate", result.Warnings.Count > certWarnings ? View.Warn : View.Info, vmcUrl,
+                        result.Warnings.Skip(certWarnings).Concat(new[] { "Not fetched — HTTP probes are disabled, so the certificate is not validated" }));
                 }
                 else
                 {
-                    ValidateVmc(pemContent, domain, fetchedSvgContent, result,
-                        ProbeList.OrDefault(ctx.Options.VmcIssuers, ProbeDefaults.VmcIssuers), view.Certificate);
-                }
+                    var (success, pemContent, statusCode) = await ctx.Http.GetAsync(vmcUrl);
+                    result.Details.Add($"VMC reachable: {(success ? "Yes" : "No")} (HTTP {statusCode})");
+                    if (!success)
+                    {
+                        result.Warnings.Add("VMC URL is not reachable");
+                    }
+                    else
+                    {
+                        ValidateVmc(pemContent, domain, fetchedSvgContent, result,
+                            ProbeList.OrDefault(ctx.Options.VmcIssuers, ProbeDefaults.VmcIssuers), view.Certificate);
+                    }
 
-                var c = view.Certificate;
-                var issues = result.Warnings.Skip(certWarnings).ToList();
-                var summary = string.Join(" · ", new[]
-                {
-                    c.Type ?? "Mark certificate",
-                    c.Issuer != null ? ExtractCn(c.Issuer) : null,
-                    c.NotAfter != null ? $"valid to {c.NotAfter}" : null,
-                }.Where(x => x != null));
-                view.Add("Certificate (a=)", "Mark certificate", !success ? View.Fail : issues.Count == 0 ? View.Pass : View.Warn,
-                    success ? summary : vmcUrl, issues.Count > 0 ? issues : new[] { $"HTTP {statusCode}" });
-                if (c.LogoHashMatches is { } matches)
-                    view.Add("Certificate (a=)", "Logo matches certificate", matches ? View.Pass : View.Fail,
-                        matches ? "hash matches" : "hash differs",
-                        matches ? null : new[] { "The logo at l= is not the one the certificate was issued for — receivers that check will not display it" });
-                if (c.MarkType != null || c.TrademarkRegistration != null)
-                    view.Add("Certificate (a=)", "Mark", View.Info, c.MarkType ?? "registered mark",
-                        new[]
-                        {
-                            c.TrademarkOffice != null ? $"Office: {c.TrademarkOffice}" : null,
-                            c.TrademarkCountry != null ? $"Country/region: {c.TrademarkCountry}" : null,
-                            c.TrademarkRegistration != null ? $"Registration: {c.TrademarkRegistration}" : null,
-                        }.Where(x => x != null)!);
+                    var c = view.Certificate;
+                    var issues = result.Warnings.Skip(certWarnings).ToList();
+                    var summary = string.Join(" · ", new[]
+                    {
+                        c.Type ?? "Mark certificate",
+                        c.Issuer != null ? ExtractCn(c.Issuer) : null,
+                        c.NotAfter != null ? $"valid to {c.NotAfter}" : null,
+                    }.Where(x => x != null));
+                    view.Add("Certificate (a=)", "Mark certificate", !success ? View.Fail : issues.Count == 0 ? View.Pass : View.Warn,
+                        success ? summary : vmcUrl, issues.Count > 0 ? issues : new[] { $"HTTP {statusCode}" });
+                    if (c.LogoHashMatches is { } matches)
+                        view.Add("Certificate (a=)", "Logo matches certificate", matches ? View.Pass : View.Fail,
+                            matches ? "hash matches" : "hash differs",
+                            matches ? null : new[] { "The logo at l= is not the one the certificate was issued for — receivers that check will not display it" });
+                    if (c.MarkType != null || c.TrademarkRegistration != null)
+                        view.Add("Certificate (a=)", "Mark", View.Info, c.MarkType ?? "registered mark",
+                            new[]
+                            {
+                                c.TrademarkOffice != null ? $"Office: {c.TrademarkOffice}" : null,
+                                c.TrademarkCountry != null ? $"Country/region: {c.TrademarkCountry}" : null,
+                                c.TrademarkRegistration != null ? $"Registration: {c.TrademarkRegistration}" : null,
+                            }.Where(x => x != null)!);
+                }
             }
             else
             {
@@ -835,8 +886,11 @@ public class BimiCheck : ICheck
                 view.Add("DMARC", "DMARC record", View.Fail, "none", new[] { "BIMI requires a DMARC policy at enforcement" });
             }
 
-            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : CheckSeverity.Pass;
-            result.Summary = "BIMI record found";
+            // Without the fetches the logo and certificate are unverified, so a clean record
+            // is Info rather than Pass: nothing wrong was found, but not everything was looked at.
+            result.Severity = result.Warnings.Any() ? CheckSeverity.Warning : http ? CheckSeverity.Pass : CheckSeverity.Info;
+            result.Summary = http ? "BIMI record found" : "BIMI record found — logo and certificate not checked (HTTP probes disabled)";
+            if (selector != "default") result.Summary += $" (selector '{selector}')";
             result.Data = System.Text.Json.JsonSerializer.SerializeToNode(view, ViewJson)?.AsObject();
         }
         catch (Exception ex)

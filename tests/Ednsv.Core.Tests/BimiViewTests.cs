@@ -32,17 +32,17 @@ public sealed class BimiViewTests
     private static DateTime Later => DateTime.UtcNow.AddMinutes(10);
 
     private static CheckContext Context(string record, string? dmarc = "v=DMARC1; p=reject",
-        string? pem = null, string svg = Svg)
+        string? pem = null, string svg = Svg, string selector = "default")
     {
         var dns = new DnsResolverService(new[] { IPAddress.Loopback });
         var entry = new DnsCacheEntry
         {
             Answers =
             {
-                new DnsCacheRecord { Name = $"default._bimi.{Domain}", Type = "TXT", Ttl = 300, Data = { ["Values"] = record } },
+                new DnsCacheRecord { Name = $"{selector}._bimi.{Domain}", Type = "TXT", Ttl = 300, Data = { ["Values"] = record } },
             },
         };
-        Assert.True(dns.TryImportRecord(CacheTypes.Dns, $"q:default._bimi.{Domain}:TXT", JsonSerializer.SerializeToNode(entry), Later));
+        Assert.True(dns.TryImportRecord(CacheTypes.Dns, $"q:{selector}._bimi.{Domain}:TXT", JsonSerializer.SerializeToNode(entry), Later));
 
         var http = new HttpProbeService();
         Assert.True(http.TryImportRecord(CacheTypes.HttpGetHeaders, LogoUrl, JsonSerializer.SerializeToNode(
@@ -173,6 +173,68 @@ public sealed class BimiViewTests
         Assert.Equal(CheckSeverity.Warning, r.Severity);
         Assert.Equal("none — self-asserted", (string?)Item(view, "Mark certificate")["value"]);
         Assert.Equal(BimiCheck.View.Fail, (string?)Item(view, "Policy (p=)")["status"]);
+    }
+
+    [Fact]
+    public void NonDefaultSelector_ChecksThatSelectorsRecord()
+    {
+        var ctx = Context($"v=BIMI1; l={LogoUrl}", selector: "brand2");
+        ctx.Options.BimiSelector = "brand2";
+        var view = Run(ctx, out var r);
+
+        Assert.Equal("brand2", (string?)view["selector"]);
+        Assert.Equal($"brand2._bimi.{Domain}", (string?)view["recordName"]);
+        Assert.EndsWith("(selector 'brand2')", r.Summary);
+    }
+
+    [Fact]
+    public void NonDefaultSelector_WithNoRecord_SaysWhichNameWasMissing()
+    {
+        var ctx = Context($"v=BIMI1; l={LogoUrl}");   // published under default only
+        // The zone's answer for the other selector: NXDOMAIN, seeded rather than queried.
+        Assert.True(ctx.Dns.TryImportRecord(CacheTypes.Dns, $"q:other._bimi.{Domain}:TXT",
+            JsonSerializer.SerializeToNode(new DnsCacheEntry { ResponseCode = 3, HasError = true }), Later));
+        ctx.Options.BimiSelector = "other";
+        var r = Assert.Single(new BimiCheck().RunAsync(Domain, ctx).GetAwaiter().GetResult());
+
+        Assert.Equal($"No BIMI record for selector 'other' (other._bimi.{Domain})", r.Summary);
+    }
+
+    [Theory]
+    [InlineData("../etc")]
+    [InlineData("a b")]
+    [InlineData("x/y")]
+    [InlineData("a..b")]
+    public void HostileSelectors_AreRefusedNotQueried(string selector)
+    {
+        // It is spliced into a lookup name, so it must be a DNS name and nothing else.
+        var (_, valid) = BimiCheck.Selector(new ValidationOptions { BimiSelector = selector });
+        Assert.False(valid);
+
+        var ctx = Context($"v=BIMI1; l={LogoUrl}");
+        ctx.Options.BimiSelector = selector;
+        var r = Assert.Single(new BimiCheck().RunAsync(Domain, ctx).GetAwaiter().GetResult());
+        Assert.StartsWith("Invalid BIMI selector", r.Summary);
+    }
+
+    [Fact]
+    public void HttpOff_StillChecksTheRecordAndDmarc_ButFetchesNothing()
+    {
+        // --no-http used to skip BIMI outright, though the record and the DMARC side are
+        // DNS. Now only the fetches wait — and the UI can offer the viewer's browser.
+        var ctx = Context($"v=BIMI1; l={LogoUrl}; a={CertUrl}", pem: MarkCertificatePem(Svg));
+        ctx.Options.EnableHttpProbes = false;
+        var view = Run(ctx, out var r);
+
+        Assert.Equal(CheckSeverity.Info, r.Severity);
+        Assert.StartsWith("BIMI record found — logo and certificate not checked", r.Summary);
+        Assert.False((bool?)view["logo"]!["fetched"]);
+        Assert.Null(view["logo"]!["dataUri"]);
+        Assert.Equal(BimiCheck.View.Info, (string?)Item(view, "Logo URL")["status"]);
+        Assert.Equal(BimiCheck.View.Info, (string?)Item(view, "Mark certificate")["status"]);
+        Assert.Equal(BimiCheck.View.Pass, (string?)Item(view, "Policy (p=)")["status"]);
+        // Nothing the certificate would have told us is claimed.
+        Assert.Null(view["certificate"]!["type"]);
     }
 
     [Fact]

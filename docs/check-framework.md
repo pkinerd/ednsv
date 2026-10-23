@@ -300,6 +300,7 @@ Optional features controlled per-validation:
 | `EnableDirectDns` | true | Allow direct-to-authoritative-nameserver queries (lame delegation, SOA serial, glue, AXFR, etc.) |
 | `EnablePublicResolvers` | null (follows `EnableDirectDns`) | Direct queries to the public resolvers (the UDP propagation check); independent of `EnableDirectDns` once set. Read via `PublicResolversEnabled` |
 | `EnableDoh` | false | Use DNS-over-HTTPS for the propagation check (routes via `HTTPS_PROXY`) |
+| `BimiSelector` | null (`default`) | BIMI selector to check, `<selector>._bimi.<domain>`; validated as a DNS name and refused otherwise |
 
 `ValidationOptions` also carries the operator-editable **probe data lists**
 (propagation resolvers, DNSBL/RHSBL zones, ARC selectors, survey subdomains,

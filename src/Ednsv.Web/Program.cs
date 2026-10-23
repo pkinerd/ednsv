@@ -1068,6 +1068,7 @@ app.MapGet("/api/status/{jobId}", (string jobId, int? since, ValidationTracker t
 //   ?noDoh=true                         force the propagation check to use raw UDP/53 even when DoH is enabled
 //   ?restricted=true                    preset: noSmtp + noHttp + noDnsbl + noDirectDns
 //   ?dkimSelectors=a,b,c                replace built-in DKIM selectors
+//   ?bimiSelector=name                  BIMI selector to check (default: "default")
 //   ?axfr=true                          enable AXFR test
 //   ?catchAll=true                      enable catch-all detection
 //   ?openRelay=true                     enable open-relay test
@@ -1129,6 +1130,7 @@ app.MapGet("/api/validate/{domain}", async (HttpContext httpCtx, string domain, 
         EnableOpenResolver = ParseBool("openResolver"),
         EnablePrivateDnsbl = ParseBool("privateDnsbl"),
         ForceDkimSelectors = ParseBool("forceDkimSelectors"),
+        BimiSelector       = httpCtx.Request.Query["bimiSelector"].ToString() is { Length: > 0 } bs ? bs : null,
         AdditionalDkimSelectors = defaults.AdditionalDkimSelectors,
         PerDomainDkimSelectors  = defaults.PerDomainDkimSelectors,
         PropagationResolvers        = defaults.PropagationResolvers,
