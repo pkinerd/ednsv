@@ -333,7 +333,7 @@ function updateDomainHint() {
   if (dom && perDomainDkim[dom]) {
     const list = perDomainDkim[dom].join(', ');
     hint.textContent = optForceDkim.checked
-      ? ` (per-domain config for ${dom}, ${list}, overridden by "Force" — will probe the selectors above)`
+      ? ` (per-domain config for ${dom}, ${list}, overridden by "Force" — will probe the field below)`
       : ` (per-domain config will be used for ${dom}: ${list})`;
   } else {
     hint.textContent = '';
@@ -344,7 +344,7 @@ function updateDomainHint() {
     const configured = dom && perDomainBimi[dom];
     bimiHint.textContent = !configured ? ''
       : optForceDkim.checked
-        ? ` (per-domain config for ${dom}, ${configured.join(', ')}, overridden by "Force" — will check the selectors above)`
+        ? ` (per-domain config for ${dom}, ${configured.join(', ')}, overridden by "Force" — will check the field below)`
         : ` (per-domain config will be used for ${dom}: ${configured.join(', ')})`;
   }
 }
