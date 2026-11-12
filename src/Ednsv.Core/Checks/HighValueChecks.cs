@@ -253,12 +253,14 @@ public class MxCoveredBySpfCheck : ICheck
             else if (mech.StartsWith("a:", StringComparison.OrdinalIgnoreCase) || mech == "a")
             {
                 var target = mech.Length > 2 ? mech.Substring(2).Split('/')[0] : domain;
+                if (target.Contains('%')) continue; // macro — depends on the message
                 foreach (var ip in await ctx.Dns.ResolveAAsync(target)) ips.Add(ip);
                 foreach (var ip in await ctx.Dns.ResolveAAAAAsync(target)) ips.Add(ip);
             }
             else if (mech.StartsWith("mx:", StringComparison.OrdinalIgnoreCase) || mech == "mx")
             {
                 var target = mech.Length > 3 ? mech.Substring(3).Split('/')[0] : domain;
+                if (target.Contains('%')) continue; // macro — depends on the message
                 var mxRecs = await ctx.Dns.GetMxRecordsAsync(target);
                 foreach (var mx in mxRecs)
                 {
@@ -269,7 +271,8 @@ public class MxCoveredBySpfCheck : ICheck
             }
             else if (mech.StartsWith("include:", StringComparison.OrdinalIgnoreCase))
             {
-                var target = mech.Substring(8);
+                var target = SpfHelpers.ExpandStaticMacros(mech.Substring(8), domain, domain);
+                if (target == null) continue;
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var childSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
                 if (childSpf != null)
@@ -277,7 +280,8 @@ public class MxCoveredBySpfCheck : ICheck
             }
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
             {
-                var target = mech.Substring(9);
+                var target = SpfHelpers.ExpandStaticMacros(mech.Substring(9), domain, domain);
+                if (target == null) continue;
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var childSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
                 if (childSpf != null)
@@ -357,7 +361,8 @@ public class SpfIncludesAllCheck : ICheck
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
                 target = mech.Substring(9);
 
-            if (target != null && visited.Add(target))
+            // Macro targets depend on the message; the literal string is not a domain.
+            if (target != null && !target.Contains('%') && visited.Add(target))
             {
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var childSpf = txts.FirstOrDefault(t => t.Text.Any(s => s.TrimStart().StartsWith("v=spf1", StringComparison.OrdinalIgnoreCase)));
