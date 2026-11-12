@@ -2,18 +2,18 @@
 
 | Field | Value |
 |-------|-------|
-| **Run** | #221 (attempt 1) |
-| **Run ID** | 30201020166 |
+| **Run** | #271 (attempt 1) |
+| **Run ID** | 43173802513 |
 | **Result** | pass |
 | **Build & Unit Tests** | success |
 | **Integration Tests** | success |
 | **Docker** | success |
-| **Commit** | 97dc8a79b916b844588134bcc65f9acf6d737e89 |
-| **Ref** | refs/pull/28/merge |
+| **Commit** | e835c587ad00784428a5cddb9509a54753852dbb |
+| **Ref** | refs/pull/32/merge |
 | **Event** | pull_request |
 | **Actor** | pkinerd |
-| **PR** | #28: Fix unguarded concurrent file access in config, auth and disk cache |
-| **Branch** | claude/redis-dependency-removal-213elh |
+| **PR** | #32: Stop resolving SPF macro targets literally |
+| **Branch** | claude/loving-sagan-122935 |
 
 ## Artifacts
 ```
@@ -28,8 +28,8 @@ test-reports/gmail.com-warm.txt
 test-reports/gmail.com.json
 test-reports/google.com-verbose.txt
 test-reports/google.com.json
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T120510647Z.0ee2ce2b.jsonl
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T120523289Z.7619aa11.jsonl
-test-reports/integration-cache/runnervmvrwv9/cache.20260726T120540460Z.28f4c0ee.jsonl
+test-reports/integration-cache/runnervmwuk1x/cache.20261112T071832168Z.2eadd0cf.jsonl
+test-reports/integration-cache/runnervmwuk1x/cache.20261112T071843518Z.6c7e774f.jsonl
+test-reports/integration-cache/runnervmwuk1x/cache.20261112T071859640Z.4d462254.jsonl
 test-reports/multi-domain.txt
 ```
