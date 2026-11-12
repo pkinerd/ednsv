@@ -19,6 +19,50 @@ internal static class SpfHelpers
         return trimmed.Equals("v=spf1", StringComparison.OrdinalIgnoreCase)
             || trimmed.StartsWith("v=spf1 ", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static readonly Regex MacroToken = new(@"%(?:\{(?<letter>[a-zA-Z])(?<digits>\d*)(?<rev>[rR]?)(?<delims>[.\-+,/_=]*)\}|(?<lit>[%_\-]))", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Expands RFC 7208 §7 macros in a domain-spec as far as is possible without a
+    /// message. Only %{d} (the domain whose record is being walked) and %{o} (the
+    /// domain under validation, which stands in for the MAIL FROM domain) can be
+    /// known here. Anything that depends on the connecting client or envelope —
+    /// %{i}, %{ir}, %{v}, %{s}, %{l}, %{h}, %{p}, … — makes the target unknowable
+    /// until a real message arrives, and the method returns null.
+    ///
+    /// Why this exists: walkers used to hand the literal macro string to the
+    /// resolver. A record such as Proofpoint's
+    /// <c>include:%{ir}.%{v}.%{d}.spf.has.pphosted.com</c> then "had no SPF record"
+    /// and was reported as a PermError, plus a void lookup — on a configuration that
+    /// works for every real sender. Callers must treat a null return as "resolved at
+    /// evaluation time": still a counted DNS lookup, but neither void nor an error.
+    /// </summary>
+    internal static string? ExpandStaticMacros(string spec, string currentDomain, string originalDomain)
+    {
+        if (!spec.Contains('%')) return spec;
+        var unknowable = false;
+        var expanded = MacroToken.Replace(spec, m =>
+        {
+            if (m.Groups["lit"].Success)
+                return m.Groups["lit"].Value switch { "%" => "%", "_" => " ", _ => "%20" };
+            string value;
+            switch (char.ToLowerInvariant(m.Groups["letter"].Value[0]))
+            {
+                case 'd': value = currentDomain; break;
+                case 'o': value = originalDomain; break;
+                default: unknowable = true; return m.Value;
+            }
+            var delims = m.Groups["delims"].Value;
+            var parts = value.Split(delims.Length > 0 ? delims.ToCharArray() : new[] { '.' });
+            if (m.Groups["rev"].Value.Length > 0) Array.Reverse(parts);
+            if (int.TryParse(m.Groups["digits"].Value, out var keep) && keep > 0 && keep < parts.Length)
+                parts = parts[^keep..];
+            return string.Join('.', parts);
+        });
+        // A stray '%' not matching any macro form is a syntax error, not something to query.
+        if (unknowable || expanded.Contains('%')) return null;
+        return expanded;
+    }
 }
 
 public class SpfRecordCheck : ICheck
@@ -261,6 +305,7 @@ public class SpfExpansionCheck : ICheck
     private int _lookupCount;
     private int _voidLookupCount;
     private int _maxDepth;
+    private string _originalDomain = "";
     private readonly HashSet<string> _visitedDomains = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<List<CheckResult>> RunAsync(string domain, CheckContext ctx, CancellationToken cancellationToken = default)
@@ -269,6 +314,7 @@ public class SpfExpansionCheck : ICheck
         _lookupCount = 0;
         _voidLookupCount = 0;
         _maxDepth = 0;
+        _originalDomain = domain;
         _visitedDomains.Clear();
 
         try
@@ -355,8 +401,16 @@ public class SpfExpansionCheck : ICheck
             if (mech.StartsWith("include:", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                var target = mech.Substring(8);
-                result.Details.Add($"{indent}{qualLabel}include:{target}");
+                var rawTarget = mech.Substring(8);
+                var target = SpfHelpers.ExpandStaticMacros(rawTarget, domain, _originalDomain);
+                if (target == null)
+                {
+                    result.Details.Add($"{indent}{qualLabel}include:{rawTarget} (macro — depends on the sending IP/envelope, resolved at evaluation time)");
+                    continue;
+                }
+                result.Details.Add(target == rawTarget
+                    ? $"{indent}{qualLabel}include:{target}"
+                    : $"{indent}{qualLabel}include:{rawTarget} -> {target}");
                 var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
@@ -372,8 +426,16 @@ public class SpfExpansionCheck : ICheck
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
             {
                 _lookupCount++;
-                var target = mech.Substring(9);
-                result.Details.Add($"{indent}{qualLabel}redirect={target}");
+                var rawTarget = mech.Substring(9);
+                var target = SpfHelpers.ExpandStaticMacros(rawTarget, domain, _originalDomain);
+                if (target == null)
+                {
+                    result.Details.Add($"{indent}{qualLabel}redirect={rawTarget} (macro — depends on the sending IP/envelope, resolved at evaluation time)");
+                    continue;
+                }
+                result.Details.Add(target == rawTarget
+                    ? $"{indent}{qualLabel}redirect={target}"
+                    : $"{indent}{qualLabel}redirect={rawTarget} -> {target}");
                 var (txt, lookupError) = await GetSpfForDomainAsync(ctx, target);
                 if (txt != null)
                     await ExpandSpfAsync(ctx, target, txt, result, depth + 1);
@@ -391,9 +453,15 @@ public class SpfExpansionCheck : ICheck
             {
                 _lookupCount++;
                 string raw = mech.Length > 2 && mech[1] == ':' ? mech.Substring(2) : (mech == "a" ? "" : mech.Substring(1));
-                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
-                if (string.IsNullOrEmpty(target)) target = domain;
+                var (spec, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(spec)) spec = domain;
                 var cidrLabel = cidr ?? "";
+                var target = SpfHelpers.ExpandStaticMacros(spec, domain, _originalDomain);
+                if (target == null)
+                {
+                    result.Details.Add($"{indent}{qualLabel}a:{spec}{cidrLabel} (macro — resolved at evaluation time)");
+                    continue;
+                }
                 var ips = await ctx.Dns.ResolveAAsync(target);
                 var ipsV6 = await ctx.Dns.ResolveAAAAAsync(target);
                 var allIps = ips.Concat(ipsV6).ToList();
@@ -405,9 +473,15 @@ public class SpfExpansionCheck : ICheck
             {
                 _lookupCount++;
                 string raw = mech.Length > 3 && mech[2] == ':' ? mech.Substring(3) : (mech == "mx" ? "" : mech.Substring(2));
-                var (target, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
-                if (string.IsNullOrEmpty(target)) target = domain;
+                var (spec, cidr) = raw.Length > 0 ? SplitCidr(raw) : (domain, null);
+                if (string.IsNullOrEmpty(spec)) spec = domain;
                 var cidrLabel = cidr ?? "";
+                var target = SpfHelpers.ExpandStaticMacros(spec, domain, _originalDomain);
+                if (target == null)
+                {
+                    result.Details.Add($"{indent}{qualLabel}mx:{spec}{cidrLabel} (macro — resolved at evaluation time)");
+                    continue;
+                }
                 var mxRecs = await ctx.Dns.GetMxRecordsAsync(target);
                 // #41 - mx: 10 MX sub-limit
                 if (mxRecs.Count > 10)
@@ -450,8 +524,10 @@ public class SpfExpansionCheck : ICheck
             }
             else if (mech.StartsWith("exp=", StringComparison.OrdinalIgnoreCase))
             {
-                var expTarget = mech.Substring(4);
-                result.Details.Add($"{indent}exp={expTarget}");
+                var expSpec = mech.Substring(4);
+                result.Details.Add($"{indent}exp={expSpec}");
+                var expTarget = SpfHelpers.ExpandStaticMacros(expSpec, domain, _originalDomain);
+                if (expTarget == null) continue;
                 // #39 - exp= target validation
                 try
                 {
@@ -569,14 +645,18 @@ public class SpfLookupCountCheck : ICheck
                 if (mech.StartsWith("include:", StringComparison.OrdinalIgnoreCase))
                 {
                     lookups++;
-                    var target = mech.Substring(8);
+                    // An unexpandable macro target is still one lookup at evaluation
+                    // time, but its outcome is unknowable here — not a void.
+                    var target = SpfHelpers.ExpandStaticMacros(mech.Substring(8), d, domain);
+                    if (target == null) continue;
                     var txt = await GetSpfAsync(ctx, target);
                     if (txt != null) await WalkAsync(target, txt); else voids++;
                 }
                 else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
                 {
                     lookups++;
-                    var target = mech.Substring(9);
+                    var target = SpfHelpers.ExpandStaticMacros(mech.Substring(9), d, domain);
+                    if (target == null) continue;
                     var txt = await GetSpfAsync(ctx, target);
                     if (txt != null) await WalkAsync(target, txt); else voids++;
                 }
@@ -654,7 +734,9 @@ public class SpfIncludeDepthCheck : ICheck
             else if (mech.StartsWith("redirect=", StringComparison.OrdinalIgnoreCase))
                 target = mech.Substring(9);
 
-            if (target != null && visited.Add(target))
+            // Macro targets (%{ir}, %{d}, …) cannot be followed without a message; querying
+            // the literal string only finds nothing. SPF Recursive Expansion reports them.
+            if (target != null && !target.Contains('%') && visited.Add(target))
             {
                 var txts = await ctx.Dns.GetTxtRecordsAsync(target);
                 var nextSpf = txts.FirstOrDefault(t => t.Text.Any(s => SpfHelpers.IsSpfRecord(s)));
